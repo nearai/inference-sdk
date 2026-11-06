@@ -37,12 +37,14 @@ export type DirectAttestationHttpResponse = {
 export class DirectApiClient {
   private readonly baseUrl: string;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
+  private readonly fetchApi: typeof globalThis.fetch;
 
   constructor(options: DirectAttestationClientOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(
       requireDirectApiBaseUrl(options.baseUrl),
     );
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
+    this.fetchApi = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
   async fetchCompletionSignature({
@@ -168,7 +170,7 @@ export class DirectApiClient {
 
   /** Runtime-specific clients can override this to pin signature requests. */
   protected async requestApi(request: Request): Promise<Response> {
-    return fetch(request);
+    return this.fetchApi(request);
   }
 
   private createRequest(url: URL, authenticate = true): Request {
@@ -209,9 +211,6 @@ export class DirectAttestationClient extends DirectApiClient {
     return this.fetchModelAttestationsWithOptions({
       signingAlgo,
       signingAddress,
-      // TODO: Re-enable direct TLS binding once all_attestations covers every serving CVM.
-      // An incomplete set can reject a later connection to another CVM's TLS key.
-      // https://github.com/nearai/cloud-api/issues/1087
       includeSpkiFingerprint: false,
     });
   }

@@ -440,7 +440,8 @@ defer client.Close()
 
 `DirectInferenceClient` connects to a model endpoint and verifies every returned
 model report. It supports Chat, streaming, OHTTP, and OpenAI integration.
-Direct clients are experimental; attested TLS binding is currently unavailable.
+Direct clients are experimental. Requests use the verified model TLS fingerprints
+by default.
 
 `VerifyResponse` returns `VerifiedDirectCompletionResult` with all matching model
 reports in `Attestations`. Use `VerifyDirectModelResponse` for manual verification.

@@ -87,11 +87,11 @@ impl Default for CoreOptions {
 #[derive(Clone)]
 pub(crate) enum SessionProvider {
     Gateway(GatewayVerificationOptions),
-    Direct,
+    Direct { include_spki_fingerprint: bool },
 }
 impl SessionProvider {
     fn is_direct(&self) -> bool {
-        matches!(self, Self::Direct)
+        matches!(self, Self::Direct { .. })
     }
 }
 #[derive(Clone)]
@@ -226,8 +226,11 @@ impl InferenceCore {
                 let provider = self.inner.provider.clone();
                 let future = async move {
                     match provider {
-                        SessionProvider::Direct => {
-                            crate::direct::create_session(&owned, options).await
+                        SessionProvider::Direct {
+                            include_spki_fingerprint,
+                        } => {
+                            crate::direct::create_session(&owned, options, include_spki_fingerprint)
+                                .await
                         }
                         SessionProvider::Gateway(verification) => {
                             crate::inference::create_session(&owned, options, verification).await

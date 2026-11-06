@@ -17,7 +17,7 @@ import (
 
 func TestPinnedTLSProtectsChatAndEvidenceBeforeSending(t *testing.T) {
 	for _, operation := range []string{"chat", "metadata", "model", "signature", "gateway"} {
-		for _, condition := range []string{"valid", "wrong pin", "wrong hostname", "untrusted chain"} {
+		for _, condition := range []string{"valid", "valid second pin", "wrong pin", "wrong hostname", "untrusted chain"} {
 			t.Run(operation+"/"+condition, func(t *testing.T) {
 				var requests atomic.Int32
 				var fingerprint string
@@ -62,7 +62,11 @@ func TestPinnedTLSProtectsChatAndEvidenceBeforeSending(t *testing.T) {
 				case "untrusted chain":
 					base.TLSClientConfig.RootCAs = x509.NewCertPool()
 				}
-				transport, err := NewPinnedTransport(base, pin)
+				pins := []string{pin}
+				if condition == "valid second pin" {
+					pins = []string{strings.Repeat("44", 32), pin}
+				}
+				transport, err := NewPinnedTransport(base, pins...)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -95,7 +99,7 @@ func TestPinnedTLSProtectsChatAndEvidenceBeforeSending(t *testing.T) {
 						response.Body.Close()
 					}
 				}
-				if condition == "valid" {
+				if strings.HasPrefix(condition, "valid") {
 					if err != nil || requests.Load() != 1 {
 						t.Fatalf("valid connection: requests=%d, error=%v", requests.Load(), err)
 					}

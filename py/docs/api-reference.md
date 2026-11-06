@@ -231,7 +231,7 @@ same common options as `InferenceClient`, with the following differences:
 | --- | --- |
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
-| `gateway_verification` | Not available; there is no Gateway workflow. |
+| `include_spki_fingerprint` | Defaults to `True`. Set `False` for an application proxy or HTTP endpoint. |
 | `model_verification` | `ModelVerificationOptions`: model `policy` and `verifiers`. `DirectModelVerificationOptions` is an alias. |
 | `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
@@ -239,19 +239,21 @@ same common options as `InferenceClient`, with the following differences:
 
 E2EE defaults to `False` for both clients. Set `e2ee=True` to enable it.
 
-`DirectAttestationClient(base_url, *, api_key=None, headers=None)` exposes:
+`DirectAttestationClient(base_url, *, api_key=None, headers=None, http_client=None)`
+exposes the following methods. Use `http_client` to supply a pinned signature transport.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
-| `fetch_model_attestations` | `signing_algo=None`, `signing_address=None` (keyword-only) | `FetchedDirectModelAttestations` |
+| `fetch_model_attestations` | `signing_algo=None`, `signing_address=None`, `include_spki_fingerprint=True` (keyword-only) | `FetchedDirectModelAttestations` |
 | `fetch_completion_signature` | `completion_id`, keyword-only `signing_algo=None` | `CompletionSignature` with kind `provider_tee` |
 
-Direct clients are experimental; attested TLS binding is currently unavailable.
+Direct clients are experimental. Requests use the verified model TLS fingerprints
+by default.
 
 | Type | Field | Description |
 | --- | --- | --- |
 | `DirectModelAttestation` | Inherited `ModelAttestation` fields | Model quote, signer, nonce, deployment, GPU evidence, and optional public key. |
-| | `model_name: str`, `instance_id: str \| None` | Endpoint metadata, not additional quote-authenticated claims. |
+| | `model_name: str`, `instance_id: str \| None` | Endpoint-reported model and instance metadata. |
 | | `spki_fingerprint: str \| None` | Reported TLS SPKI fingerprint. |
 | `DirectClientBinding` | `nonce: str`, `spki_fingerprint: str \| None` | Fresh client nonce and optional observed TLS fingerprint. |
 | `FetchedDirectModelAttestations` | `serving_attestation`, `attestations` | Top-level serving report and the full tuple of supplied direct reports. |

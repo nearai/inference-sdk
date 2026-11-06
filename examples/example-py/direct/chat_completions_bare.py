@@ -8,6 +8,7 @@ import httpx
 from nearai_inference_sdk import (
     DirectAttestationClient,
     VerifiedDirectModelAttestations,
+    create_pinned_tls_client,
     verify_direct_model_attestations,
     verify_direct_model_response,
 )
@@ -89,9 +90,11 @@ async def main() -> None:
     headers = {'Accept-Encoding': 'identity', 'X-No-Aliasing': 'true'}
     if api_key is not None:
         headers['Authorization'] = f'Bearer {api_key}'
-    # Direct fetch currently requests no SPKI fingerprint, matching the JS client.
-    # Normal HTTPS certificate validation still applies.
-    async with httpx.AsyncClient(headers=headers, timeout=None) as client:
+    async with create_pinned_tls_client(verified.spki_fingerprints) as client:
+        client.headers.update(headers)
+        attestation_client = DirectAttestationClient(
+            BASE_URL, api_key=api_key, http_client=client
+        )
         await send_and_verify(client, attestation_client, verified, stream=False)
         await send_and_verify(client, attestation_client, verified, stream=True)
 

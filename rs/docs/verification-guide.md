@@ -94,7 +94,8 @@ model reports in `attestations`.
 For manual workflows, use `DirectAttestationClient` and
 `verify_direct_model_attestation(s)` / `verify_direct_model_response`.
 
-Direct clients are experimental; attested TLS binding is currently unavailable.
+Direct clients are experimental. Requests use the verified model TLS fingerprints
+by default.
 
 ## Verify System One decisions
 

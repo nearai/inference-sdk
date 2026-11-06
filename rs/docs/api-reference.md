@@ -120,13 +120,19 @@ See the [native image example](../../examples/example-rs/src/gateway/systemone.r
   receipt's signature kind. Chat and transport methods match `InferenceClient`.
 - `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
   and direct signatures. `with_headers` configures extra headers.
+  `fetch_model_attestations_with_options(DirectAttestationFetchOptions)` accepts
+  `signing_algo`, `signing_address`, and `include_spki_fingerprint` (default `true`).
+  After verification, use `with_http_client(create_pinned_tls_client(&verified.spki_fingerprints)?)`
+  to pin signature requests.
 - `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
   `verify_direct_model_response` validate individual reports, complete report
   sets, and exact completion bytes respectively. The response verifier returns
   every verified report sharing the signature's signer.
 
 See the [Direct client guide](./verification-guide.md#experimental-direct-endpoints)
-for usage. Attested TLS binding is currently unavailable for Direct clients.
+for usage. Direct clients are experimental and use attested TLS by default.
+Set `DirectInferenceClientOptions.include_spki_fingerprint` to `false` for an
+application proxy or HTTP endpoint.
 
 ## Verification lifecycle
 

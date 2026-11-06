@@ -298,7 +298,7 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
     )
     if direct:
         client = DirectAttestationClient(BASE_URL, api_key=api_key, headers=headers)
-        await client.fetch_model_attestations()
+        await client.fetch_model_attestations(include_spki_fingerprint=False)
     else:
         client = AttestationClient(api_key, base_url=BASE_URL, headers=headers)
         await client.fetch_gateway_attestation(include_spki_fingerprint=False)

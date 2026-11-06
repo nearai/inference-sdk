@@ -277,8 +277,8 @@ Set `stream=True` and use `async for` for typed Responses events. An external
 ## Direct model endpoints
 
 `DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. Direct clients are experimental; attested TLS binding is currently
-unavailable.
+model report. Direct clients are experimental and pin requests to the verified
+model TLS fingerprints by default.
 
 ```python
 from nearai_inference_sdk import DirectInferenceClient

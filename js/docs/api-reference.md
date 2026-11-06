@@ -204,7 +204,7 @@ and the [Node examples](../../examples/README.md#javascript-setup) to run it.
 ## `DirectInferenceClient`
 
 Connects to a model endpoint and verifies its model attestations. Direct clients
-are experimental; attested TLS binding is currently unavailable.
+are experimental. The Node client enables attested TLS binding by default.
 
 Supports Chat, Fetch, E2EE, OHTTP, and response verification. Configure it with
 `DirectInferenceClientOptions` and an explicit `baseUrl`.
@@ -222,6 +222,7 @@ Supports Chat, Fetch, E2EE, OHTTP, and response verification. Configure it with
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Deployment verification cache duration; `0` verifies each request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Response retention after body completion; `0` disables retention. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Model-aware deployment check. Throw to reject a deployment. |
+| `includeSpkiFingerprint?` (Node) | `boolean` | No | `true` | Verify and pin Direct TLS. Set `false` for an application proxy or HTTP endpoint. |
 | `modelVerification?` | `DirectModelVerificationOptions` | No | — | Model attestation policy and verifier configuration. |
 
 ### Methods and response result
@@ -359,14 +360,15 @@ corresponding verifier.
 
 ## `DirectAttestationClient`
 
-Fetches model reports and signatures from a direct endpoint. Attested TLS binding
-is currently unavailable; see [Direct clients](#directinferenceclient).
+Fetches model reports and signatures from an experimental Direct endpoint.
+The Node client captures the attestation connection's TLS fingerprint by default.
 
 | Constructor field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `baseUrl` | `string` | Yes | Absolute HTTP(S) provider API base URL, including its version path. |
 | `apiKey?` | `string` | No | Endpoint bearer credential; overrides `headers.Authorization`. |
 | `headers?` | `HeadersInit` | No | Additional request headers; use `apiKey` for bearer authentication. |
+| `fetch?` | `typeof fetch` | No | Signature transport; pass `createPinnedTlsFetch(verified.spkiFingerprints)` after verification. |
 
 | Method | Params | Resolves to | Description |
 | --- | --- | --- | --- |
@@ -377,6 +379,7 @@ is currently unavailable; see [Direct clients](#directinferenceclient).
 | --- | --- | --- | --- |
 | `signingAlgo?` | `SigningAlgo` | Service default | Algorithm for attestation, E2EE, and response signatures. OHTTP requires Ed25519. |
 | `signingAddress?` | `string` | — | Optional signing-address filter. Omit to fetch the endpoint's unfiltered attestation set. |
+| `includeSpkiFingerprint?` (Node) | `boolean` | `true` | Request TLS fingerprints and capture the attestation connection's peer. |
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
@@ -385,7 +388,7 @@ is currently unavailable; see [Direct clients](#directinferenceclient).
 |  | `clientBinding` | `DirectClientBinding` | Client values for the matching verification call. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | Signed OHTTP configuration; authenticate against the verified serving signer before use. |
 | `DirectClientBinding` | `nonce` | `string` | Fresh client nonce sent with this request. |
-|  | `spkiFingerprint?` | `string` | Optional observed TLS peer SPKI for manually supplied evidence. Direct fetch helpers currently omit it. |
+|  | `spkiFingerprint?` | `string` | TLS peer fingerprint captured by the Node client for this attestation request. |
 | `DirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Returned model reports, including `servingAttestation`. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | Signed OHTTP configuration for the serving endpoint. |
@@ -400,7 +403,7 @@ is currently unavailable; see [Direct clients](#directinferenceclient).
 | --- | --- | --- | --- | --- |
 | `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving report; its contents must match an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Returned model reports, including `servingAttestation`. |
-|  | `clientBinding` | `DirectClientBinding` | Yes | Nonce from the matching request, plus an observed peer fingerprint when verifying manually supplied TLS-bound evidence. |
+|  | `clientBinding` | `DirectClientBinding` | Yes | Nonce and observed TLS peer fingerprint from the matching attestation request. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
 | `VerifyDirectModelAttestationParams` | `attestation` | `DirectModelAttestation` | Yes | One direct model attestation. |
@@ -425,8 +428,8 @@ is currently unavailable; see [Direct clients](#directinferenceclient).
 
 `verifyDirectModelAttestations` verifies every returned attestation and compares
 the serving attestation with the observed TLS peer when SPKI evidence is supplied.
-For reports fetched by `DirectAttestationClient`, `tlsBinding.kind` is `'none'`
-and `spkiFingerprints` is empty.
+The browser client requests reports without TLS fingerprints; the Node client
+requests and verifies them by default.
 
 ## Model attestation selection
 

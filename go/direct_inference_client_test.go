@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -35,7 +36,8 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	pk, _ := pub.MarshalBinary()
 	config := append([]byte{1, 0, 32}, pk...)
 	config = append(config, 0, 4, 0, 1, 0, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var fingerprint string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/signature/chat" {
 			json.NewEncoder(w).Encode(map[string]any{
 				"text": text, "signature": hex.EncodeToString(ed25519.Sign(priv, []byte(text))),
@@ -43,24 +45,33 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 			})
 			return
 		}
-		if r.URL.Query().Get("include_tls_fingerprint") != "false" {
-			t.Error("direct TLS must be disabled")
+		if r.URL.Query().Get("include_tls_fingerprint") != "true" {
+			t.Error("direct reports must request TLS fingerprints")
 		}
 		n := r.URL.Query().Get("nonce")
 		makeReport := func(a Attestation, q QuoteVerificationResult) map[string]any {
 			q.ReportData = append([]byte(nil), q.ReportData...)
 			nonce, _ := unhex(n)
 			copy(q.ReportData[32:], nonce)
+			pin := fingerprint
+			if a.InstanceID == "other" {
+				pin = strings.Repeat("44", 32)
+			}
+			signer, _ := signingBytes(a.Signer)
+			pinBytes, _ := unhex(pin)
+			binding := sha256.Sum256(append(signer, pinBytes...))
+			copy(q.ReportData[:32], binding[:])
 			encoded, _ := json.Marshal(q)
 			return map[string]any{
-				"model_name":         "canonical/model",
-				"request_nonce":      n,
-				"signing_algo":       "ed25519",
-				"signing_address":    a.Signer.SigningAddress,
-				"signing_public_key": a.SigningPublicKey,
-				"intel_quote":        string(encoded),
-				"event_log":          a.EventLog,
-				"info":               map[string]any{"instance_id": a.InstanceID, "tcb_info": map[string]any{"app_compose": a.AppCompose}},
+				"model_name":           "canonical/model",
+				"tls_cert_fingerprint": pin,
+				"request_nonce":        n,
+				"signing_algo":         "ed25519",
+				"signing_address":      a.Signer.SigningAddress,
+				"signing_public_key":   a.SigningPublicKey,
+				"intel_quote":          string(encoded),
+				"event_log":            a.EventLog,
+				"info":                 map[string]any{"instance_id": a.InstanceID, "tcb_info": map[string]any{"app_compose": a.AppCompose}},
 			}
 		}
 		first, serving := makeReport(a, qa), makeReport(b, qb)
@@ -84,10 +95,12 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 		json.NewEncoder(w).Encode(root)
 	}))
 	defer server.Close()
+	fp := sha256.Sum256(server.Certificate().RawSubjectPublicKeyInfo)
+	fingerprint = hex.EncodeToString(fp[:])
 	calls := 0
 	check := func(context.Context, MeasuredDeployment) error { calls++; return nil }
 	client, e := NewDirectInferenceClient(DirectInferenceOptions{
-		ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1"},
+		ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1", HTTPClient: server.Client()},
 		E2EE:              true,
 		OHTTP:             ohttp,
 		ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote, DeploymentVerifier: check},
@@ -104,8 +117,8 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	if calls != 2 || len(preflight.Attestations) != 2 || preflight.Attestations[0].DeploymentProvenance != "verified" || preflight.Attestations[1].DeploymentProvenance != "verified" {
 		t.Fatal("deployment verifier must check every report")
 	}
-	if preflight.ServingAttestation.InstanceID != "serving" || len(preflight.SPKIFingerprints) != 0 || preflight.VerifiedAt.IsZero() {
-		t.Fatal("preflight must retain the actual serving report without enabling TLS binding")
+	if preflight.ServingAttestation.InstanceID != "serving" || len(preflight.SPKIFingerprints) != 2 || preflight.VerifiedAt.IsZero() {
+		t.Fatal("preflight must retain both verified TLS identities and the serving report")
 	}
 	cached, err := client.Verify(context.Background(), "canonical/model")
 	if err != nil || calls != 2 || !reflect.DeepEqual(cached, preflight) {
@@ -193,7 +206,7 @@ func TestDirectClientPublicSurface(t *testing.T) {
 			}
 		}
 	}
-	for _, field := range []string{"InferenceOptions", "GatewayVerification", "DisableTLSBinding"} {
+	for _, field := range []string{"InferenceOptions", "GatewayVerification"} {
 		if _, exists := reflect.TypeFor[DirectInferenceOptions]().FieldByName(field); exists {
 			t.Fatalf("Direct options expose Gateway-only %s", field)
 		}
@@ -222,6 +235,7 @@ func TestDirectClientE2EEIsOptIn(t *testing.T) {
 			server := httptest.NewServer(f)
 			defer server.Close()
 			opts := DirectInferenceOptions{
+				DisableTLSBinding: true,
 				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
 				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
 				E2EE:              scenario.e2ee,

@@ -166,12 +166,12 @@ type InferenceOptions struct {
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
-// Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
 	ClientOptions
 	SigningAlgo       SigningAlgo
 	E2EE              bool
 	OHTTP             bool
+	DisableTLSBinding bool
 	AttestationTTL    *time.Duration
 	ResponseTTL       *time.Duration
 	ModelVerification VerificationOptions

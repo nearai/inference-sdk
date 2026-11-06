@@ -58,7 +58,7 @@ semantics, streaming, and supported privacy options.
 | `SigningAlgo` | `Ed25519`; `ECDSA` is also supported. |
 | `E2EE` | `false` for Gateway and Direct; set it to `true` to enable encryption. |
 | `OHTTP` | `false`; requires Ed25519. Independent of E2EE. |
-| `DisableTLSBinding` | `false` for Gateway; direct clients disable attested TLS binding. |
+| `DisableTLSBinding` | `false` for both clients. Set `true` for an application proxy or HTTP endpoint. |
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
@@ -133,7 +133,7 @@ func FindModelAttestationsForSignature(items []VerifiedAttestation, sig Completi
 // Deprecated: use FindModelAttestationsForSignature for shared signers.
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
 
-func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
+func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Transport, error)
 func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
 func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 ```
@@ -141,9 +141,9 @@ func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 Pass the verified evidence and exact request/response bytes, before decryption
 when E2EE is enabled. Direct response verification returns all matching reports.
 
-`NewPinnedTransport` clones a standard HTTP transport and checks the attested
-SPKI fingerprint in addition to normal TLS validation. Close its idle connections
-when finished.
+`NewPinnedTransport` clones a standard HTTP transport and requires one of the
+verified SPKI fingerprints in addition to normal TLS validation. Close its idle
+connections when finished.
 
 | Factory | Parameter or field | Default | Description |
 | --- | --- | --- | --- |
@@ -386,12 +386,12 @@ type InferenceOptions struct {
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
-// Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
 	ClientOptions
 	SigningAlgo       SigningAlgo
 	E2EE              bool
 	OHTTP             bool
+	DisableTLSBinding bool
 	AttestationTTL    *time.Duration
 	ResponseTTL       *time.Duration
 	ModelVerification VerificationOptions
@@ -423,8 +423,8 @@ type VerifiedDirectCompletionResult struct {
 
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
 `NewDirectInferenceClient(DirectInferenceOptions)` requires an explicit base URL.
-Direct clients verify model attestations; attested TLS binding is currently
-unavailable. E2EE defaults to `false` for both clients.
+Direct clients verify all returned model attestations and pin requests to the
+selected signer group's TLS fingerprints. E2EE defaults to `false` for both clients.
 
 Close the client and HTTP response bodies when finished.
 

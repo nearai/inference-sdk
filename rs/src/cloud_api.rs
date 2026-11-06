@@ -125,12 +125,17 @@ impl AttestationClient {
         path: &str,
         query: &[(&str, String)],
         resource: ApiResource,
-    ) -> Result<serde_json::Value, ApiError> {
+        capture_peer_spki: bool,
+    ) -> Result<(serde_json::Value, Option<String>), ApiError> {
         let mut url = self.endpoint(path)?;
         url.query_pairs_mut()
             .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
-        let response = get_cloud_api_response(self, url, resource, None, false, false).await?;
-        decode_wire_response(&response.body, resource, path)
+        let response =
+            get_cloud_api_response(self, url, resource, None, capture_peer_spki, false).await?;
+        Ok((
+            decode_wire_response(&response.body, resource, path)?,
+            response.peer_spki_fingerprint,
+        ))
     }
 
     pub(crate) async fn direct_signature(

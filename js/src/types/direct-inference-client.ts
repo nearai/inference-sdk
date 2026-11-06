@@ -17,16 +17,24 @@ export type NodeDirectModelVerificationOptions = DirectModelVerificationOptions;
  * Verified Chat requests to one direct model endpoint, without a Gateway.
  * @experimental
  */
-export type DirectInferenceClientOptions = DirectAttestationClientOptions &
+export type DirectInferenceClientOptions = Omit<
+  DirectAttestationClientOptions,
+  'fetch'
+> &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
   InferenceEncryptionOptions & {
     readonly modelVerification?: DirectModelVerificationOptions;
   };
 
 /** @experimental Options for the Node Direct client. */
-export type NodeDirectInferenceClientOptions = DirectAttestationClientOptions &
+export type NodeDirectInferenceClientOptions = Omit<
+  DirectAttestationClientOptions,
+  'fetch'
+> &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
   InferenceEncryptionOptions & {
+    /** Verify and pin the Direct endpoint's TLS identity. Defaults to true. */
+    readonly includeSpkiFingerprint?: boolean;
     readonly modelVerification?: NodeDirectModelVerificationOptions;
   };
 

@@ -179,7 +179,8 @@ Direct examples use a model endpoint URL and a credential accepted by that endpo
 
 Direct examples verify every returned model report and the response signature.
 Integrated examples enable E2EE; bare examples use plaintext over HTTPS.
-Direct clients are experimental; attested TLS binding is currently unavailable.
+Direct clients are experimental. Requests use the verified model TLS fingerprints
+by default.
 
 Read `attestations` (`Attestations` in Go) for all reports matching the response signer.
 

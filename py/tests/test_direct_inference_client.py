@@ -1,4 +1,6 @@
+import hashlib
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -13,8 +15,23 @@ from nearai_inference_sdk import (
 )
 from nearai_inference_sdk.core import direct_inference_client
 
-from .support.gateway import BASE_URL, MESSAGES, MODEL, Gateway
+from .support.gateway import BASE_URL, MESSAGES, MODEL, TLS_FINGERPRINT, Gateway
 from .support.ohttp import OhttpGateway
+
+
+def bind_tls_report(endpoint, report, fingerprint):
+    quote = replace(
+        endpoint.quotes[report['intel_quote']],
+        report_data=hashlib.sha256(
+            bytes.fromhex(endpoint.address.removeprefix('0x'))
+            + bytes.fromhex(fingerprint)
+        ).digest()
+        + bytes.fromhex(report['request_nonce']),
+    )
+    endpoint.quotes[report['intel_quote']] = quote
+    report['report_data'] = quote.report_data.hex()
+    report['tls_cert_fingerprint'] = fingerprint
+    return report
 
 
 class DirectEndpoint(Gateway):
@@ -22,6 +39,7 @@ class DirectEndpoint(Gateway):
         super().__init__(signing_algo)
         self.ohttp_gateway = OhttpGateway(handler=self.handle_chat)
         self.bad_sibling = False
+        self.pinned_groups = []
 
     async def handle_chat(self, request):
         return await super().handle(request)
@@ -31,7 +49,7 @@ class DirectEndpoint(Gateway):
             return await self.ohttp_gateway.handle(request)
         if request.url.path == '/v1/attestation/report':
             assert 'model' not in request.url.params
-            assert request.url.params['include_tls_fingerprint'] == 'false'
+            include_tls = request.url.params['include_tls_fingerprint'] == 'true'
             self.model_requests.append('direct')
             root = {
                 **self.attestation(request.url.params['nonce']),
@@ -43,6 +61,12 @@ class DirectEndpoint(Gateway):
                 'model_name': MODEL,
             }
             body = {**root, 'all_attestations': [root, sibling]}
+            if include_tls:
+                for report, fingerprint in zip(
+                    (root, sibling), (TLS_FINGERPRINT, '22' * 32), strict=True
+                ):
+                    bind_tls_report(self, report, fingerprint)
+                body.update(root)
             if self.signing_algo == 'ed25519':
                 config = self.ohttp_gateway.key_config
                 body['ohttp_attestation'] = {
@@ -61,12 +85,15 @@ class DirectEndpoint(Gateway):
 
     def install(self, monkeypatch):
         super().install(monkeypatch)
+
+        def create_client(_client, fingerprints):
+            self.pinned_groups.append(fingerprints)
+            return httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
+
         monkeypatch.setattr(
             DirectInferenceClient,
             '_create_direct_client',
-            lambda _client, _fingerprints: httpx.AsyncClient(
-                transport=httpx.MockTransport(self.handle)
-            ),
+            create_client,
         )
 
     def client(self, **options):
@@ -105,8 +132,9 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
         assert isinstance(attestations, DirectAttestationVerificationResult)
         assert len(attestations.attestations) == 2
         assert attestations.serving_attestation is attestations.attestations[0]
-        assert attestations.tls_binding.kind == 'none'
-        assert attestations.spki_fingerprints == ()
+        assert attestations.tls_binding.kind == 'attested'
+        assert attestations.spki_fingerprints == (TLS_FINGERPRINT, '22' * 32)
+        assert endpoint.pinned_groups == [attestations.spki_fingerprints]
         now += 1
         cached = await client.verify(MODEL)
         assert cached is attestations
@@ -206,6 +234,7 @@ async def test_direct_ohttp_selects_serving_group_when_serving_is_not_first(
                 **other.attestation(request.url.params['nonce']),
                 'model_name': MODEL,
             }
+            bind_tls_report(other, unrelated, '33' * 32)
             body['all_attestations'].insert(0, unrelated)
             return httpx.Response(200, json=body)
         if alternate_signer and request.url.path.startswith('/v1/signature/'):
@@ -224,6 +253,7 @@ async def test_direct_ohttp_selects_serving_group_when_serving_is_not_first(
         assert len(preflight.attestations) == 3
         assert preflight.serving_attestation is preflight.attestations[1]
         assert preflight.attestations[0].signer.signing_address == other.address
+        assert endpoint.pinned_groups == [(TLS_FINGERPRINT, '22' * 32)]
         completion = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES
         )
@@ -266,7 +296,12 @@ async def test_direct_ohttp_never_uses_another_signers_key_when_serving_key_is_m
         for report in body['all_attestations']:
             report.pop('signing_public_key')
         body['all_attestations'].insert(
-            0, {**other.attestation(request.url.params['nonce']), 'model_name': MODEL}
+            0,
+            bind_tls_report(
+                other,
+                {**other.attestation(request.url.params['nonce']), 'model_name': MODEL},
+                '33' * 32,
+            ),
         )
         return httpx.Response(200, json=body)
 

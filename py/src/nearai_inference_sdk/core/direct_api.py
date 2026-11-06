@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import replace
 
+import httpx
 from pydantic import ValidationError
 
 from ..schemas import (
@@ -18,6 +19,7 @@ from ..types.direct import (
     FetchedDirectModelAttestations,
 )
 from ..utils.common import generate_nonce
+from ..utils.fetch import FetchResponse
 from .cloud_api import (
     _ApiClient,
     _decode_completion_signature,
@@ -32,7 +34,7 @@ from .cloud_api import (
 
 
 class DirectAttestationClient(_ApiClient):
-    """Experimental provider client. Use Gateway clients for production."""
+    """Experimental Direct endpoint evidence and signature client."""
 
     def __init__(
         self,
@@ -40,14 +42,29 @@ class DirectAttestationClient(_ApiClient):
         *,
         api_key: str | None = None,
         headers: Mapping[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         super().__init__(api_key, base_url=base_url, headers=headers)
+        self._http_client = http_client
+
+    async def _fetch(
+        self, url: str, *, headers: Mapping[str, str], _capture_peer_spki: bool = False
+    ) -> FetchResponse:
+        if self._http_client is None or _capture_peer_spki:
+            return await super()._fetch(
+                url, headers=headers, _capture_peer_spki=_capture_peer_spki
+            )
+        response = await self._http_client.get(url, headers=headers)
+        return FetchResponse(
+            status=response.status_code, body=response.content, headers=response.headers
+        )
 
     async def fetch_model_attestations(
         self,
         *,
         signing_algo: SigningAlgo | None = None,
         signing_address: str | None = None,
+        include_spki_fingerprint: bool = True,
     ) -> FetchedDirectModelAttestations:
         """Fetch the serving report and every supplied instance with a fresh nonce."""
 
@@ -56,9 +73,10 @@ class DirectAttestationClient(_ApiClient):
                 signing_address, signing_algo, 'signing_address'
             )
         nonce = generate_nonce()
-        # Disabled until the endpoint returns every serving CVM.
-        # https://github.com/nearai/cloud-api/issues/1087
-        query = {'nonce': nonce, 'include_tls_fingerprint': 'false'}
+        query = {
+            'nonce': nonce,
+            'include_tls_fingerprint': str(include_spki_fingerprint).lower(),
+        }
         if signing_algo is not None:
             query['signing_algo'] = signing_algo
         if signing_address is not None:
@@ -66,6 +84,7 @@ class DirectAttestationClient(_ApiClient):
         response = await self._get_json(
             _endpoint(self._base_url, 'attestation/report', query),
             'model_attestation',
+            capture_peer_spki=include_spki_fingerprint,
             authenticate=False,
         )
         try:
@@ -80,15 +99,20 @@ class DirectAttestationClient(_ApiClient):
         # Dataclass equality compares report contents, including opaque event logs.
         # A shared signing identity alone cannot identify the serving report.
         bare = replace(root, compose_manager_attestation=None)
-        if bare not in attestations:
+        reports = tuple(
+            replace(item, compose_manager_attestation=None) for item in attestations
+        )
+        if bare not in reports:
             raise _invalid_response(
                 'all_attestations',
                 'array containing the top-level attestation',
                 raw.all_attestations,
             )
-        serving_index = attestations.index(bare)
-        # The envelope's manager report belongs to the serving report only.
-        if root.compose_manager_attestation is not None:
+        serving_index = reports.index(bare)
+        if (
+            attestations[serving_index].compose_manager_attestation is None
+            and root.compose_manager_attestation is not None
+        ):
             attestations = tuple(
                 replace(
                     item, compose_manager_attestation=root.compose_manager_attestation
@@ -99,16 +123,18 @@ class DirectAttestationClient(_ApiClient):
             )
         for index, attestation in enumerate(attestations):
             _require_matching_api_nonce(attestation.nonce, nonce, 'model_attestation')
-            if attestation.spki_fingerprint is not None:
+            if (attestation.spki_fingerprint is not None) != include_spki_fingerprint:
                 raise _invalid_response(
                     f'all_attestations[{index}].tls_cert_fingerprint',
-                    'missing',
+                    'present' if include_spki_fingerprint else 'missing',
                     attestation.spki_fingerprint,
                 )
         return FetchedDirectModelAttestations(
             serving_attestation=attestations[serving_index],
             attestations=attestations,
-            client_binding=DirectClientBinding(nonce=nonce),
+            client_binding=DirectClientBinding(
+                nonce=nonce, spki_fingerprint=response.peer_spki_fingerprint
+            ),
             ohttp_attestation=(
                 None
                 if raw.ohttp_attestation is None

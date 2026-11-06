@@ -1,6 +1,7 @@
 import type { SigningAlgo } from '@nearai/inference-sdk/node';
-// Experimental direct-endpoint example. Use the Gateway examples for production.
+// Experimental Direct endpoint example.
 import {
+  createPinnedTlsFetch,
   DirectAttestationClient,
   NO_ALIASING_HEADER,
   type VerifiedDirectModelAttestation,
@@ -23,11 +24,20 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  const client = new DirectAttestationClient({ apiKey, baseUrl: BASE_URL });
-  const fetched = await client.fetchModelAttestations({
+  const bootstrapClient = new DirectAttestationClient({
+    apiKey,
+    baseUrl: BASE_URL,
+  });
+  const fetched = await bootstrapClient.fetchModelAttestations({
     signingAlgo: SIGNING_ALGO,
   });
   const verified = await verifyDirectModelAttestations(fetched);
+  const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
+  const client = new DirectAttestationClient({
+    apiKey,
+    baseUrl: BASE_URL,
+    fetch: pinnedTlsFetch,
+  });
   console.log(
     `Verified ${verified.attestations.length} direct model attestations.`,
   );
@@ -35,6 +45,7 @@ async function main(): Promise<void> {
   const params: CompletionExampleParams = {
     apiKey,
     client,
+    pinnedTlsFetch,
     attestations: verified.attestations,
   };
   await runNonStreamingExample(params);
@@ -98,6 +109,7 @@ async function runStreamingExample(
 
 async function sendChatRequest({
   apiKey,
+  pinnedTlsFetch,
   stream,
 }: SendChatRequestParams): Promise<SentChatRequest> {
   const body = JSON.stringify({
@@ -107,7 +119,7 @@ async function sendChatRequest({
     stream,
   });
   const requestBody = new TextEncoder().encode(body);
-  const response = await fetch(new URL('chat/completions', BASE_URL), {
+  const response = await pinnedTlsFetch(new URL('chat/completions', BASE_URL), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -150,10 +162,14 @@ async function verifyResponse({
 type CompletionExampleParams = {
   readonly apiKey: string;
   readonly client: DirectAttestationClient;
+  readonly pinnedTlsFetch: typeof fetch;
   readonly attestations: readonly VerifiedDirectModelAttestation[];
 };
 
-type SendChatRequestParams = Pick<CompletionExampleParams, 'apiKey'> & {
+type SendChatRequestParams = Pick<
+  CompletionExampleParams,
+  'apiKey' | 'pinnedTlsFetch'
+> & {
   readonly stream: boolean;
 };
 

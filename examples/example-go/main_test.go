@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,14 +77,23 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 	rtmr := sha512.Sum384(append(make([]byte, 48), digest[:]...))
 	var mu sync.Mutex
 	signatures := map[string]map[string]any{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var fingerprint string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/model/"):
 			io.WriteString(w, `{"metadata":{"providerType":"proxy","attestationSupported":false}}`)
 		case strings.HasSuffix(r.URL.Path, "/attestation/report"):
 			n := r.URL.Query().Get("nonce")
 			nb, _ := hex.DecodeString(n)
-			data := append(append([]byte(nil), binding...), nb...)
+			prefix := binding
+			includeTLS := r.URL.Query().Get("include_tls_fingerprint") == "true"
+			if includeTLS {
+				signer, _ := hex.DecodeString(address)
+				pin, _ := hex.DecodeString(fingerprint)
+				hash := sha256.Sum256(append(signer, pin...))
+				prefix = hash[:]
+			}
+			data := append(append([]byte(nil), prefix...), nb...)
 			quote, _ := json.Marshal(nearai.QuoteVerificationResult{TCBStatus: "UpToDate", ReportData: data, MRConfigID: mr, RTMR3: rtmr[:]})
 			report := map[string]any{
 				"request_nonce":   n,
@@ -94,9 +104,12 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 				"event_log":       []any{map[string]any{"imr": 3, "digest": hex.EncodeToString(digest[:])}},
 				"info":            map[string]any{"tcb_info": map[string]any{"app_compose": compose}},
 			}
+			if includeTLS {
+				report["tls_cert_fingerprint"] = fingerprint
+			}
 			if direct {
-				if r.URL.Query().Get("include_tls_fingerprint") != "false" {
-					t.Error("direct TLS attestation must remain disabled")
+				if !includeTLS {
+					t.Error("Direct client must request TLS evidence")
 				}
 				report["model_name"] = "model"
 				report["signing_public_key"] = publicKey
@@ -104,7 +117,9 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 				for key, value := range report {
 					response[key] = value
 				}
-				response["all_attestations"] = []any{report}
+				sibling := maps.Clone(report)
+				sibling["info"] = map[string]any{"instance_id": "second", "tcb_info": map[string]any{"app_compose": compose}}
+				response["all_attestations"] = []any{report, sibling}
 				json.NewEncoder(w).Encode(response)
 			} else {
 				json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": report})
@@ -169,13 +184,15 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		}
 	}))
 	defer server.Close()
+	fp := sha256.Sum256(server.Certificate().RawSubjectPublicKeyInfo)
+	fingerprint = hex.EncodeToString(fp[:])
 	quoteVerifier := func(_ context.Context, raw string) (nearai.QuoteVerificationResult, error) {
 		var q nearai.QuoteVerificationResult
 		err := json.Unmarshal([]byte(raw), &q)
 		return q, err
 	}
 	opts := nearai.InferenceOptions{
-		ClientOptions:       nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1"},
+		ClientOptions:       nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1", HTTPClient: server.Client()},
 		DisableTLSBinding:   true,
 		SigningAlgo:         algo,
 		GatewayVerification: nearai.VerificationOptions{QuoteVerifier: quoteVerifier},

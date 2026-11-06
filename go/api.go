@@ -259,7 +259,8 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 	}
 	n := nonce()
 	q.Set("nonce", n)
-	q.Set("include_tls_fingerprint", "false")
+	includeTLS := c.direct && !o.DisableTLSBinding
+	q.Set("include_tls_fingerprint", fmt.Sprint(includeTLS))
 	if !c.direct {
 		if model == "" {
 			return out, failure("api.invalid_input", nil)
@@ -267,7 +268,7 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		q.Set("model", model)
 		q.Set("provider", "near")
 	}
-	b, _, e := c.get(ctx, "attestation/report", q)
+	b, fp, e := c.get(ctx, "attestation/report", q)
 	if e != nil {
 		return out, e
 	}
@@ -286,24 +287,11 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 	}
 	for _, entry := range entries {
-		if c.direct {
-			// Only the serving envelope supplies manager evidence. Discard nested
-			// payloads before typed decoding, including unsupported future shapes.
-			var nested map[string]json.RawMessage
-			if e = json.Unmarshal(entry, &nested); e != nil || nested == nil {
-				return out, failure("api.invalid_response", e)
-			}
-			delete(nested, "compose_manager_attestation")
-			entry, e = json.Marshal(nested)
-			if e != nil {
-				return out, failure("api.invalid_response", e)
-			}
-		}
 		a, e := decodeAttestation(entry)
 		if e != nil {
 			return out, e
 		}
-		if !sameHex(a.Nonce, n) || a.SPKIFingerprint != "" || (c.direct && a.ModelName == "") {
+		if !sameHex(a.Nonce, n) || (a.SPKIFingerprint != "") != includeTLS || (c.direct && a.ModelName == "") {
 			return out, failure("api.invalid_response", nil)
 		}
 		out.Attestations = append(out.Attestations, a)
@@ -317,8 +305,12 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		for i := range out.Attestations {
 			candidate := a
 			candidate.ComposeManagerAttestation = nil
-			if sameAttestation(candidate, out.Attestations[i]) {
-				out.Attestations[i].ComposeManagerAttestation = a.ComposeManagerAttestation
+			report := out.Attestations[i]
+			report.ComposeManagerAttestation = nil
+			if sameAttestation(candidate, report) {
+				if out.Attestations[i].ComposeManagerAttestation == nil {
+					out.Attestations[i].ComposeManagerAttestation = a.ComposeManagerAttestation
+				}
 				out.ServingAttestation = &out.Attestations[i]
 				found = true
 				break
@@ -334,6 +326,12 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 	}
 	out.ClientBinding = ClientBinding{Nonce: n}
+	if includeTLS {
+		if fp == "" {
+			return out, failure("binding.spki_fingerprint_required", nil)
+		}
+		out.ClientBinding.SPKIFingerprint = fp
+	}
 	return out, nil
 }
 
@@ -449,12 +447,19 @@ func decodeAttestation(data []byte) (Attestation, error) {
 	return a, nil
 }
 
-// NewPinnedTransport clones a standard HTTP transport and enforces the quote-
-// authenticated SPKI pin during TLS handshake, before request bytes are sent.
-func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error) {
-	expected, e := hexSize(fingerprint, 32)
-	if e != nil {
-		return nil, e
+// NewPinnedTransport clones a standard HTTP transport and requires one of the
+// verified SPKI fingerprints during TLS handshake, before request bytes are sent.
+func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Transport, error) {
+	if len(fingerprints) == 0 {
+		return nil, failure("api.invalid_input", nil)
+	}
+	expected := make(map[string]bool, len(fingerprints))
+	for _, fingerprint := range fingerprints {
+		value, err := hexSize(fingerprint, 32)
+		if err != nil {
+			return nil, err
+		}
+		expected[hex.EncodeToString(value)] = true
 	}
 	if base == nil {
 		base = http.DefaultTransport.(*http.Transport)
@@ -485,7 +490,7 @@ func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transpo
 			return failure("binding.spki_fingerprint_required", nil)
 		}
 		sum := sha256.Sum256(s.PeerCertificates[0].RawSubjectPublicKeyInfo)
-		if hex.EncodeToString(sum[:]) != hex.EncodeToString(expected) {
+		if !expected[hex.EncodeToString(sum[:])] {
 			return failure("binding.spki_fingerprint_mismatch", nil)
 		}
 		return nil

@@ -111,13 +111,28 @@ impl ServerCertVerifier for PinnedVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AttestationClient, GatewayAttestationFetchOptions, SigningAlgo};
+    use crate::{
+        AttestationClient, DirectAttestationClient, GatewayAttestationFetchOptions, SigningAlgo,
+    };
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     #[tokio::test]
     async fn pin_hostname_and_chain_failures_precede_http_writes() {
-        for operation in ["chat", "model", "signature", "metadata", "gateway"] {
-            for case in ["valid", "wrong_pin", "wrong_hostname", "untrusted"] {
+        for operation in [
+            "chat",
+            "model",
+            "signature",
+            "metadata",
+            "gateway",
+            "direct",
+        ] {
+            for case in [
+                "valid",
+                "valid_second_pin",
+                "wrong_pin",
+                "wrong_hostname",
+                "untrusted",
+            ] {
                 let certified =
                     rcgen::generate_simple_self_signed(vec![if case == "wrong_hostname" {
                         "elsewhere.test"
@@ -173,6 +188,16 @@ mod tests {
                             });
                             let body = match operation {
                                 "model" => json!({"model_attestations": [report]}),
+                                "direct" => {
+                                    assert!(url.query_pairs().any(|(key, value)| key == "include_tls_fingerprint" && value == "true"));
+                                    let mut report = report;
+                                    report["model_name"] = json!("vendor/model");
+                                    report["tls_cert_fingerprint"] = json!(reported_pin);
+                                    let mut sibling = report.clone();
+                                    sibling["tls_cert_fingerprint"] = json!("44".repeat(32));
+                                    report["all_attestations"] = json!([report.clone(), sibling]);
+                                    report
+                                }
                                 "gateway" => {
                                     let mut report = report;
                                     report["tls_cert_fingerprint"] = json!(reported_pin);
@@ -205,12 +230,41 @@ mod tests {
                 } else {
                     roots.add(cert).unwrap();
                 }
-                let client = pinned_client(&[pin], roots).unwrap();
+                let pins = if case == "valid_second_pin" {
+                    vec!["44".repeat(32), pin]
+                } else {
+                    vec![pin]
+                };
+                let client = pinned_client(&pins, roots).unwrap();
                 let base_url = format!("https://localhost:{}/v1", address.port());
                 let api = AttestationClient::with_base_url(Some("test-key".into()), &base_url)
                     .unwrap()
                     .with_http_client(client.clone());
                 let succeeded = match operation {
+                    "direct" => {
+                        let direct =
+                            DirectAttestationClient::new(&base_url, Some("test-key".into()))
+                                .unwrap()
+                                .with_http_client(client.clone());
+                        match direct
+                            .fetch_model_attestations(Some(SigningAlgo::Ed25519), None)
+                            .await
+                        {
+                            Ok(fetched) => {
+                                assert_eq!(
+                                    fetched.client_binding.spki_fingerprint.as_ref(),
+                                    Some(&actual_pin)
+                                );
+                                assert_eq!(fetched.attestations.len(), 2);
+                                assert_eq!(
+                                    fetched.attestations[1].spki_fingerprint,
+                                    Some("44".repeat(32))
+                                );
+                                true
+                            }
+                            Err(_) => false,
+                        }
+                    }
                     "model" => api
                         .fetch_model_attestations("vendor/model", Some(SigningAlgo::Ed25519), None)
                         .await
@@ -240,10 +294,10 @@ mod tests {
                         .await
                         .is_ok(),
                 };
-                assert_eq!(succeeded, case == "valid", "{operation}/{case}");
+                assert_eq!(succeeded, case.starts_with("valid"), "{operation}/{case}");
                 assert_eq!(
                     task.await.unwrap(),
-                    case == "valid",
+                    case.starts_with("valid"),
                     "HTTP was written for {operation}/{case}"
                 );
             }

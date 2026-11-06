@@ -420,7 +420,7 @@ the response body before verification.
 
 `DirectInferenceClient` connects to a model endpoint and verifies every returned
 model report. Set `e2ee: true` to enable encryption. Direct clients are
-experimental; attested TLS binding is currently unavailable.
+experimental. The Node client pins requests to the verified model TLS fingerprints.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';

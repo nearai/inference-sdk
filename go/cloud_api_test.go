@@ -249,7 +249,7 @@ func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					if _, err = client.FetchModelAttestations(ctx, "canonical/model", FetchOptions{}); err != nil {
+					if _, err = client.FetchModelAttestations(ctx, "canonical/model", FetchOptions{DisableTLSBinding: true}); err != nil {
 						t.Fatal(err)
 					}
 					if _, err = client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
@@ -323,7 +323,7 @@ func TestAttestationAPIBindsEveryReport(t *testing.T) {
 						_, err := client.FetchGatewayAttestation(context.Background(), FetchOptions{DisableTLSBinding: true})
 						return err
 					}
-					_, err := client.FetchModelAttestations(context.Background(), "canonical/model", FetchOptions{})
+					_, err := client.FetchModelAttestations(context.Background(), "canonical/model", FetchOptions{DisableTLSBinding: true})
 					return err
 				}
 				if err := fetch(); err != nil {

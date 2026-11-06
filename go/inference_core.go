@@ -259,7 +259,6 @@ func (c *inferenceCore) createSession(ctx context.Context, model string) (*sessi
 	if err != nil {
 		return nil, err
 	}
-	var ohttpSigner SigningIdentity
 	for _, report := range fetchedModelAttestations.Attestations {
 		var verified VerifiedAttestation
 		var e error
@@ -273,7 +272,6 @@ func (c *inferenceCore) createSession(ctx context.Context, model string) (*sessi
 		}
 		s.models = append(s.models, verified)
 		if c.api.direct && fetchedModelAttestations.ServingAttestation != nil && sameAttestation(report, *fetchedModelAttestations.ServingAttestation) {
-			ohttpSigner = verified.Signer
 			s.direct.ServingAttestation = verified
 		}
 		if s.selected == nil &&
@@ -294,13 +292,48 @@ func (c *inferenceCore) createSession(ctx context.Context, model string) (*sessi
 		return nil, failure("policy.model_attestation_required", nil)
 	}
 	if c.api.direct {
-		s.direct.Attestations = s.models
-		if e := c.configureOHTTP(s, fetchedModelAttestations.OHTTPAttestation, ohttpSigner); e != nil {
+		if e := c.configureDirectSession(s, fetchedModelAttestations); e != nil {
 			return nil, e
 		}
 	}
 	s.verifiedAt = time.Now()
 	return s, nil
+}
+
+func (c *inferenceCore) pinSession(s *session, fingerprints []string) error {
+	base, ok := s.transport.(*http.Transport)
+	if !ok {
+		return detail("api.invalid_input", "reason", "TLS pinning requires *http.Transport")
+	}
+	key := strings.Join(fingerprints, ",")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return failure("api.client_closed", nil)
+	}
+	pinned := c.transports[key]
+	if pinned == nil {
+		var err error
+		pinned, err = NewPinnedTransport(base, fingerprints...)
+		if err != nil {
+			return err
+		}
+		if len(c.transports) >= 16 {
+			for key, old := range c.transports {
+				old.CloseIdleConnections()
+				delete(c.transports, key)
+				break
+			}
+		}
+		c.transports[key] = pinned
+	}
+	s.transport = pinned
+	api := *c.api
+	client := *c.api.http
+	client.Transport = pinned
+	api.http = &client
+	s.api = &api
+	return nil
 }
 
 func (c *inferenceCore) configureOHTTP(s *session, attestation *OHTTPAttestation, signer SigningIdentity) error {

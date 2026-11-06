@@ -327,7 +327,7 @@ func newChatExampleClient(c Config, direct, checkImages bool) (chatExampleClient
 }
 
 // RunIntegrated uses the verified transport for both JSON and SSE. Gateway mode
-// applies image provenance policy; direct mode remains experimental without TLS binding.
+// applies image provenance policy; Direct mode remains experimental.
 func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 	client, err := newChatExampleClient(c, direct, true)
 	if err != nil {
@@ -370,7 +370,7 @@ func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 	return nil
 }
 
-// RunBare authenticates reports before selecting an E2EE key, pins Gateway TLS,
+// RunBare authenticates reports before selecting an E2EE key, pins attested TLS,
 // captures exact ciphertext below decryption, and verifies receipts after EOF.
 func RunBare(ctx context.Context, c Config, direct bool) error {
 	opts := nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL}
@@ -423,6 +423,17 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			return err
 		}
 		modelAttestations = verified.Attestations
+		pinned, err := nearai.NewPinnedTransport(transport, verified.SPKIFingerprints...)
+		if err != nil {
+			return err
+		}
+		defer pinned.CloseIdleConnections()
+		transport = pinned
+		opts.HTTPClient = &http.Client{Transport: pinned}
+		api, err = nearai.NewDirectAttestationClient(opts)
+		if err != nil {
+			return err
+		}
 	} else {
 		if len(fetched.Attestations) == 0 {
 			return fmt.Errorf("Gateway returned no model attestations")

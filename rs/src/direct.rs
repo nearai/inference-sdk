@@ -1,4 +1,4 @@
-//! Experimental direct endpoints. TLS report fetching remains disabled until fleet coverage exists.
+//! Experimental Direct endpoint inference and attestation verification.
 use crate::*;
 use crate::{
     errors::protocol,
@@ -61,6 +61,23 @@ impl VerifiedDirectCompletionResult {
 pub struct DirectAttestationClient {
     api: AttestationClient,
 }
+
+pub struct DirectAttestationFetchOptions<'a> {
+    pub signing_algo: Option<SigningAlgo>,
+    pub signing_address: Option<&'a str>,
+    pub include_spki_fingerprint: bool,
+}
+
+impl Default for DirectAttestationFetchOptions<'_> {
+    fn default() -> Self {
+        Self {
+            signing_algo: None,
+            signing_address: None,
+            include_spki_fingerprint: true,
+        }
+    }
+}
+
 impl DirectAttestationClient {
     pub fn new(base_url: &str, api_key: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
@@ -71,7 +88,7 @@ impl DirectAttestationClient {
         self.api = self.api.with_headers(headers);
         self
     }
-    fn with_http_client(mut self, client: reqwest::Client) -> Self {
+    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
         self.api = self.api.with_http_client(client);
         self
     }
@@ -80,13 +97,33 @@ impl DirectAttestationClient {
         algo: Option<SigningAlgo>,
         address: Option<&str>,
     ) -> Result<FetchedDirectModelAttestations, ApiError> {
+        self.fetch_model_attestations_with_options(DirectAttestationFetchOptions {
+            signing_algo: algo,
+            signing_address: address,
+            ..Default::default()
+        })
+        .await
+    }
+
+    pub async fn fetch_model_attestations_with_options(
+        &self,
+        options: DirectAttestationFetchOptions<'_>,
+    ) -> Result<FetchedDirectModelAttestations, ApiError> {
+        let DirectAttestationFetchOptions {
+            signing_algo: algo,
+            signing_address: address,
+            include_spki_fingerprint,
+        } = options;
         if let Some(address) = address {
             crate::cloud_api::validate_input_signing_address(address, algo, "signing_address")?;
         }
         let nonce = generate_nonce();
         let mut query = vec![
             ("nonce", nonce.clone()),
-            ("include_tls_fingerprint", "false".into()),
+            (
+                "include_tls_fingerprint",
+                include_spki_fingerprint.to_string(),
+            ),
         ];
         if let Some(algo) = algo {
             query.push(("signing_algo", algo.to_string()));
@@ -94,9 +131,14 @@ impl DirectAttestationClient {
         if let Some(address) = address {
             query.push(("signing_address", address.into()));
         }
-        let value = self
+        let (value, peer_spki_fingerprint) = self
             .api
-            .fetch_value("attestation/report", &query, ApiResource::ModelAttestation)
+            .fetch_value(
+                "attestation/report",
+                &query,
+                ApiResource::ModelAttestation,
+                include_spki_fingerprint,
+            )
             .await?;
         let serving = decode(&value)?;
         let reports = value
@@ -106,27 +148,28 @@ impl DirectAttestationClient {
             .ok_or_else(|| invalid("all_attestations"))?;
         let mut attestations = reports
             .iter()
-            .map(|value| {
-                // Only the serving envelope supplies manager evidence. Ignore
-                // nested payloads before decoding even if their shape is unknown.
-                let mut value = value.clone();
-                value
-                    .as_object_mut()
-                    .ok_or_else(|| invalid("all_attestations"))?
-                    .remove("compose_manager_attestation");
-                decode(&value)
-            })
+            .map(decode)
             .collect::<Result<Vec<_>, ApiError>>()?;
         let mut bare = serving.clone();
         bare.attestation.compose_manager_attestation = None;
         let index = attestations
             .iter()
-            .position(|report| report == &bare)
+            .position(|report| {
+                let mut report = report.clone();
+                report.attestation.compose_manager_attestation = None;
+                report == bare
+            })
             .ok_or_else(|| invalid("serving_attestation"))?;
-        attestations[index].attestation.compose_manager_attestation =
-            serving.attestation.compose_manager_attestation.clone();
+        if attestations[index]
+            .attestation
+            .compose_manager_attestation
+            .is_none()
+        {
+            attestations[index].attestation.compose_manager_attestation =
+                serving.attestation.compose_manager_attestation;
+        }
         for item in &attestations {
-            if item.spki_fingerprint.is_some() {
+            if item.spki_fingerprint.is_some() != include_spki_fingerprint {
                 return Err(invalid("tls_cert_fingerprint"));
             }
             if decode_hex(&item.attestation.evidence.nonce).ok() != decode_hex(&nonce).ok() {
@@ -141,11 +184,11 @@ impl DirectAttestationClient {
             .map(|v| serde_json::from_value(v.clone()).map_err(|_| invalid("ohttp_attestation")))
             .transpose()?;
         Ok(FetchedDirectModelAttestations {
-            serving_attestation: serving,
+            serving_attestation: attestations[index].clone(),
             attestations,
             client_binding: DirectClientBinding {
                 nonce,
-                spki_fingerprint: None,
+                spki_fingerprint: peer_spki_fingerprint,
             },
             ohttp_attestation,
         })
@@ -320,6 +363,7 @@ pub struct DirectInferenceClientOptions {
     pub e2ee: bool,
     pub ohttp: bool,
     pub signing_algo: SigningAlgo,
+    pub include_spki_fingerprint: bool,
     pub attestation_cache_ttl: Duration,
     pub response_cache_ttl: Duration,
     pub model_verification: ModelVerificationOptions,
@@ -335,6 +379,7 @@ impl Default for DirectInferenceClientOptions {
             e2ee: options.e2ee,
             ohttp: options.ohttp,
             signing_algo: options.signing_algo,
+            include_spki_fingerprint: true,
             attestation_cache_ttl: options.attestation_cache_ttl,
             response_cache_ttl: options.response_cache_ttl,
             model_verification: options.model_verification,
@@ -371,8 +416,11 @@ impl DirectInferenceClient {
         })
     }
     pub fn with_options(options: DirectInferenceClientOptions) -> Result<Self, InferenceError> {
+        let provider = SessionProvider::Direct {
+            include_spki_fingerprint: options.include_spki_fingerprint,
+        };
         Ok(Self {
-            core: InferenceCore::new(options.into(), SessionProvider::Direct)?,
+            core: InferenceCore::new(options.into(), provider)?,
         })
     }
     pub async fn verify(
@@ -424,11 +472,16 @@ impl DirectInferenceClient {
 pub(crate) async fn create_session(
     model: &str,
     options: CoreOptions,
+    include_spki_fingerprint: bool,
 ) -> Result<Arc<Session>, InferenceError> {
     let api = DirectAttestationClient::new(&options.base_url, options.api_key.clone())?
         .with_headers(options.headers.clone());
     let fetched = api
-        .fetch_model_attestations(Some(options.signing_algo), None)
+        .fetch_model_attestations_with_options(DirectAttestationFetchOptions {
+            signing_algo: Some(options.signing_algo),
+            include_spki_fingerprint,
+            ..Default::default()
+        })
         .await?;
     let o = &options.model_verification;
     let policy = PolicyVerifier {

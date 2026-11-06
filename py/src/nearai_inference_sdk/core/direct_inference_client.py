@@ -16,7 +16,6 @@ from ..types.e2ee import E2eeModelKey
 from ..types.inference_client import DeploymentPolicy, ModelVerificationOptions
 from ..utils.common import hex_to_bytes
 from ..utils.errors import verification_failure
-from ..utils.fetch import FetchResponse
 from .attestation_direct import verify_direct_model_attestations
 from .chat import _parse_signature_hex, verify_model_response
 from .direct_api import DirectAttestationClient
@@ -27,26 +26,6 @@ from .inference_client import (
 )
 from .ohttp_attestation import verify_ohttp_key_config
 from .pinned_tls import create_pinned_tls_client
-
-
-class _DirectSessionAttestationClient(DirectAttestationClient):
-    def __init__(
-        self,
-        client: httpx.AsyncClient,
-        base_url: str,
-        api_key: str | None,
-        headers: Mapping[str, str],
-    ) -> None:
-        super().__init__(base_url, api_key=api_key, headers=headers)
-        self._http_client = client
-
-    async def _fetch(
-        self, url: str, *, headers: Mapping[str, str], _capture_peer_spki: bool = False
-    ) -> FetchResponse:
-        response = await self._http_client.get(url, headers=headers)
-        return FetchResponse(
-            status=response.status_code, body=response.content, headers=response.headers
-        )
 
 
 class DirectInferenceClient(
@@ -68,6 +47,7 @@ class DirectInferenceClient(
         e2ee: bool = False,
         ohttp: bool = False,
         signing_algo: SigningAlgo = 'ed25519',
+        include_spki_fingerprint: bool = True,
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         response_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         model_verification: ModelVerificationOptions | None = None,
@@ -85,6 +65,7 @@ class DirectInferenceClient(
             model_verification=model_verification,
             deployment_policy=deployment_policy,
         )
+        self._include_spki_fingerprint = include_spki_fingerprint
         self._attestation_client = DirectAttestationClient(
             base_url, api_key=api_key, headers=self._headers
         )
@@ -95,7 +76,8 @@ class DirectInferenceClient(
         VerifiedDirectCompletionResult, DirectAttestationVerificationResult
     ]:
         fetched = await self._attestation_client.fetch_model_attestations(
-            signing_algo=self._signing_algo
+            signing_algo=self._signing_algo,
+            include_spki_fingerprint=self._include_spki_fingerprint,
         )
         verified = await verify_direct_model_attestations(
             fetched,
@@ -153,8 +135,11 @@ class DirectInferenceClient(
         if client is None:
             client = self._create_direct_client(fingerprints)
             self._http_clients[fingerprints] = client
-        api = _DirectSessionAttestationClient(
-            client, self.base_url, self._api_key, self._headers
+        api = DirectAttestationClient(
+            self.base_url,
+            api_key=self._api_key,
+            headers=self._headers,
+            http_client=client,
         )
 
         def verify_response(

@@ -17,6 +17,55 @@ impl DeploymentVerifier for DeploymentCheck {
 }
 
 #[tokio::test]
+async fn direct_tls_verifies_every_report_and_the_serving_peer() {
+    for case in ["valid", "wrong peer", "invalid sibling"] {
+        let (_server, _, options) = setup(Fixture {
+            direct: true,
+            bad_model: case == "invalid sibling",
+            ..Default::default()
+        })
+        .await;
+        let api = DirectAttestationClient::new(&options.base_url, options.api_key.clone())
+            .unwrap()
+            .with_headers(options.headers);
+        let mut fetched = api
+            .fetch_model_attestations(Some(SigningAlgo::Ed25519), None)
+            .await
+            .unwrap();
+        fetched.client_binding.spki_fingerprint =
+            Some(if case == "wrong peer" { "33" } else { "11" }.repeat(32));
+        let result = verify_direct_model_attestations(
+            &fetched,
+            None,
+            ModelAttestationVerifiers {
+                tdx_quote: options.model_verification.tdx_quote.as_deref(),
+                ..Default::default()
+            },
+        )
+        .await;
+        match case {
+            "valid" => {
+                let verified = result.unwrap();
+                assert_eq!(verified.attestations.len(), 2);
+                assert_eq!(
+                    verified.spki_fingerprints,
+                    ["11".repeat(32), "22".repeat(32)]
+                );
+                assert!(matches!(
+                    verified.tls_binding,
+                    GatewayTlsBinding::Attested { .. }
+                ));
+            }
+            "wrong peer" => assert_eq!(
+                result.unwrap_err().code(),
+                "binding.spki_fingerprint_mismatch"
+            ),
+            _ => assert_eq!(result.unwrap_err().code(), "binding.report_data_mismatch"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn direct_deployment_verifier_checks_every_report() {
     let (_server, _fixture, mut options) = setup(Fixture {
         direct: true,
