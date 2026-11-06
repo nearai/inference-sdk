@@ -392,16 +392,14 @@ verified_gateway = await verify_gateway_attestation(
     fetched_gateway.client_binding,
 )
 assert verified_gateway.tls_binding.kind == 'attested'
-async with create_pinned_tls_client(
+pinned_tls_client = create_pinned_tls_client(
     verified_gateway.tls_binding.spki_fingerprint
-) as pinned_tls_client:
-    client = AttestationClient(api_key, http_client=pinned_tls_client)
-    model_attestations = await verify_model_deployments(client)
-    # Send Chat with pinned_tls_client and verify its signature with client
-    # before leaving this context. The later snippets describe those steps.
+)
+client = AttestationClient(api_key, http_client=pinned_tls_client)
+model_attestations = await verify_model_deployments(client)
 ```
 
-Keep the pinned HTTP client open through inference and response verification.
+The next two stages reuse this client and close it after response verification.
 
 ### Gateway TLS identity
 
@@ -614,7 +612,7 @@ request_body = prepared.request.content
 ```
 
 `prepared.request` contains the encrypted fields and E2EE/routing headers.
-Send it using the same `pinned_tls_client` opened in stage 1, within its context.
+Send it using the same `pinned_tls_client` opened in stage 1.
 Pass the response to `await prepared.decrypt_response(response)` for JSON or SSE
 decryption. Retain the original encrypted response bytes separately for step 3.
 Each prepared request owns a fresh response-decryption key.
@@ -661,6 +659,8 @@ else:
         signature,
         verified_gateway,
     )
+
+await pinned_tls_client.aclose()
 ```
 
 `matching_attestations` contains every verified report sharing the response signer.

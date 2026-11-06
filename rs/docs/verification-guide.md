@@ -170,6 +170,12 @@ report. Retain these results for response verification.
 
 ## Verify Gateway and model deployments
 
+The standalone flow also uses `reqwest` directly:
+
+```sh
+cargo add reqwest@0.12
+```
+
 Use the same signing algorithm for attestation and signature requests.
 This example uses ECDSA:
 
