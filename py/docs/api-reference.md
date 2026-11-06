@@ -409,7 +409,7 @@ TLS binding requires an HTTPS endpoint; use `False` for an HTTP custom endpoint.
 
 | `FetchedGatewayAttestation` field | Type | Description |
 | --- | --- | --- |
-| `attestation` | `GatewayAttestation` | Gateway evidence for `gateway`. For model receipts, the selected-key report is deprecated; use `attestations`. |
+| `attestation` | `GatewayAttestation` | Returned Gateway evidence. |
 | `client_binding` | `GatewayClientBinding` | Client values associated with this evidence request. |
 
 | Client-binding field | Type | Description |
