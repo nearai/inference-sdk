@@ -146,7 +146,11 @@ export type VerifiedModelCompletionResult = {
   readonly signature: CompletionSignature;
   /** Verified reports sharing the request's selected signer, not a unique instance. */
   readonly attestations: readonly VerifiedModelAttestation[];
-  /** @deprecated Use `attestations`. This represents the selected key, not the serving instance. */
+  /**
+   * Report used to select the request's model public key, retained for compatibility.
+   * It does not identify which instance served the request.
+   * @deprecated Use `attestations` for all verified reports sharing the selected signer.
+   */
   readonly attestation: VerifiedModelAttestation;
 };
 

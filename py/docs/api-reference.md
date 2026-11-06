@@ -149,7 +149,7 @@ before calling `verify_response()`.
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestations` | `tuple[VerifiedModelAttestation, ...]` | Present for `provider_tee`: all preflight reports matching the request's selected signer, without attributing the response to a unique instance. |
-| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Gateway evidence for `gateway`. Deprecated for `provider_tee`: representative key evidence retained for compatibility. |
+| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Gateway evidence for `gateway`. Deprecated for `provider_tee`: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key; does not identify the serving instance. |
 
 Response records expire at the configured TTL after body completion. Successful
 verification and cached terminal failures release the captured wire bytes and

@@ -112,8 +112,11 @@ pub struct AttestationVerificationResult {
 #[derive(Clone, Debug)]
 pub enum VerifiedCompletionAttestation {
     Gateway(VerifiedGatewayAttestation),
-    /// A representative of the selected routing key, not a serving-instance claim.
-    /// See `VerifiedCompletionResult::attestations` for all matching Gateway reports.
+    /// Report used to select the request's model public key, retained for compatibility.
+    /// It does not identify which instance served the request.
+    #[deprecated(
+        note = "Use VerifiedCompletionResult::attestations for all verified reports sharing the selected model signer."
+    )]
     Model(VerifiedModelAttestation),
     Direct(Vec<crate::direct::VerifiedDirectModelAttestation>),
 }
@@ -121,6 +124,9 @@ pub enum VerifiedCompletionAttestation {
 pub struct VerifiedCompletionResult {
     pub id: String,
     pub signature: CompletionSignature,
+    /// Gateway or Direct evidence, or the deprecated single-model representative.
+    /// For model receipts from a Gateway client, use [`Self::attestations`].
+    /// Gateway-signed receipts and Direct clients continue to use this field.
     pub attestation: VerifiedCompletionAttestation,
     /// Every verified Gateway model report sharing this response's signer.
     /// Empty for Gateway-signed receipts and Direct clients, whose reports remain
@@ -814,7 +820,11 @@ impl InferenceClient {
                                     .into_iter()
                                     .cloned()
                                     .collect();
-                                    VerifiedCompletionAttestation::Model(model.clone())
+                                    // Preserve the deprecated representative for existing callers.
+                                    #[allow(deprecated)]
+                                    let representative =
+                                        VerifiedCompletionAttestation::Model(model.clone());
+                                    representative
                                 }
                             }
                         };

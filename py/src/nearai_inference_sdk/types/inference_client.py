@@ -48,13 +48,17 @@ class VerifiedModelCompletionResult:
     """Response verified against the request's selected signing identity.
 
     ``attestations`` contains all matching preflight reports, without claiming
-    which instance served the response. ``attestation`` is deprecated: it is
-    representative key evidence retained for compatibility, not an instance ID.
+    which instance served the response. Use ``attestations`` for model evidence.
+    The deprecated ``attestation`` field retains the report used to select the
+    request's model public key; it does not identify the serving instance.
     """
 
     id: str
     signature: CompletionSignature
     attestations: tuple[VerifiedModelAttestation, ...]
+    #: Deprecated: use ``attestations`` for all verified reports sharing the
+    #: selected signer. This is the report used to select the request's model
+    #: public key, not the identity of the serving instance.
     attestation: VerifiedModelAttestation
     signature_kind: Literal['provider_tee'] = 'provider_tee'
 

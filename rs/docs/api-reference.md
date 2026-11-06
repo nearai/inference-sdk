@@ -33,8 +33,10 @@ turn them into `ApiError::HttpStatus`.
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
 `Gateway`, `Model`, or `Direct` (the matching report group). For a Gateway
 `ProviderTee` receipt, `attestations` contains every verified report sharing the
-response signer. The compatibility `Model` value represents the selected routing
-key; it does not identify the serving instance. `attestations` is empty for
+response signer. The `Model` variant is deprecated: use `attestations` for model
+evidence. It retains the report used to select the request's model public key and
+does not identify the serving instance. The `Gateway` and `Direct` variants remain
+supported. `attestations` is empty for
 Gateway-signed receipts and Direct clients, whose report group stays in `Direct`.
 `signature_kind()` returns `CompletionSignatureKind`.
 

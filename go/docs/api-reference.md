@@ -364,8 +364,10 @@ type VerifiedCompletionResult struct {
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
- // Gateway evidence or the selected model-key representative; nil for Direct.
- // A model-key representative does not identify an individual instance.
+ // Gateway evidence for gateway receipts; nil for Direct.
+ // Deprecated for provider_tee receipts: use Attestations for all matching reports.
+ // Retains the report used to select the request's model public key;
+ // it does not identify the serving instance.
  Attestation *VerifiedAttestation
  // Every matching verified model deployment for provider_tee receipts.
 	Attestations []VerifiedAttestation
@@ -498,8 +500,10 @@ E2EE. It distinguishes:
 
 `VerifiedCompletionResult.Attestations` includes every verified model report
 matching a `provider_tee` response's signer. Gateway clients also require that
-signer to match the key selected for the request. The legacy `Attestation` field
-retains the selected model-key representative; it does not identify one instance.
+signer to match the key selected for the request. Reading `Attestation` for
+`provider_tee` receipts is deprecated: use `Attestations` for model evidence. The
+old field retains the report used to select the request's model public key and
+does not identify the serving instance.
 For `gateway` receipts, `Attestation` contains Gateway evidence and `Attestations`
 is empty. Direct endpoints keep `Attestation` nil and return the matching group in
 `Attestations`: a shared signing key cannot identify an individual serving instance.

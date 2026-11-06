@@ -126,7 +126,7 @@ Model reports through the Gateway use configured authentication after Gateway ve
 | `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, Messages ID, or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
 | `VerifiedModelCompletionResult.attestations` | `readonly VerifiedModelAttestation[]` | Every verified report sharing the request's selected signer, in response order. Does not identify one serving instance. |
-| `VerifiedModelCompletionResult.attestation` | `VerifiedModelAttestation` | Deprecated representative of the selected key; use `attestations`. |
+| `VerifiedModelCompletionResult.attestation` | `VerifiedModelAttestation` | Deprecated: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key; does not identify the serving instance. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |

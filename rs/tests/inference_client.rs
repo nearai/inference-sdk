@@ -655,10 +655,11 @@ async fn gateway_shared_signer_preserves_all_verified_reports() {
     client.chat_completions(body()).await.unwrap();
     let receipt = client.verify_response("chat-0").await.unwrap();
     assert_eq!(receipt.attestations, preflight.models);
-    assert!(matches!(
-        receipt.attestation,
-        VerifiedCompletionAttestation::Model(_)
-    ));
+    // The deprecated representative remains available to existing callers.
+    #[allow(deprecated)]
+    let has_legacy_representative =
+        matches!(receipt.attestation, VerifiedCompletionAttestation::Model(_));
+    assert!(has_legacy_representative);
     assert_eq!(
         client.verify_response("chat-0").await.unwrap().attestations,
         preflight.models
