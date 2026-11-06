@@ -1149,18 +1149,21 @@ describe('inference client', () => {
   });
 
   test.each(['chat/completions', 'responses'])(
-    'does not register a %s ID after [DONE]',
+    'rejects %s [DONE] without an ID before exposing it',
     async (endpoint) => {
       const gateway = createTestGateway();
       const payload =
         endpoint === 'responses'
           ? { response: { id: 'late-id' } }
           : { id: 'late-id' };
-      const raw = `data: [DONE]\n\ndata: ${JSON.stringify(payload)}\n\n`;
+      const records = [
+        'data: [DONE]\n\n',
+        `data: ${JSON.stringify(payload)}\n\n`,
+      ];
       jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
         const request = new Request(input, init);
         return new URL(request.url).pathname === `/v1/${endpoint}`
-          ? Promise.resolve(streamResponse(Array.from(raw)))
+          ? Promise.resolve(streamResponse(records))
           : gateway.fetch(request);
       });
       const client = new InferenceClient({
@@ -1171,7 +1174,7 @@ describe('inference client', () => {
         `${baseUrl}${endpoint}`,
         chatRequest({ messages: [], input: 'Hello', stream: true }),
       );
-      await expect(response.text()).rejects.toMatchObject({
+      await expect(response.body?.getReader().read()).rejects.toMatchObject({
         failure: { code: 'api.invalid_response' },
       });
       await expect(client.verifyResponse('late-id')).rejects.toMatchObject({

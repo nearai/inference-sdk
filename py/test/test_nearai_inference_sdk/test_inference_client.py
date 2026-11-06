@@ -491,6 +491,46 @@ async def test_clear_response_cache_during_stream_does_not_schedule_expiry(monke
             await stream.close()
 
 
+@pytest.mark.parametrize('endpoint', ['chat/completions', 'responses'])
+async def test_done_without_id_is_rejected_before_exposing_it(monkeypatch, endpoint):
+    gateway = Gateway()
+    original_handle = gateway.handle
+    payload = (
+        {'response': {'id': 'late-id'}}
+        if endpoint == 'responses'
+        else {'id': 'late-id'}
+    )
+
+    async def handle(request):
+        if request.url.path == '/v1/' + endpoint:
+            return httpx.Response(
+                200,
+                headers={'content-type': 'text/event-stream'},
+                stream=ChunkStream(
+                    [b'data: [DONE]\n\n', f'data: {json.dumps(payload)}\n\n'.encode()]
+                ),
+            )
+        return await original_handle(request)
+
+    monkeypatch.setattr(gateway, 'handle', handle)
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        async with client.http_client.stream(
+            'POST',
+            BASE_URL + endpoint,
+            json={
+                'model': MODEL,
+                'messages': MESSAGES,
+                'input': 'Hello',
+                'stream': True,
+            },
+        ) as response:
+            with pytest.raises(ApiError, match='api.invalid_response'):
+                await anext(response.aiter_bytes())
+        with pytest.raises(ApiError, match='api.completion_not_found'):
+            await client.verify_response('late-id')
+
+
 @pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
 async def test_external_openai_close_preserves_receipts_and_owner(
     monkeypatch, gateway, adapter_name

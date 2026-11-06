@@ -907,6 +907,8 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         for record in parsed.records:
             for data in get_sse_data_records(record.value):
                 if data == '[DONE]':
+                    if not self._registered:
+                        raise _invalid_completion_id()
                     self._done = True
                     return
                 elif self._messages and data:

@@ -573,6 +573,9 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		if messages && (!completeSSERecord(record) || event == "error" || data == "[DONE]") {
 			return nil, failure("api.invalid_response", nil)
 		}
+		if data == "[DONE]" && id == "" {
+			return nil, failure("api.invalid_response", nil)
+		}
 		if event == "error" {
 			failed = true
 		}

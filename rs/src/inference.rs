@@ -655,6 +655,9 @@ impl InferenceClient {
                 };
                 if messages { message_state.observe(parsed)?; }
                 let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, &mut done, responses, messages)?;
+                if done && id.is_none() {
+                    return Err(invalid_response().into());
+                }
                 // The retained signature payload and plaintext output keep the BOM.
                 Ok(if key.is_some() { transformed } else { record })
             };

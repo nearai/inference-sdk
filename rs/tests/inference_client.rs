@@ -1002,6 +1002,46 @@ async fn empty_reports_invalid_candidate_and_unbound_keys_block_chat() {
     }
 }
 #[tokio::test]
+async fn done_without_id_is_rejected_before_exposing_it() {
+    for endpoint in ["chat/completions", "responses"] {
+        let (server, _, options) = setup(Fixture::default()).await;
+        let payload = if endpoint == "responses" {
+            json!({"response": {"id": "late-id"}})
+        } else {
+            json!({"id": "late-id"})
+        };
+        Mock::given(wiremock::matchers::path(format!("/v1/{endpoint}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_bytes(format!("data: [DONE]\n\ndata: {payload}\n\n").into_bytes()),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let request = if endpoint == "responses" {
+            client
+                .response_request(response_request_body(true))
+                .unwrap()
+        } else {
+            let mut request = body();
+            request["stream"] = json!(true);
+            client.chat_request(request).unwrap()
+        };
+        let mut response = client.send(request).await.unwrap();
+        assert_eq!(
+            response.body.next().await.unwrap().unwrap_err().code(),
+            "api.invalid_response"
+        );
+        assert_eq!(
+            client.verify_response("late-id").await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+    }
+}
+
+#[tokio::test]
 async fn streaming_retains_tail_and_does_not_verify_partial_responses() {
     let (_server, _f, options) = setup(Fixture::default()).await;
     let client = InferenceClient::with_options(options).unwrap();
