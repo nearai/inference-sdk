@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 
 from nearai_inference_sdk import (
@@ -26,7 +27,8 @@ from nearai_inference_sdk import (
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-SIGNING_ADDRESS = f'0x{"22" * 20}'
+from .fixtures import SIGNING_ADDRESS, cloud_attestation
+
 API_KEY = 'test'
 BASE_URL = 'https://cloud.example/v1'
 OHTTP_WIRE_ATTESTATION = {
@@ -42,6 +44,70 @@ CloudApiResponder = Callable[[str, Mapping[str, str]], Awaitable[FetchResponse]]
 
 def cloud_client() -> AttestationClient:
     return AttestationClient(API_KEY, base_url=BASE_URL)
+
+
+@pytest.mark.parametrize('include_spki_fingerprint', [False, True])
+async def test_gateway_bootstrap_keeps_its_own_peer_capturing_transport(
+    monkeypatch, include_spki_fingerprint
+):
+    async def bootstrap_fetch(url, *, headers, _capture_peer_spki):
+        assert _capture_peer_spki is include_spki_fingerprint
+        assert 'authorization' not in headers
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        fingerprint = '33' * 32 if include_spki_fingerprint else None
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        report_data='44' * 64,
+                        tls_cert_fingerprint=fingerprint,
+                    )
+                }
+            ).encode(),
+            peer_spki_fingerprint=fingerprint,
+        )
+
+    async def unexpected_api_request(request):
+        raise AssertionError('Gateway bootstrap must not use the ordinary API client')
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', bootstrap_fetch)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(unexpected_api_request)
+    ) as http_client:
+        client = AttestationClient(API_KEY, base_url=BASE_URL, http_client=http_client)
+        fetched = await client.fetch_gateway_attestation(
+            include_spki_fingerprint=include_spki_fingerprint
+        )
+        assert fetched.client_binding.spki_fingerprint == (
+            '33' * 32 if include_spki_fingerprint else None
+        )
+        assert not http_client.is_closed
+
+
+async def test_borrowed_http_client_does_not_follow_evidence_redirects():
+    requested_urls = []
+
+    async def redirect(request):
+        requested_urls.append(str(request.url))
+        return httpx.Response(
+            302, headers={'Location': 'https://other.example/v1/signature/completion'}
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(redirect), follow_redirects=True
+    ) as http_client:
+        client = AttestationClient(
+            api_key=API_KEY, base_url=BASE_URL, http_client=http_client
+        )
+        with pytest.raises(ApiError) as rejected:
+            await client.fetch_completion_signature('completion')
+        assert rejected.value.failure.code == 'api.http_status'
+        assert rejected.value.failure.details['status'] == 302
+        assert not http_client.is_closed
+
+    assert requested_urls == [BASE_URL + '/signature/completion']
 
 
 @pytest.mark.parametrize('supported', [True, False, 'true'])
@@ -283,19 +349,6 @@ async def test_unlisted_model_report_uses_configured_organization_key(
         assert raised.value.failure.details['status'] == 400
 
 
-def cloud_attestation(nonce: str, **overrides: object) -> dict[str, object]:
-    return {
-        'request_nonce': nonce,
-        'signing_algo': 'ecdsa',
-        'signing_address': SIGNING_ADDRESS,
-        'intel_quote': 'aa',
-        'event_log': [],
-        'info': {'tcb_info': {'app_compose': '{}'}},
-        'tls_cert_fingerprint': '33' * 32,
-        **overrides,
-    }
-
-
 def model_signature() -> CompletionSignature:
     return CompletionSignature(
         kind='provider_tee',
@@ -341,7 +394,7 @@ def completion_signature_response(
     )
 
 
-async def test_model_helper_requests_fresh_evidence(
+async def test_model_helper_requests_fresh_evidence_and_preserves_report_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, dict[str, str]]] = []
@@ -349,50 +402,55 @@ async def test_model_helper_requests_fresh_evidence(
     async def fake_fetch(url: str, headers: Mapping[str, str]) -> FetchResponse:
         calls.append((url, dict(headers)))
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        first = cloud_attestation(
+            nonce, report_data='44' * 64, signing_public_key='55' * 65
+        )
         return FetchResponse(
             status=200,
             body=json.dumps(
                 {
                     'model_attestations': [
+                        first,
                         cloud_attestation(
-                            nonce,
-                            report_data='44' * 64,
-                            signing_public_key='55' * 65,
+                            nonce, signing_address='33' * 20, report_data='44' * 64
                         ),
-                        cloud_attestation(
-                            nonce,
-                            signing_address='33' * 20,
-                            report_data='44' * 64,
-                        ),
+                        first,
                     ]
                 }
             ).encode(),
         )
 
     use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
-
-    fetched = await cloud_client().fetch_model_attestations(
-        'canonical-model',
-        signing_algo='ecdsa',
-        signing_address=SIGNING_ADDRESS,
+    client = cloud_client()
+    first = await client.fetch_model_attestations(
+        'canonical-model', signing_algo='ecdsa', signing_address=SIGNING_ADDRESS
     )
-    assert tuple(
-        attestation.signer.signing_address for attestation in fetched.attestations
-    ) == (SIGNING_ADDRESS, '33' * 20)
-    assert fetched.attestations[0].signing_public_key == '55' * 65
-    assert fetched.attestations[1].signing_public_key is None
-    assert len(calls) == 1
-    url, headers = calls[0]
-    query = parse_qs(urlsplit(url).query)
-    assert urlsplit(url).geturl().startswith(f'{BASE_URL}/attestation/report?')
-    assert query['model'] == ['canonical-model']
-    assert query['provider'] == ['near']
-    assert query['nonce'] == [fetched.client_binding.nonce]
-    assert query['include_tls_fingerprint'] == ['false']
-    assert query['signing_algo'] == ['ecdsa']
-    assert query['signing_address'] == [SIGNING_ADDRESS]
-    assert headers['authorization'] == 'Bearer test'
-    assert headers['x-no-aliasing'] == 'true'
+    second = await client.fetch_model_attestations(
+        'canonical-model', signing_algo='ecdsa', signing_address=SIGNING_ADDRESS
+    )
+    assert first.client_binding.nonce != second.client_binding.nonce
+    assert len(calls) == 2
+    for fetched, (url, headers) in zip((first, second), calls, strict=True):
+        assert tuple(
+            attestation.signer.signing_address for attestation in fetched.attestations
+        ) == (SIGNING_ADDRESS, '33' * 20, SIGNING_ADDRESS)
+        assert fetched.attestations[0] == fetched.attestations[2]
+        assert fetched.attestations[0].signing_public_key == '55' * 65
+        assert fetched.attestations[1].signing_public_key is None
+        assert all(
+            attestation.nonce == fetched.client_binding.nonce
+            for attestation in fetched.attestations
+        )
+        query = parse_qs(urlsplit(url).query)
+        assert url.startswith(f'{BASE_URL}/attestation/report?')
+        assert query['model'] == ['canonical-model']
+        assert query['provider'] == ['near']
+        assert query['nonce'] == [fetched.client_binding.nonce]
+        assert query['include_tls_fingerprint'] == ['false']
+        assert query['signing_algo'] == ['ecdsa']
+        assert query['signing_address'] == [SIGNING_ADDRESS]
+        assert headers['authorization'] == 'Bearer test'
+        assert headers['x-no-aliasing'] == 'true'
 
 
 def test_model_selection_matches_equivalent_hex_signer_formats() -> None:
@@ -1033,34 +1091,6 @@ async def test_model_attestation_fetch_preserves_an_empty_collection(
     fetched = await cloud_client().fetch_model_attestations('canonical-model')
 
     assert fetched.attestations == ()
-
-
-async def test_model_attestation_fetch_preserves_multiple_records(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def two_attestations(url: str, _: Mapping[str, str]) -> FetchResponse:
-        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        return FetchResponse(
-            status=200,
-            body=json.dumps(
-                {
-                    'model_attestations': [
-                        cloud_attestation(nonce),
-                        cloud_attestation(nonce),
-                    ]
-                }
-            ).encode(),
-        )
-
-    use_fake_cloud_api_fetch(monkeypatch, two_attestations)
-
-    fetched = await cloud_client().fetch_model_attestations('canonical-model')
-
-    assert len(fetched.attestations) == 2
-    assert all(
-        attestation.nonce == fetched.client_binding.nonce
-        for attestation in fetched.attestations
-    )
 
 
 async def test_model_attestation_fetch_checks_every_nonce(

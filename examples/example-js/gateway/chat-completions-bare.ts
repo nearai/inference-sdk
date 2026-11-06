@@ -65,12 +65,19 @@ async function main(): Promise<void> {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const client = new AttestationClient({ apiKey, baseUrl: BASE_URL });
+  const bootstrapClient = new AttestationClient({ apiKey, baseUrl: BASE_URL });
 
   // Verify the Gateway and every returned model report before sending a prompt.
   // A failed check throws and stops this flow before either Chat request.
-  const gateway = await fetchAndVerifyGateway(client);
-  const modelAttestations = await fetchAndVerifyModelAttestations(client);
+  const gateway = await fetchAndVerifyGateway(bootstrapClient);
+  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
+  const attestationClient = new AttestationClient({
+    apiKey,
+    baseUrl: BASE_URL,
+    fetch: pinnedTlsFetch,
+  });
+  const modelAttestations =
+    await fetchAndVerifyModelAttestations(attestationClient);
 
   // Encryption needs only the verified public key and its algorithm. Keep the
   // full model verification result separately for the response signature check.
@@ -81,18 +88,15 @@ async function main(): Promise<void> {
     publicKey: selectedModelAttestation.signingPublicKey,
   };
 
-  // TLS pinning is recommended in Node. In browsers, use regular fetch instead;
-  // browser APIs do not expose the TLS peer certificate needed for this check.
-  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
-
   // Non-streaming: decrypt the JSON response, verify its signature, then display it.
-  const nonStreamingCompletion = await runNonStreamingExample({
+  const nonStreamingCompletion = await sendCompletion({
     apiKey,
+    stream: false,
     pinnedTlsFetch,
     modelKey,
   });
   await verifyCompletionResponse({
-    client,
+    client: attestationClient,
     completion: nonStreamingCompletion,
     gateway,
     modelAttestations,
@@ -101,43 +105,18 @@ async function main(): Promise<void> {
 
   // Streaming: display decrypted SSE as it arrives. Signature verification needs
   // the complete response bytes, so it runs after the stream finishes.
-  const streamingCompletion = await runStreamingExample({
-    apiKey,
-    pinnedTlsFetch,
-    modelKey,
-  });
-  await verifyCompletionResponse({
-    client,
-    completion: streamingCompletion,
-    gateway,
-    modelAttestations,
-    selectedModelAttestation,
-  });
-}
-
-async function runNonStreamingExample({
-  apiKey,
-  pinnedTlsFetch,
-  modelKey,
-}: CompletionExampleParams): Promise<Completion> {
-  return sendCompletion({
-    apiKey,
-    stream: false,
-    pinnedTlsFetch,
-    modelKey,
-  });
-}
-
-async function runStreamingExample({
-  apiKey,
-  pinnedTlsFetch,
-  modelKey,
-}: CompletionExampleParams): Promise<Completion> {
-  return sendCompletion({
+  const streamingCompletion = await sendCompletion({
     apiKey,
     stream: true,
     pinnedTlsFetch,
     modelKey,
+  });
+  await verifyCompletionResponse({
+    client: attestationClient,
+    completion: streamingCompletion,
+    gateway,
+    modelAttestations,
+    selectedModelAttestation,
   });
 }
 
@@ -271,12 +250,13 @@ async function sendCompletion({
     readDecryptedCompletion({ response: decryptedResponse, stream }),
   ]);
 
+  const output = chatOutput(plaintextBody, stream);
   return {
-    id: readCompletionId({ responseText: plaintextBody, stream }),
+    id: output.id,
     label: stream ? 'Streaming completion' : 'Completion',
     requestBody,
     responseBody: new Uint8Array(responseBytes),
-    text: stream ? undefined : chatOutput(plaintextBody, false).text,
+    text: stream ? undefined : output.text,
   };
 }
 
@@ -285,8 +265,7 @@ async function readDecryptedCompletion({
   stream,
 }: ReadDecryptedCompletionParams): Promise<string> {
   if (!stream) {
-    const responseText = await response.text();
-    return responseText;
+    return response.text();
   }
   if (response.body === null) {
     throw new Error('Streaming Chat response has no body');
@@ -367,13 +346,6 @@ async function verifyCompletionResponse({
   if (completion.text !== undefined) console.log(completion.text);
 }
 
-function readCompletionId({
-  responseText,
-  stream,
-}: ReadCompletionIdParams): string {
-  return chatOutput(responseText, stream).id;
-}
-
 type Completion = {
   readonly id: string;
   readonly label: string;
@@ -383,19 +355,11 @@ type Completion = {
   readonly text?: string;
 };
 
-type CompletionExampleParams = {
+type SendCompletionParams = {
+  readonly stream: boolean;
   readonly apiKey: string;
   readonly pinnedTlsFetch: typeof globalThis.fetch;
   readonly modelKey: E2eeModelKey;
-};
-
-type SendCompletionParams = CompletionExampleParams & {
-  readonly stream: boolean;
-};
-
-type ReadCompletionIdParams = {
-  readonly responseText: string;
-  readonly stream: boolean;
 };
 
 type ReadDecryptedCompletionParams = {

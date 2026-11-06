@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -17,22 +16,8 @@ import (
 )
 
 func TestLiveAnthropic(t *testing.T) {
-	for _, name := range []string{"NEARAI_API_KEY", "NEARAI_BASE_URL", "NEARAI_E2E_MODELS"} {
-		if os.Getenv(name) == "" {
-			t.Fatalf("%s is required", name)
-		}
-	}
-	var models []struct{ ID, Endpoint string }
-	if err := json.Unmarshal([]byte(os.Getenv("NEARAI_E2E_MODELS")), &models); err != nil {
-		t.Fatal(err)
-	}
-	var selected []string
-	for _, model := range models {
-		if model.Endpoint == "messages" {
-			selected = append(selected, model.ID)
-		}
-	}
-	if len(selected) != 1 || selected[0] == "" {
+	selected := liveModels(t, "messages")
+	if len(selected) != 1 {
 		t.Fatal("expected one Anthropic Messages model")
 	}
 	for _, scenario := range []struct {
@@ -60,7 +45,7 @@ func TestLiveAnthropic(t *testing.T) {
 				option.WithMaxRetries(0),
 			)
 			request := anthropic.MessageNewParams{
-				Model: anthropic.Model(selected[0]), MaxTokens: 128,
+				Model: anthropic.Model(selected[0].ID), MaxTokens: 128,
 				Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock("Reply with the word OK."))},
 			}
 			for _, streaming := range []bool{false, true} {
@@ -103,19 +88,8 @@ func TestLiveAnthropic(t *testing.T) {
 				if message.ID == "" || message.Type != "message" || message.StopReason != "end_turn" || strings.TrimSpace(text) == "" {
 					t.Fatal("expected a nonempty complete Messages answer")
 				}
-				receiptCtx, receiptCancel := context.WithTimeout(ctx, 15*time.Second)
-				err = retryReceipt(receiptCtx, func() error {
-					receipt, err := inference.VerifyResponse(receiptCtx, message.ID)
-					if err == nil && (receipt.ID != message.ID || receipt.SignatureKind != "gateway") {
-						t.Fatal("expected matching Gateway receipt")
-					}
-					return err
-				})
-				receiptCancel()
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Logf("Official Anthropic model=%s, stream=%t: verified Gateway receipt", selected[0], streaming)
+				verifyLiveReceipt(t, ctx, inference, message.ID, scenario.algo, true)
+				t.Logf("Official Anthropic model=%s, stream=%t: verified Gateway receipt", selected[0].ID, streaming)
 			}
 		})
 	}
