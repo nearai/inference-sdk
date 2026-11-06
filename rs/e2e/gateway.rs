@@ -171,7 +171,6 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT_ENCODING, "identity")
             .header("x-no-aliasing", "true")
-            .header("X-Signing-Algo", signing_algo.to_string())
             .body(request_body.clone());
         if let Some(attestation) = selected_attestation {
             request = request.header(

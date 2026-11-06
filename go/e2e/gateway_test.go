@@ -291,7 +291,6 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				r.Header.Set("X-Signing-Algo", string(algo))
 				if selected != nil {
 					r.Header.Set("X-Model-Pub-Key", selected.SigningPublicKey)
 				}

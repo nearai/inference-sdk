@@ -332,7 +332,6 @@ for (const selectedModel of MODELS) {
               'Content-Type': 'application/json',
               'Accept-Encoding': 'identity',
               'x-no-aliasing': 'true',
-              'X-Signing-Algo': signingAlgo,
               ...(selectedAttestation?.signingPublicKey && {
                 'X-Model-Pub-Key': selectedAttestation.signingPublicKey,
               }),

@@ -269,7 +269,6 @@ async def verify_chat(
             'Content-Type': 'application/json',
             'Accept-Encoding': 'identity',
             'x-no-aliasing': 'true',
-            'X-Signing-Algo': signing_algo,
         }
         if selected_attestation is not None:
             headers['X-Model-Pub-Key'] = selected_attestation.signing_public_key
