@@ -13,7 +13,12 @@ from pydantic import ValidationError
 from ..schemas import ChatCompletionResponseSchema
 from ..types.e2ee import E2eeModelKey
 from ..utils.errors import ApiError, api_failure, verification_failure
-from ..utils.sse import get_sse_data, split_sse_lines, take_complete_sse_records
+from ..utils.sse import (
+    get_sse_data,
+    get_sse_data_records,
+    split_sse_lines,
+    take_complete_sse_records,
+)
 from .e2ee import (
     E2eeClientKeyPair,
     decrypt_e2ee_text,
@@ -147,18 +152,26 @@ async def decrypt_e2ee_chat_sse(
 
     decoder = codecs.getincrementaldecoder('utf-8')()
     pending = ''
+    done = False
     try:
         async for chunk in source:
             pending += decoder.decode(chunk)
             complete = take_complete_sse_records(pending)
             pending = complete.pending
             for record in complete.records:
-                yield _transform_sse_record(
-                    record.value, record.separator, client_key_pair
+                done = done or '[DONE]' in get_sse_data_records(record.value)
+                yield (
+                    record.value + record.separator
+                    if done
+                    else _transform_sse_record(
+                        record.value, record.separator, client_key_pair
+                    )
                 ).encode()
         pending += decoder.decode(b'', final=True)
         if pending:
-            yield _transform_sse_record(pending, '', client_key_pair).encode()
+            yield (
+                pending if done else _transform_sse_record(pending, '', client_key_pair)
+            ).encode()
     except UnicodeDecodeError as cause:
         raise _invalid_response('Chat Completions SSE response', cause) from cause
 

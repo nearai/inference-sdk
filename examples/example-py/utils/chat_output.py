@@ -27,6 +27,8 @@ async def read_stream(response: httpx.Response) -> list[dict]:
     done = False
     first_line = True
     async for line in response.aiter_lines():
+        if done:
+            continue
         if first_line:
             line = line.removeprefix('\ufeff')
             first_line = False

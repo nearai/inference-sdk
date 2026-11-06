@@ -28,7 +28,7 @@ func TestIncrementalOutput(t *testing.T) {
 				t.Fatalf("text was not emitted before DONE at split %d: %v", split, values)
 			}
 		}
-		raw := []byte(event + "data: [DONE]" + separator + separator)
+		raw := []byte(event + "data: [DONE]" + separator + separator + "data: ignored after [DONE]" + separator + separator)
 		if id, err := CompletionID(raw, true); err != nil || id != "chat-1" {
 			t.Fatalf("ID: %q, %v", id, err)
 		}

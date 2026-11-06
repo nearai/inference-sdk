@@ -1825,6 +1825,63 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
 }
 
 #[tokio::test]
+async fn responses_streams_follow_the_shared_receipt_contract() {
+    let cases: Value =
+        serde_json::from_str(include_str!("../../test-fixtures/responses/streams.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let raw = case["body"].as_str().unwrap().as_bytes();
+        let (_server, f, options) = setup(Fixture {
+            response_body: Some(raw.to_vec()),
+            ..Default::default()
+        })
+        .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client
+            .send(
+                client
+                    .response_request(response_request_body(true))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .bytes()
+            .await;
+        if case["valid"] == true {
+            assert_eq!(result.unwrap(), raw, "{name}");
+            let receipt = client.verify_response("resp_fixture").await.unwrap();
+            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+            assert!(receipt.attestations.is_empty());
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 1, "{name}");
+        } else {
+            assert_eq!(result.unwrap_err().code(), "api.invalid_response", "{name}");
+            assert_eq!(
+                client
+                    .verify_response("resp_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}"
+            );
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 0, "{name}");
+        }
+        for unrelated_id in ["msg_1", "event_only", "other"] {
+            assert_eq!(
+                client
+                    .verify_response(unrelated_id)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}: {unrelated_id}"
+            );
+        }
+        assert_eq!(f.chat.load(Ordering::SeqCst), 1, "{name}");
+    }
+}
+
+#[tokio::test]
 async fn responses_reject_tampering_and_provider_receipts() {
     for streaming in [false, true] {
         for provider in [false, true] {
