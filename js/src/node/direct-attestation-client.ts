@@ -6,23 +6,20 @@ import type {
 import { type HttpsResponse, requestHttps } from './attestation-client';
 
 /**
- * Node direct attestation client; TLS fingerprint binding is temporarily disabled.
+ * Node Direct attestation client with TLS peer capture.
  *
- * @experimental Not recommended for production. Use `AttestationClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class DirectAttestationClient extends DirectApiClient {
   async fetchModelAttestations({
     signingAlgo,
     signingAddress,
+    includeSpkiFingerprint = true,
   }: NodeFetchDirectModelAttestationsParams = {}): Promise<FetchedDirectModelAttestations> {
     return this.fetchModelAttestationsWithOptions({
       signingAlgo,
       signingAddress,
-      // TODO: Re-enable direct TLS binding once all_attestations covers every serving CVM.
-      // An incomplete set can reject a later connection to another CVM's TLS key.
-      // https://github.com/nearai/cloud-api/issues/1087
-      includeSpkiFingerprint: false,
+      includeSpkiFingerprint,
     });
   }
 

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,14 +77,23 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 	rtmr := sha512.Sum384(append(make([]byte, 48), digest[:]...))
 	var mu sync.Mutex
 	signatures := map[string]map[string]any{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var fingerprint string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/model/"):
 			io.WriteString(w, `{"metadata":{"providerType":"proxy","attestationSupported":false}}`)
 		case strings.HasSuffix(r.URL.Path, "/attestation/report"):
 			n := r.URL.Query().Get("nonce")
 			nb, _ := hex.DecodeString(n)
-			data := append(append([]byte(nil), binding...), nb...)
+			prefix := binding
+			includeTLS := r.URL.Query().Get("include_tls_fingerprint") == "true"
+			if includeTLS {
+				signer, _ := hex.DecodeString(address)
+				pin, _ := hex.DecodeString(fingerprint)
+				hash := sha256.Sum256(append(signer, pin...))
+				prefix = hash[:]
+			}
+			data := append(append([]byte(nil), prefix...), nb...)
 			quote, _ := json.Marshal(nearai.QuoteVerificationResult{TCBStatus: "UpToDate", ReportData: data, MRConfigID: mr, RTMR3: rtmr[:]})
 			report := map[string]any{
 				"request_nonce":   n,
@@ -94,9 +104,12 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 				"event_log":       []any{map[string]any{"imr": 3, "digest": hex.EncodeToString(digest[:])}},
 				"info":            map[string]any{"tcb_info": map[string]any{"app_compose": compose}},
 			}
+			if includeTLS {
+				report["tls_cert_fingerprint"] = fingerprint
+			}
 			if direct {
-				if r.URL.Query().Get("include_tls_fingerprint") != "false" {
-					t.Error("direct TLS attestation must remain disabled")
+				if !includeTLS {
+					t.Error("Direct client must request TLS evidence")
 				}
 				report["model_name"] = "model"
 				report["signing_public_key"] = publicKey
@@ -104,7 +117,9 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 				for key, value := range report {
 					response[key] = value
 				}
-				response["all_attestations"] = []any{report}
+				sibling := maps.Clone(report)
+				sibling["info"] = map[string]any{"instance_id": "second", "tcb_info": map[string]any{"app_compose": compose}}
+				response["all_attestations"] = []any{report, sibling}
 				json.NewEncoder(w).Encode(response)
 			} else {
 				json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": report})
@@ -169,26 +184,43 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		}
 	}))
 	defer server.Close()
+	fp := sha256.Sum256(server.Certificate().RawSubjectPublicKeyInfo)
+	fingerprint = hex.EncodeToString(fp[:])
 	quoteVerifier := func(_ context.Context, raw string) (nearai.QuoteVerificationResult, error) {
 		var q nearai.QuoteVerificationResult
 		err := json.Unmarshal([]byte(raw), &q)
 		return q, err
 	}
 	opts := nearai.InferenceOptions{
-		ClientOptions:       nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1"},
+		ClientOptions:       nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1", HTTPClient: server.Client()},
 		DisableTLSBinding:   true,
 		SigningAlgo:         algo,
 		GatewayVerification: nearai.VerificationOptions{QuoteVerifier: quoteVerifier},
 		ModelVerification:   nearai.VerificationOptions{QuoteVerifier: quoteVerifier},
 	}
-	var c *nearai.InferenceClient
+	var c interface {
+		HTTPClient() *http.Client
+		BaseURL() string
+		Close() error
+	}
+	var verifyResponse func(context.Context, string) error
 	if direct {
 		// These adapter fixtures are plaintext; E2EE has dedicated SDK coverage.
-		c, e = nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-			InferenceOptions: opts,
+		owner, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
+			ClientOptions: opts.ClientOptions, SigningAlgo: algo, ModelVerification: opts.ModelVerification,
 		})
+		c, e = owner, err
+		verifyResponse = func(ctx context.Context, id string) error {
+			_, err := owner.VerifyResponse(ctx, id)
+			return err
+		}
 	} else {
-		c, e = nearai.NewInferenceClient(opts)
+		owner, err := nearai.NewInferenceClient(opts)
+		c, e = owner, err
+		verifyResponse = func(ctx context.Context, id string) error {
+			_, err := owner.VerifyResponse(ctx, id)
+			return err
+		}
 	}
 	if e != nil {
 		t.Fatal(e)
@@ -204,7 +236,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if message.ID != "json" || len(message.Content) == 0 {
 			t.Fatal(message)
 		}
-		if _, err = c.VerifyResponse(t.Context(), message.ID); err != nil {
+		if err = verifyResponse(t.Context(), message.ID); err != nil {
 			t.Fatal(err)
 		}
 		stream := api.Messages.NewStreaming(t.Context(), params)
@@ -221,7 +253,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if accumulated.ID != "stream" || len(accumulated.Content) == 0 {
 			t.Fatal(accumulated)
 		}
-		if _, err = c.VerifyResponse(t.Context(), accumulated.ID); err != nil {
+		if err = verifyResponse(t.Context(), accumulated.ID); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -236,7 +268,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if response.ID != "json" || response.OutputText() == "" {
 			t.Fatal(response)
 		}
-		if _, err = c.VerifyResponse(t.Context(), response.ID); err != nil {
+		if err = verifyResponse(t.Context(), response.ID); err != nil {
 			t.Fatal(err)
 		}
 		stream := api.Responses.NewStreaming(t.Context(), params)
@@ -257,7 +289,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if id != "stream" || text == "" {
 			t.Fatal("incomplete stream", id, text)
 		}
-		if _, err = c.VerifyResponse(t.Context(), id); err != nil {
+		if err = verifyResponse(t.Context(), id); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -275,7 +307,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 	if completion.Choices[0].Message.Content != "answer" {
 		t.Fatal(completion)
 	}
-	if _, e = c.VerifyResponse(context.Background(), completion.ID); e != nil {
+	if e = verifyResponse(context.Background(), completion.ID); e != nil {
 		t.Fatal(e)
 	}
 	stream := ai.Chat.Completions.NewStreaming(context.Background(), params)
@@ -295,7 +327,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 	if text != "answer" {
 		t.Fatal(text)
 	}
-	if _, e = c.VerifyResponse(context.Background(), id); e != nil {
+	if e = verifyResponse(context.Background(), id); e != nil {
 		t.Fatal(e)
 	}
 }

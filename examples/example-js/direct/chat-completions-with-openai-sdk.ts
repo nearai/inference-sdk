@@ -1,6 +1,6 @@
 import type { SigningAlgo } from '@nearai/inference-sdk/node';
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
-// Experimental direct-endpoint example. Use the Gateway examples for production.
+// Experimental direct-endpoint example.
 import OpenAI from 'openai';
 import { transportOptions } from '../utils/transport-options.ts';
 
@@ -14,8 +14,7 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  // This client verifies every returned model attestation before
-  // Chat. Enable E2EE explicitly. Direct TLS fingerprint binding is disabled.
+  // Verify model reports and enable E2EE.
   const directClient = new DirectInferenceClient({
     baseUrl: BASE_URL,
     apiKey,

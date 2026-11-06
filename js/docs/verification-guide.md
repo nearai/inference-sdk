@@ -589,25 +589,9 @@ With raw `client.fetch()`, consume the returned response body before verificatio
 
 ## Use a direct model endpoint
 
-> **Experimental — not recommended for production.** This applies to both
-> `DirectInferenceClient` and `DirectAttestationClient` in the browser and Node
-> entry points. Use the Gateway `InferenceClient` or `AttestationClient` for production.
-
-Known endpoint limitations affect the direct flow:
-
-- `all_attestations` may contain only the instance handling the attestation
-  request. Preflight can therefore miss other CVMs, including a later serving
-  instance with a different TLS key, and cannot establish a complete set of
-  fleet TLS pins. Verifying all returned reports does not verify every backend CVM.
-- Completion signatures are stored per instance. `/signature/{id}` may return
-  `404` when Chat and signature lookup reach different instances.
-
-`DirectInferenceClient` verifies the model endpoint without a Gateway preflight
-or model-metadata lookup.
-It fetches and verifies every returned model attestation before
-sending Chat.
-E2EE is opt-in, as with the Gateway client. The example enables it explicitly.
-The signing algorithm defaults to Ed25519. Both cache defaults are 60 minutes.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. Set `e2ee: true` to enable encryption. Direct clients are
+experimental. The Node client pins requests to the verified model TLS fingerprints.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -622,11 +606,6 @@ const client = new DirectInferenceClient({
 Use `client.chat.completions.create()`, `client.fetch`, and
 `client.verifyResponse(id)` as above. Direct endpoints may require different
 credentials from the Gateway and use separate fetch and verification APIs.
-
-The client selects a verified model key for routing and E2EE; response signatures
-must match that selected signer. Both entry points request
-`include_tls_fingerprint=false`. Direct TLS fingerprint binding and pinning are
-currently disabled; standard HTTPS certificate validation still applies.
 
 ### Verify direct evidence manually
 
@@ -649,10 +628,8 @@ Then fetch its signature with `client.fetchCompletionSignature()` and pass the
 signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
 It returns all verified attestations sharing the response's signer.
 
-For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
-measurements, and available GPU evidence. `verifyDirectModelAttestations()`
-checks every entry. Reports fetched by `DirectAttestationClient` produce
-`tlsBinding.kind: 'none'`.
+`verifyDirectModelAttestation()` verifies one report;
+`verifyDirectModelAttestations()` verifies the returned set.
 
 The runnable [direct/chat-completions.ts](../../examples/example-js/direct/chat-completions.ts),
 [direct/chat-completions-with-openai-sdk.ts](../../examples/example-js/direct/chat-completions-with-openai-sdk.ts),

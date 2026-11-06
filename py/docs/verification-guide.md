@@ -403,8 +403,9 @@ Set `stream=True` and use `async for` for typed Responses events. An external
 
 ## Direct model endpoints
 
-Direct clients are experimental and not recommended for production. They use a
-model's own base URL, without Gateway verification or catalog lookup.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. Direct clients are experimental and pin requests to the verified
+model TLS fingerprints by default.
 
 ```python
 from nearai_inference_sdk import DirectInferenceClient
@@ -421,11 +422,8 @@ async with DirectInferenceClient(
     verified = await direct_client.verify_response(completion.id)
 ```
 
-Every supplied report is verified before selecting a model key. E2EE is opt-in,
-as with the Gateway client. The example enables it explicitly. Ed25519/ECDSA,
-streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the same interfaces as
-Gateway Chat. Response verification returns every verified
-report sharing the selected signer, without identifying one particular CVM.
+Set `e2ee=True` to enable encryption. Streaming, OHTTP, and OpenAI integration
+use the same interfaces as Gateway Chat.
 
 For a manual workflow:
 

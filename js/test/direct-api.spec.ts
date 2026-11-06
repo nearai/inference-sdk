@@ -101,23 +101,39 @@ describe('DirectAttestationClient', () => {
     jest.restoreAllMocks();
   });
 
-  test('ignores nested manager data and retains only the serving envelope', async () => {
-    const api = directFor((request) => {
-      const report = reportFor(request);
-      return jsonResponse({
-        ...report,
-        all_attestations: report.all_attestations.map((item) => ({
-          ...item,
-          compose_manager_attestation: { future_format: true },
-        })),
+  test.each([false, true])(
+    "validates each report's Compose Manager evidence (invalid sibling=%s)",
+    async (invalidSibling) => {
+      const api = directFor((request) => {
+        const report = reportFor(request);
+        return jsonResponse({
+          ...report,
+          all_attestations: report.all_attestations.map((item, index) => ({
+            ...item,
+            compose_manager_attestation: {
+              ...report.compose_manager_attestation,
+              quote: index === 0 ? 'cc' : invalidSibling ? undefined : 'dd',
+            },
+          })),
+        });
       });
-    });
-    const result = await api.client.fetchModelAttestations();
-    expect(
-      result.servingAttestation.composeManagerAttestation?.intelQuote,
-    ).toBe('bb');
-    expect(result.attestations[1].composeManagerAttestation).toBeUndefined();
-  });
+      if (invalidSibling) {
+        await expect(api.client.fetchModelAttestations()).rejects.toMatchObject(
+          { failure: { code: 'api.invalid_response' } },
+        );
+        return;
+      }
+      const result = await api.client.fetchModelAttestations();
+      expect(
+        result.servingAttestation.composeManagerAttestation?.intelQuote,
+      ).toBe('cc');
+      expect(
+        result.attestations.map(
+          (item) => item.composeManagerAttestation?.intelQuote,
+        ),
+      ).toEqual(['cc', 'dd']);
+    },
+  );
 
   test('preserves OHTTP metadata on the response envelope without changing serving evidence', async () => {
     const api = directFor((request) =>
@@ -356,24 +372,23 @@ describe('DirectAttestationClient', () => {
   );
 
   test.each([
-    { include: false, target: 'root' },
-    { include: false, target: 'array' },
-    { include: true, target: 'root' },
-    { include: true, target: 'array' },
+    { include: false, index: 0 },
+    { include: false, index: 1 },
+    { include: true, index: 0 },
+    { include: true, index: 1 },
   ])(
-    'requires TLS presence to match include=$include for $target',
-    async ({ include, target }) => {
+    'requires TLS presence to match include=$include for report $index',
+    async ({ include, index }) => {
       directFor((request) => {
         const report = reportFor(request);
         for (const entry of [report, ...report.all_attestations]) {
           entry.tls_cert_fingerprint = include ? spkiFingerprint : null;
         }
-        const entries =
-          target === 'root'
-            ? [report, report.all_attestations[0]]
-            : [report.all_attestations[1]];
-        for (const entry of entries) {
-          entry.tls_cert_fingerprint = include ? null : spkiFingerprint;
+        report.all_attestations[index].tls_cert_fingerprint = include
+          ? null
+          : spkiFingerprint;
+        if (index === 0) {
+          report.tls_cert_fingerprint = include ? null : spkiFingerprint;
         }
         return jsonResponse(report);
       });
@@ -385,7 +400,7 @@ describe('DirectAttestationClient', () => {
         failure: {
           code: 'api.invalid_response',
           details: {
-            path: `${target === 'root' ? 'attestation' : 'all_attestations[1]'}.tls_cert_fingerprint`,
+            path: `all_attestations[${index}].tls_cert_fingerprint`,
           },
         },
       });

@@ -85,7 +85,7 @@ type AttestationPolicy struct {
 type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error)
 type GPUEvidenceVerifier func(context.Context, string) error
 
-// DeploymentVerifier inspects read-only evidence and returns an error to reject it.
+// DeploymentVerifier applies deployment policy and returns an error to reject it.
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
 	Policy             AttestationPolicy
@@ -93,6 +93,8 @@ type VerificationOptions struct {
 	GPUVerifier        GPUEvidenceVerifier
 	DeploymentVerifier DeploymentVerifier
 }
+
+// VerifiedAttestation contains verified signer and deployment evidence.
 type VerifiedAttestation struct {
 	Signer                SigningIdentity
 	TCBStatus             string
@@ -104,31 +106,31 @@ type VerifiedAttestation struct {
 	SPKIFingerprint       string
 	ModelName, InstanceID string
 }
+
+// AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
 	Gateway    *VerifiedAttestation
 	Models     []VerifiedAttestation
 	VerifiedAt time.Time
 }
+
+// VerifiedCompletionResult contains a response receipt verified by a Gateway client.
 type VerifiedCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	// Attestation contains Gateway evidence for gateway receipts and is nil for Direct.
-	// For provider_tee receipts it retains the report used to select the request's
-	// model public key; it does not identify which instance served the request.
-	//
-	// Reading this field for provider_tee receipts is deprecated: use Attestations
-	// for all verified reports sharing the selected signer. Gateway receipts
-	// continue to use Attestation.
+	// Attestation contains Gateway evidence for gateway receipts.
+	// For provider_tee it is the report used to select the model key;
+	// that singular model field is deprecated in favor of Attestations.
 	Attestation *VerifiedAttestation
 	// Attestations contains every matching verified model deployment for provider_tee
-	// receipts. A shared key does not identify one CVM. It is empty for Gateway receipts.
+	// receipts. It is empty for Gateway receipts.
 	Attestations []VerifiedAttestation
 }
 
-// ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
+// ClientOptions configures evidence retrieval.
 // A custom transport is part of the trust boundary and must perform normal TLS verification.
 type ClientOptions struct {
 	// API Key is optional. Gateway and direct reports omit authentication;
@@ -144,7 +146,7 @@ type FetchOptions struct {
 	DisableTLSBinding bool
 }
 
-// InferenceOptions applies to Gateway and experimental direct clients. Nil TTLs
+// InferenceOptions configures Gateway inference. Nil TTLs
 // default to one hour; a pointer to zero disables the corresponding cache.
 type InferenceOptions struct {
 	ClientOptions
@@ -159,16 +161,37 @@ type InferenceOptions struct {
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
 }
 
-// DirectInferenceOptions uses the same E2EE opt-in as InferenceOptions.
-// Direct TLS identity binding is experimental and disabled in all clients.
+// DirectInferenceOptions leaves E2EE disabled by default.
 type DirectInferenceOptions struct {
-	InferenceOptions
-	// Deprecated: E2EE is disabled by default. Set InferenceOptions.E2EE to enable it.
-	// When true, DisableE2EE takes precedence over E2EE.
-	DisableE2EE bool
+	ClientOptions
+	SigningAlgo       SigningAlgo
+	E2EE              bool
+	OHTTP             bool
+	DisableTLSBinding bool
+	AttestationTTL    *time.Duration
+	ResponseTTL       *time.Duration
+	ModelVerification VerificationOptions
+	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
 }
 type VerifiedDirectModelAttestations struct {
 	ServingAttestation VerifiedAttestation
 	Attestations       []VerifiedAttestation
 	SPKIFingerprints   []string
+}
+
+// DirectAttestationVerificationResult contains the verified Direct model reports.
+type DirectAttestationVerificationResult struct {
+	VerifiedDirectModelAttestations
+	VerifiedAt time.Time
+}
+
+// VerifiedDirectCompletionResult contains the complete preflight-verified signer
+// group for a Direct receipt.
+type VerifiedDirectCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
+	CompletionID  string
+	SignatureKind string
+	Signature     CompletionSignature
+	Attestations  []VerifiedAttestation
 }
