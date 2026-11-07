@@ -160,6 +160,6 @@ can keep their current dependencies and calls.
 
 ## Development checks
 
-From `py/`, run `uv sync` and `make lint` for formatting, lint, and deterministic
+From `py/`, run `uv sync` and `make check` for formatting, lint, and deterministic
 unit tests; `uv build` creates the distributions. Live service checks are separate:
 see the [E2E guide](https://github.com/nearai/inference-sdk/blob/main/e2e/README.md).

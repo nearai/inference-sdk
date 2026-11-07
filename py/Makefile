@@ -1,15 +1,18 @@
-.PHONY: lint fmt format check test
+.PHONY: check fmt fmt-check lint test check-e2e
 
-lint: fmt check test
+check: fmt-check lint test check-e2e
 
 fmt:
-	@uv run ruff format --check
-
-format:
 	@uv run ruff format
 
-check:
+fmt-check:
+	@uv run ruff format --check
+
+lint:
 	@uv run ruff check
 
 test:
 	@uv run pytest -q
+
+check-e2e:
+	@uv run pytest e2e --collect-only -q
