@@ -1342,10 +1342,26 @@ function hasSseCompletionSentinel({
 
 /** Responses receipts require one consistent response ID before [DONE] or EOF. */
 function validateResponsesStream(body: Uint8Array): void {
-  const text = new TextDecoder().decode(body);
-  const { records, pending } = takeCompleteSseRecords(text, true);
+  // SSE delimiters are ASCII. A single-byte view keeps offsets into the signed body.
+  const framing = new TextDecoder('latin1').decode(body);
+  const { records, pending } = takeCompleteSseRecords(framing, true);
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let offset = 0;
   let id: string | undefined;
-  for (const record of [...records.map((item) => item.value), pending]) {
+  for (const { value, separator } of [
+    ...records,
+    { value: pending, separator: '' },
+  ]) {
+    const end = offset + value.length + separator.length;
+    let record: string;
+    try {
+      record = decoder.decode(body.subarray(offset, end), {
+        stream: separator !== '',
+      });
+    } catch (cause) {
+      throw invalidCompletionId(cause);
+    }
+    offset = end;
     const values = getSseDataRecords(record);
     if (getSseEvent(record) === 'error') throw invalidCompletionId();
     if (values.includes('[DONE]')) break;

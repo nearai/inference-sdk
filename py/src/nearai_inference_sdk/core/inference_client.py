@@ -1032,10 +1032,13 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
 def _validate_response_stream(body: bytes) -> None:
     """Bind a Responses receipt to one response ID before [DONE] or EOF."""
     response_id = None
-    parsed = take_complete_sse_records(
-        body.decode('utf-8-sig', errors='replace'), eof=True
-    )
-    for record in [*(item.value for item in parsed.records), parsed.pending]:
+    framing = body.removeprefix(codecs.BOM_UTF8).decode('latin1')
+    parsed = take_complete_sse_records(framing, eof=True)
+    for raw_record in [*(item.value for item in parsed.records), parsed.pending]:
+        try:
+            record = raw_record.encode('latin1').decode('utf-8')
+        except UnicodeDecodeError as error:
+            raise _invalid_completion_id(error) from error
         values = get_sse_data_records(record)
         if get_sse_event(record) == 'error':
             raise _invalid_completion_id()

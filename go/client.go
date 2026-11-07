@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type session struct {
@@ -564,6 +565,9 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	messageStarted, messageStopped := false, false
 	firstRecord := true
 	transform := func(record []byte) ([]byte, error) {
+		if responses && !utf8.Valid(record) {
+			return nil, failure("api.invalid_response", nil)
+		}
 		parsed := record
 		if firstRecord {
 			parsed = bytes.TrimPrefix(record, []byte("\xef\xbb\xbf"))

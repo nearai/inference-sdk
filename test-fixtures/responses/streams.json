@@ -16,6 +16,18 @@
     "valid": true
   },
   {
+    "name": "invalid UTF-8 in a response event before DONE",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"},\"text\":\"",
+    "tail": [255, 34, 125, 10, 10, 100, 97, 116, 97, 58, 32, 91, 68, 79, 78, 69, 93, 10, 10],
+    "valid": false
+  },
+  {
+    "name": "invalid UTF-8 in an SSE comment before EOF",
+    "body": "data: {\"response\":{\"id\":\"resp_fixture\"}}\n\n: ",
+    "tail": [255],
+    "valid": false
+  },
+  {
     "name": "conflicting response IDs",
     "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"other\"}}\n\n",
     "valid": false
