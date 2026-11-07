@@ -269,6 +269,7 @@ same common options as `InferenceClient`, with the following differences:
 | --- | --- |
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
+| `ohttp` | Encrypt Chat requests and responses to the configured Direct endpoint using OHTTP. Requires Ed25519. |
 | `include_spki_fingerprint` | Defaults to `True`. Set `False` for an application proxy or HTTP endpoint. |
 | `model_verification` | `ModelVerificationOptions`: model `policy` and `verifiers`. `DirectModelVerificationOptions` is an alias. |
 | `deployment_policy` | Applied to every supplied direct model report. |

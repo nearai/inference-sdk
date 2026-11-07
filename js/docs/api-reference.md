@@ -274,7 +274,7 @@ Supports Chat, Fetch, E2EE, OHTTP, and response verification. Configure it with
 | `headers?` | `HeadersInit` | No | — | Additional request headers; use `apiKey` for bearer authentication. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm for attestation, E2EE, and response signatures. OHTTP requires Ed25519. |
 | `e2ee?` | `boolean` | No | `false` | Encrypt supported Chat fields to a verified model key. |
-| `ohttp?` | `boolean` | No | `false` | Encrypt Chat, Responses, and Messages HTTP exchanges to the Gateway; requires Ed25519. |
+| `ohttp?` | `boolean` | No | `false` | Encrypt Chat requests and responses to the configured Direct endpoint using OHTTP. Requires Ed25519. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Deployment verification cache duration; `0` verifies each request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Response retention after body completion; `0` disables retention. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Model-aware deployment check. Throw to reject a deployment. |
