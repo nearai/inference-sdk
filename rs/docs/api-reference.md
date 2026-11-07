@@ -6,10 +6,9 @@ This page lists the public Rust request and verification APIs exported by
 
 ## Integrated client
 
-`InferenceClient` is cheap to clone; clones share caches and in-flight verification.
-Construct it with `new(api_key: impl Into<Option<String>>)` or
-`with_options(InferenceClientOptions)`; both return `Result<InferenceClient, InferenceError>`.
-`new` accepts a `String`, `Some(String)`, or `None`.
+Construct `InferenceClient` with `new(api_key)` or
+`with_options(InferenceClientOptions)`. Both return
+`Result<InferenceClient, InferenceError>`.
 
 | Method | Result | Behavior |
 | --- | --- | --- |
@@ -22,32 +21,20 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 | `message_request(serde_json::Value)` | `reqwest::Request` | Build a Gateway Messages request for `send`, including streaming. |
 | `create_message(serde_json::Value)` | `serde_json::Value` | Create an Anthropic Message; verify its ID with `verify_response`. |
 | `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat, Gateway Responses, or Messages. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
-| `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. Cached terminal results release the original bytes and remain available until the original response TTL expires. |
-| `clear_response_cache().await` | `()` | Clear captured request/response bytes and cached receipt results across all clones; preserve attestation sessions. |
+| `verify_response(id)` | `VerifiedCompletionResult` | Verifies the response signature using retained request and response bytes. |
+| `clear_response_cache().await` | `()` | Discards retained responses and their verification results. |
 
 `InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
-`body` to EOF or call `bytes()` / `json()`. Dropping an incomplete body prevents
-receipt registration. Non-2xx responses pass through `send`; `chat_completions`, `create_response`, and `create_message`
-turn them into `ApiError::HttpStatus`.
+`body` to EOF or call `bytes()` / `json()` before `verify_response()`.
 
-In Chat and Responses SSE streams, `[DONE]` stops event processing. The SDK
-still captures the full response to EOF for signature verification and OHTTP
-authentication.
+`VerifiedCompletionResult` contains `id`, `signature`, and the verified evidence.
+For model receipts, `attestations` contains all reports sharing the selected signer.
+For Gateway receipts, use `VerifiedCompletionAttestation::Gateway`.
+The `Model` variant is deprecated: it holds the report selected for the request
+key; use `attestations` for model evidence. `signature_kind()` returns the kind.
 
-`VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
-`Gateway` or the deprecated `Model` representative. For a Gateway
-`ProviderTee` receipt, `attestations` contains every verified report sharing the
-response signer. The `Model` variant is deprecated: use `attestations` for model
-evidence. It retains the report used to select the request's model public key and
-does not identify the serving instance. `attestations` is empty for
-Gateway-signed receipts, whose evidence is in `VerifiedCompletionAttestation::Gateway`.
-`signature_kind()` returns `CompletionSignatureKind`.
-
-Call `clear_response_cache().await` when discarding a conversation. Cleared IDs
-become unavailable to `verify_response`. The client remains reusable. Ongoing
-response captures stay discarded when they finish. To end active work and release
-its buffers, also cancel the requests and finish any
-ongoing verification. Direct clients support the same cleanup method.
+Verify responses within `response_cache_ttl`; `Duration::ZERO` disables response
+retention. Use `clear_response_cache().await` to discard retained responses.
 
 `create_message(Value)` returns JSON; `message_request(Value)` builds an Anthropic
 Messages request for `send()`, including SSE. Both require a Gateway client with
@@ -107,13 +94,6 @@ probabilities, and Box coordinates/confidence use finite `f64` values.
 See the [native image example](../../examples/example-rs/src/gateway/systemone.rs) and
 [run instructions](../../examples/README.md#system-one-images).
 
-System One shares Chat's per-model session and the client's
-receipt retention and verification.
-Dropping the request future cancels the operation.
-
-Inference is sent once. Retry transient receipt lookups through the verification
-method while the response remains cached.
-
 ## Standalone transport and experimental direct APIs
 
 - `prepare_e2ee_chat_request(request, &E2eeModelKey)` returns
@@ -165,44 +145,27 @@ The public APIs support three stages:
 3. Fetch a completion signature and verify that receipt against one of the
    previously verified deployments.
 
-Complete stage 1 before chat. `CompletionSignatureKind` matters only in stage
-3: `ProviderTee` selects `verify_model_response`; `Gateway` selects
-`verify_gateway_response`. It does not replace either preflight check.
-
 For one three-stage verification operation, pass the same explicit
 `SigningAlgo` to both attestation fetches and `fetch_completion_signature`.
 The Gateway's report and signature endpoints have different defaults.
 
-The current Gateway interface does not cryptographically bind both preflight
-attestations to one completion or link a model signature through a Gateway
-transformation. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
-tracks a complete provider-signature and Gateway-receipt chain.
-
 ## Gateway client
 
-`AttestationClient` owns the optional API key, Gateway base URL, and its internal
-reqwest clients. Create it once and reuse it for all signature and evidence
-requests in a flow. The client only fetches evidence; it does not send
-inference requests or retain completion bytes.
+Fetches model metadata, attestations, and response signatures.
 
 | Constructor | Parameters | Result | Description |
 | --- | --- | --- | --- |
 | `AttestationClient::new` | `api_key: impl Into<Option<String>>` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. Accepts a `String`, `Some(String)`, or `None`. |
 | `AttestationClient::with_base_url` | `api_key: impl Into<Option<String>>`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
 
-`with_http_client(reqwest::Client)` configures the transport for subsequent evidence
-and signature requests. Pass the pinned client used for inference.
+`with_http_client(reqwest::Client)` replaces the transport for all evidence and
+signature requests and returns the configured `AttestationClient`. Use it after
+Gateway verification with `create_pinned_tls_client`. Custom clients must preserve
+certificate and hostname validation, disable redirects, and enable `tls_info(true)`
+when fetching TLS-bound Gateway reports.
 
-Use `AttestationClient::new(None)` to fetch attestation without credentials.
-Gateway and direct attestation requests omit `Authorization`, `api-key`, and
-`x-api-key`, including values supplied through `with_headers`. Other custom
-headers are preserved. Metadata and signature requests use configured authentication.
-
-Model reports through the Gateway use the client's configured API key or authentication
-headers. Listed models can be queried without credentials; unlisted models require a
-key for an organization granted access. With standalone evidence clients, verify the
-Gateway before fetching an authenticated model report. Integrated clients perform
-this ordering automatically.
+Credentials are optional for public evidence. Configure an API key or headers
+when the endpoint requires authentication.
 
 All client methods below are asynchronous and return `Result<_, ApiError>`.
 
@@ -213,13 +176,8 @@ All client methods below are asynchronous and return `Result<_, ApiError>`.
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches every model deployment candidate returned for a canonical model ID, including an empty list. The filters only narrow the API response. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
 
-`signing_algo` and `signing_address` only narrow the Gateway response. They
-do not replace local selection from verified model results. Use
-`find_model_attestations_for_signature` after verifying every fetched candidate.
-
-When supplied, `signing_address` must be hexadecimal: 20 or 32 bytes without
-`signing_algo`, or the exact length for the selected algorithm. Invalid filters
-return `ApiError::InvalidInput` before a request is sent.
+Use `signing_algo` and `signing_address` to filter fetched reports. After
+verification, `find_model_attestations_for_signature` selects the matching signer group.
 
 ### Gateway fetch options
 
@@ -238,19 +196,13 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Returns every verified report matching a `ProviderTee` signer, or an error when none match. Shared signers do not identify an individual instance. It does not verify the response signature. |
+| `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Selects all verified reports sharing the model receipt's signer. |
 | `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Compatibility helper requiring exactly one match. Prefer the plural helper for shared-key deployments; multiple matches still return an ambiguity error. |
-
-Model fetches always send `include_tls_fingerprint=false`; model verification
-checks the signer-and-nonce quote layout and makes no client-to-model TLS
-claim.
 
 ### Cloud fetch results
 
-Every attestation fetch generates a fresh 32-byte client nonce, sends it, and
-checks the service's echoed nonce. Results return the client values associated
-with that evidence request; pass the matching `client_binding` to the
-attestation verifier.
+Pass each fetch result's `client_binding` and attestation together to the
+corresponding verifier.
 
 | Type | Field | Description |
 | --- | --- | --- |
@@ -275,12 +227,8 @@ Pass the matching fetch result's `client_binding`. `policy: None` uses default
 TCB statuses; pass `Default::default()` as `verifiers` to use built-in quote,
 deployment, and GPU verification.
 
-When `GatewayAttestation.spki_fingerprint` is present,
-`client_binding.spki_fingerprint` must be the independently observed SHA-256
-SPKI fingerprint for the TLS peer that served the evidence request. Do not use
-the attestation's fingerprint as the observed peer value. When the attestation
-does not report an SPKI fingerprint, verification checks signer-and-nonce
-report data and returns `GatewayTlsBinding::None`.
+Gateway TLS verification compares the quote-bound fingerprint with the peer
+observed by the matching fetch request.
 
 ## Completion receipt verification
 
@@ -289,24 +237,12 @@ report data and returns `GatewayTlsBinding::None`.
 | `verify_model_response` | `request_body: &[u8]`, `response_body: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedModelAttestation` | `()` | Verifies a `ProviderTee` completion signature for exact bytes and matches its signer to verified model evidence. |
 | `verify_gateway_response` | `request_body: &[u8]`, `response_body: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedGatewayAttestation` | `()` | Verifies a `Gateway` completion signature for exact bytes and matches its signer to verified Gateway evidence. |
 
-Both functions return `Result<(), VerificationError>`. Verify both Gateway and
-model deployments before sending chat, then call the function matching the
-returned receipt kind. The kind selects the response signer; it does not make
-the other preflight result unnecessary.
+Both functions return `Result<(), VerificationError>`. Use the verifier matching
+the receipt kind, with the preverified attestation and exact request/response bytes.
 
-For both response functions, supply the exact request and response bytes. The
-model request body must contain a non-empty JSON `model` string. The signature
-kind must match the verifier (`ProviderTee` or `Gateway`), and the verified
-attestation must bind the signature signer.
-
-For a `Gateway` response, `verify_gateway_response` requires a
-`VerifiedGatewayAttestation` with the same signer. For a `ProviderTee`
-response, `verify_model_response` requires a `VerifiedModelAttestation` with
-the same signer. Obtain the matching group from verified preflight results with
-`find_model_attestations_for_signature`. One member supplies the shared key for
-cryptographic verification; retain the whole group as the matching evidence.
-Clients that selected a routing/encryption key must also require the response
-signer to match that selected key.
+For model receipts, `find_model_attestations_for_signature` selects all verified
+reports sharing the signer. Use the report selected for the request key in
+`verify_model_response`.
 
 ## Image build provenance
 
@@ -323,29 +259,12 @@ from verification; the deployment helper combines them for required images.
 | `verify_deployment_image_provenance` | `app_compose: &str`, `image_policies: &BTreeMap<String, ImageProvenancePolicy>`, `github_token: Option<&str>` | `Result<(), VerificationError>` | Parses measured Compose, requires every configured image repository and verifies all matching digest-pinned references. |
 | `verify_deployment_image_provenance_with_signer_identities` | `app_compose: &str`, `image_policies: &BTreeMap<String, ImageProvenancePolicy>`, `image_signer_identities: &BTreeMap<String, String>`, `github_token: Option<&str>` | `Result<(), VerificationError>` | Same deployment check, with exact reusable-workflow signer identities keyed by the corresponding image-policy key. |
 
-The deployment helper expects outer JSON with a `docker_compose_file` YAML
-string and a `services` map. YAML aliases and merge keys are supported. Policy
-keys are container image repositories, not GitHub source repositories. An
-optional `docker.io/` prefix is normalized on both keys and references. Every
-matching reference must be `repository@sha256:<64 hex digits>` or
-`repository:tag@sha256:<64 hex digits>`. The policy map must not be empty;
-unlisted literal images are ignored. Any image containing `$` is rejected:
-environment variables and their defaults are not resolved. Missing or null
-service images are ignored. All Compose/reference checks finish before fetching.
+Each configured image repository is required. Compose image references must
+include a literal SHA-256 digest, for example `repository:tag@sha256:...`.
+Use the deployment helper in a `DeploymentVerifier` callback.
 
-Malformed Compose or unsupported references return
-`provenance.deployment_images_invalid`, with a `DeploymentImagesFailureReason`
-(`empty_policy`, `invalid_app_compose`, `invalid_docker_compose`,
-`unresolved_image`, `service_missing`, `image_missing`, or `image_not_pinned`)
-and optional image repository/service details. Fetch failures become
-`provenance.image_request_failed`, preserving the `ApiError` source and its
-retryability. Cryptographic verification errors are returned unchanged.
-
-`ImageProvenancePolicy::new(repository: String, workflow: String)` sets the
-GitHub Actions issuer and leaves the optional ref and commit unset. The source
-repository, ref and commit are bound to the certificate's authenticated source
-claims and signed SLSA statement. The optional commit pin applies to this
-source commit, not a reusable workflow's commit.
+`ImageProvenancePolicy::new(repository, workflow)` selects the GitHub build
+identity. Set `git_ref` or `commit` to restrict the source version.
 
 | Policy field | Type | Description |
 | --- | --- | --- |
@@ -355,16 +274,8 @@ source commit, not a reusable workflow's commit.
 | `commit` | `Option<String>` | Optional full, 40-digit source commit SHA. |
 | `issuer` | `String` | Expected OIDC issuer; defaults to `https://token.actions.githubusercontent.com`. |
 
-`verify_image_provenance` requires the certificate signer to be the configured
-source repository/workflow at the authenticated source ref. For a
-cross-repository reusable workflow, call
-`verify_image_provenance_with_signer_identity` with its exact certificate SAN
-URI, including its ref, tag or SHA. Only the signer identity changes: source
-policy and attestation retrieval still use `repository`, `workflow`, `git_ref`
-and `commit`. The deployment variant accepts the same override per image-policy
-key. Source claims use the modern Fulcio extensions, falling back to each
-corresponding legacy GitHub claim only when that modern extension is absent.
-Malformed modern claims are rejected.
+For a reusable signing workflow, call `verify_image_provenance_with_signer_identity`
+with its certificate SAN URI. The deployment variant accepts an identity per image.
 
 | Verified result field | Type | Description |
 | --- | --- | --- |
@@ -373,23 +284,12 @@ Malformed modern claims are rejected.
 | `certificate_identity`, `issuer` | `String` | Authenticated signing workflow SAN URI and OIDC issuer. The signing workflow may differ from the caller/source workflow. |
 | `predicate_type` | `String` | SLSA provenance predicate URI (`v1` or `v0.2`). |
 
-These helpers use an embedded public-good Sigstore trust root. They do not
-authenticate `app_compose` themselves or run automatically during attestation
-verification. Call the deployment helper from a `DeploymentVerifier` so the SDK
-has already checked quote and measurement binding. No default image trust policy
-is supplied, and unlisted images are not approved by the helper.
-
 ### Compose Manager deployment images
 
 `verify_compose_manager_deployment_image_provenance(deployment, image_policies, compose_manager_image_policy, options)`
-returns `Result<(), VerificationError>`. Use in a model deployment callback or
-after verification. It requires authenticated manager evidence, selects the latest
-matching `compose_up`, verifies the recorded file's exact hash, and checks the
-required images in the action's selected services. Independently, the latest
-manager-start image must satisfy the required `compose_manager_image_policy`.
-Compose files are limited to 8 MiB before hashing or parsing. See the
-[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for usage
-and evidence scope.
+verifies the recorded Compose file and selected container images, including the
+Compose Manager startup image, against the supplied policies. Use in a model
+deployment callback. Returns `Result<(), VerificationError>`.
 
 | Parameter | Type | Description |
 | --- | --- | --- |
@@ -406,10 +306,7 @@ and evidence scope.
 | `github_api_url` | `Option<&str>` | `None` | GitHub API base URL (default: `https://api.github.com`). Use a backend endpoint when a frontend cannot supply a GitHub token. |
 | `image_signer_identities` | `Option<&BTreeMap<String, String>>` | `None` | Reusable-workflow identities keyed by exact image-policy names. |
 
-`ModelAttestation.compose_manager_attestation` optionally contains raw
-`ComposeManagerAttestation`: `actions`, `actions_hash`, `nonce`, `intel_quote`,
-`event_log`, optional `reported_quote_data`. When present it is always verified.
-`MeasuredDeployment.compose_manager` contains `Option<VerifiedComposeManagerAttestation>`:
+`MeasuredDeployment.compose_manager` contains authenticated Compose Manager evidence:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -418,25 +315,10 @@ and evidence scope.
 | `advisory_ids` | `Vec<String>` | Manager quote advisory IDs. |
 | `runtime_measurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
 
-`fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
-also supports `github_token` and `github_api_url`.
-Provenance fetch limits:
-
-| Resource | Limit |
-| --- | --- |
-| Response page | 16 MiB and 100 attestations |
-| Entire fetch | 32 pages and 64 MiB |
-| Combined `Link` headers per page | 8 KiB |
-| Encoded `before`/`after` query | 4 KiB |
-
-Body limits apply while reading, including responses without `Content-Length`,
-and fail with `api.body_too_large`. Other limits fail with `api.invalid_response`.
-Limit failures are non-retryable and return no partial bundles.
-
-`verify_deployment_image_provenance_with_options` accepts
-`DeploymentImageProvenanceOptions` with those fields and optional
-`image_signer_identities`. The token is omitted when `github_api_url` is set. Pagination must remain on the
-same API origin and artifact path. Redirects are rejected.
+`fetch_image_provenance_with_options` accepts `ImageProvenanceFetchOptions` for
+`github_token` and `github_api_url`. `verify_deployment_image_provenance_with_options`
+accepts `DeploymentImageProvenanceOptions`, which also supports per-image
+`image_signer_identities`. A custom GitHub API URL handles its own authentication.
 
 ## Signatures and evidence
 
@@ -552,12 +434,6 @@ DCAP constructs SGX and TDX collateral paths beneath the PCCS base URL. See
 
 ## Errors
 
-See [Handle errors](./verification-guide.md#handle-errors). Cloud retrieval
-and evidence selection use `ApiError`; explicit verification uses
-`VerificationError`. Handle each operation at its own boundary, so a client or
-selection handler never needs to distinguish the two. This reference
-intentionally focuses on request and verification APIs rather than enumerating
-each error variant.
-`fetch_completion_signature` maps a valid 2xx unavailable response to
-`ApiError::CompletionSignatureUnavailable { .. }`. The error preserves the
-service's code and message.
+Cloud retrieval and evidence selection return `ApiError`; explicit verification
+returns `VerificationError`. Integrated clients return `InferenceError`. Use
+`code()` and `retryable()` to handle failures. See [Handle errors](./verification-guide.md#handle-errors).

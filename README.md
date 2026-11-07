@@ -56,17 +56,8 @@ See each language guide for runtime requirements and configuration.
 3. **Verify the response.** Use the SDK's response verification before using the
    answer. For streaming, consume the entire stream first.
 
-A `provider_tee` signature binds those bytes to an attested model signer; a
-`gateway` signature binds them to an attested Gateway signer. Gateway signatures
-do not prove model TEE execution. See the [verification guides](#documentation)
-for encryption scope, deployment policies, and trust boundaries.
-
-Use **Gateway clients for production integrations**. Direct model clients are
-experimental; see the limitations for
-[TypeScript](./js/docs/verification-guide.md#use-a-direct-model-endpoint),
-[Python](./py/docs/verification-guide.md#direct-model-endpoints),
-[Rust](./rs/docs/verification-guide.md#experimental-direct-endpoints), and
-[Go](./go/docs/verification-guide.md#experimental-direct-endpoints).
+`provider_tee` receipts verify signatures from an attested model signer;
+`gateway` receipts verify signatures from an attested Gateway signer.
 
 ## Documentation
 
@@ -77,6 +68,8 @@ experimental; see the limitations for
 | **Rust** | [Encryption, streaming & policies](./rs/docs/verification-guide.md) | [Types & methods](./rs/docs/api-reference.md) |
 | **Go** | [Encryption, streaming & policies](./go/docs/verification-guide.md) | [Types & methods](./go/docs/api-reference.md) |
 
+- [Runnable examples](./examples/README.md) — native clients, official SDKs, and standalone verification.
+- [Cross-language test contracts](./TESTING.md) — scenarios, assertions and validation.
 - [Live E2E tests](./e2e/README.md) — real-service coverage and CI setup.
 - [Release process](./RELEASING.md) — package publishing and maintainer checks.
 - [Issues](https://github.com/nearai/inference-sdk/issues) — bug reports and feature requests.
