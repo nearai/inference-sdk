@@ -6,8 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"maps"
-	"slices"
 	"sort"
 )
 
@@ -31,26 +29,6 @@ type VerifiedComposeManagerAttestation struct {
 	TCBStatus           string
 	AdvisoryIDs         []string
 	RuntimeMeasurements RuntimeMeasurements
-}
-
-// cloneDeployment copies mutable manager fields for independent result values.
-func cloneDeployment(deployment MeasuredDeployment) MeasuredDeployment {
-	if deployment.ComposeManager != nil {
-		manager := *deployment.ComposeManager
-		manager.AdvisoryIDs = slices.Clone(manager.AdvisoryIDs)
-		manager.Actions = slices.Clone(manager.Actions)
-		for i, action := range manager.Actions {
-			copied := maps.Clone(action)
-			for key, value := range copied {
-				if values, ok := value.([]string); ok {
-					copied[key] = slices.Clone(values)
-				}
-			}
-			manager.Actions[i] = copied
-		}
-		deployment.ComposeManager = &manager
-	}
-	return deployment
 }
 
 func (a *ComposeManagerAction) UnmarshalJSON(raw []byte) error {

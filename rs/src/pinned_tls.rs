@@ -111,12 +111,21 @@ impl ServerCertVerifier for PinnedVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AttestationClient, GatewayAttestationFetchOptions, SigningAlgo};
+    use crate::{
+        AttestationClient, DirectAttestationClient, GatewayAttestationFetchOptions, SigningAlgo,
+    };
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     #[tokio::test]
     async fn pin_hostname_and_chain_failures_precede_http_writes() {
-        for operation in ["chat", "model", "signature", "metadata", "gateway"] {
+        for operation in [
+            "chat",
+            "model",
+            "signature",
+            "metadata",
+            "gateway",
+            "direct",
+        ] {
             for case in ["valid", "wrong_pin", "wrong_hostname", "untrusted"] {
                 let certified =
                     rcgen::generate_simple_self_signed(vec![if case == "wrong_hostname" {
@@ -173,6 +182,16 @@ mod tests {
                             });
                             let body = match operation {
                                 "model" => json!({"model_attestations": [report]}),
+                                "direct" => {
+                                    assert!(url.query_pairs().any(|(key, value)| key == "include_tls_fingerprint" && value == "true"));
+                                    let mut report = report;
+                                    report["model_name"] = json!("vendor/model");
+                                    report["tls_cert_fingerprint"] = json!(reported_pin);
+                                    let mut sibling = report.clone();
+                                    sibling["tls_cert_fingerprint"] = json!("44".repeat(32));
+                                    report["all_attestations"] = json!([report.clone(), sibling]);
+                                    report
+                                }
                                 "gateway" => {
                                     let mut report = report;
                                     report["tls_cert_fingerprint"] = json!(reported_pin);
@@ -211,6 +230,30 @@ mod tests {
                     .unwrap()
                     .with_http_client(client.clone());
                 let succeeded = match operation {
+                    "direct" => {
+                        let direct =
+                            DirectAttestationClient::new(&base_url, Some("test-key".into()))
+                                .unwrap()
+                                .with_http_client(client.clone());
+                        match direct
+                            .fetch_model_attestations(Some(SigningAlgo::Ed25519), None)
+                            .await
+                        {
+                            Ok(fetched) => {
+                                assert_eq!(
+                                    fetched.client_binding.spki_fingerprint.as_ref(),
+                                    Some(&actual_pin)
+                                );
+                                assert_eq!(fetched.attestations.len(), 2);
+                                assert_eq!(
+                                    fetched.attestations[1].spki_fingerprint,
+                                    Some("44".repeat(32))
+                                );
+                                true
+                            }
+                            Err(_) => false,
+                        }
+                    }
                     "model" => api
                         .fetch_model_attestations("vendor/model", Some(SigningAlgo::Ed25519), None)
                         .await

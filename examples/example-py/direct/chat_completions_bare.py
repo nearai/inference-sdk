@@ -8,9 +8,12 @@ import httpx
 from nearai_inference_sdk import (
     DirectAttestationClient,
     VerifiedDirectModelAttestations,
+    create_pinned_tls_client,
     verify_direct_model_attestations,
     verify_direct_model_response,
 )
+
+from utils.chat_output import RecordingStream, read_stream
 
 BASE_URL = (
     os.environ.get(
@@ -20,22 +23,6 @@ BASE_URL = (
 )
 MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
 SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
-
-
-class RecordingStream(httpx.AsyncByteStream):
-    """Keep the decoded HTTP body before parsing it for display."""
-
-    def __init__(self, response: httpx.Response) -> None:
-        self.response = response
-        self.chunks: list[bytes] = []
-
-    async def __aiter__(self):
-        async for chunk in self.response.aiter_bytes():
-            self.chunks.append(chunk)
-            yield chunk
-
-    async def aclose(self) -> None:
-        await self.response.aclose()
 
 
 async def send_and_verify(
@@ -92,46 +79,6 @@ async def send_and_verify(
         print(text)
 
 
-async def read_stream(response: httpx.Response) -> list[dict]:
-    values, data = [], []
-    done = False
-    first_line = True
-    async for line in response.aiter_lines():
-        if first_line:
-            line = line.removeprefix('\ufeff')
-            first_line = False
-        if line == 'data':
-            data.append('')
-        elif line.startswith('data:'):
-            data.append(line[5:].removeprefix(' '))
-        elif not line:
-            payload = '\n'.join(data)
-            data = []
-            if payload == '[DONE]':
-                done = True
-            elif payload:
-                value = json.loads(payload)
-                if value.get('error'):
-                    raise RuntimeError('Stream returned an error')
-                values.append(value)
-                for choice in value.get('choices', [])[:1]:
-                    print(
-                        choice.get('delta', {}).get('content') or '', end='', flush=True
-                    )
-    print()
-    if not done:
-        raise RuntimeError('Stream ended without [DONE]')
-    return values
-
-
-async def run_non_streaming_example(client, attestation_client, verified) -> None:
-    await send_and_verify(client, attestation_client, verified, stream=False)
-
-
-async def run_streaming_example(client, attestation_client, verified) -> None:
-    await send_and_verify(client, attestation_client, verified, stream=True)
-
-
 async def main() -> None:
     api_key = os.environ.get('NEARAI_API_KEY')
     attestation_client = DirectAttestationClient(BASE_URL, api_key=api_key)
@@ -143,11 +90,13 @@ async def main() -> None:
     headers = {'Accept-Encoding': 'identity', 'X-No-Aliasing': 'true'}
     if api_key is not None:
         headers['Authorization'] = f'Bearer {api_key}'
-    # Direct fetch currently requests no SPKI fingerprint, matching the JS client.
-    # Normal HTTPS certificate validation still applies.
-    async with httpx.AsyncClient(headers=headers, timeout=None) as client:
-        await run_non_streaming_example(client, attestation_client, verified)
-        await run_streaming_example(client, attestation_client, verified)
+    async with create_pinned_tls_client(verified.spki_fingerprints) as client:
+        client.headers.update(headers)
+        attestation_client = DirectAttestationClient(
+            BASE_URL, api_key=api_key, http_client=client
+        )
+        await send_and_verify(client, attestation_client, verified, stream=False)
+        await send_and_verify(client, attestation_client, verified, stream=True)
 
 
 if __name__ == '__main__':
