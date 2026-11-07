@@ -1002,6 +1002,46 @@ async fn empty_reports_invalid_candidate_and_unbound_keys_block_chat() {
     }
 }
 #[tokio::test]
+async fn done_without_id_is_rejected_before_exposing_it() {
+    for endpoint in ["chat/completions", "responses"] {
+        let (server, _, options) = setup(Fixture::default()).await;
+        let payload = if endpoint == "responses" {
+            json!({"response": {"id": "late-id"}})
+        } else {
+            json!({"id": "late-id"})
+        };
+        Mock::given(wiremock::matchers::path(format!("/v1/{endpoint}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_bytes(format!("data: [DONE]\n\ndata: {payload}\n\n").into_bytes()),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let request = if endpoint == "responses" {
+            client
+                .response_request(response_request_body(true))
+                .unwrap()
+        } else {
+            let mut request = body();
+            request["stream"] = json!(true);
+            client.chat_request(request).unwrap()
+        };
+        let mut response = client.send(request).await.unwrap();
+        assert_eq!(
+            response.body.next().await.unwrap().unwrap_err().code(),
+            "api.invalid_response"
+        );
+        assert_eq!(
+            client.verify_response("late-id").await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+    }
+}
+
+#[tokio::test]
 async fn streaming_retains_tail_and_does_not_verify_partial_responses() {
     let (_server, _f, options) = setup(Fixture::default()).await;
     let client = InferenceClient::with_options(options).unwrap();
@@ -1821,6 +1861,66 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
                 "api.completion_not_found"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn responses_streams_follow_the_shared_receipt_contract() {
+    let cases: Value =
+        serde_json::from_str(include_str!("../../test-fixtures/responses/streams.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let mut raw = case["body"].as_str().unwrap().as_bytes().to_vec();
+        if let Some(tail) = case["tail"].as_array() {
+            raw.extend(tail.iter().map(|byte| byte.as_u64().unwrap() as u8));
+        }
+        let (_server, f, options) = setup(Fixture {
+            response_body: Some(raw.clone()),
+            ..Default::default()
+        })
+        .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client
+            .send(
+                client
+                    .response_request(response_request_body(true))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .bytes()
+            .await;
+        if case["valid"] == true {
+            assert_eq!(result.unwrap(), raw, "{name}");
+            let receipt = client.verify_response("resp_fixture").await.unwrap();
+            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+            assert!(receipt.attestations.is_empty());
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 1, "{name}");
+        } else {
+            assert_eq!(result.unwrap_err().code(), "api.invalid_response", "{name}");
+            assert_eq!(
+                client
+                    .verify_response("resp_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}"
+            );
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 0, "{name}");
+        }
+        for unrelated_id in ["msg_1", "event_only", "other"] {
+            assert_eq!(
+                client
+                    .verify_response(unrelated_id)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}: {unrelated_id}"
+            );
+        }
+        assert_eq!(f.chat.load(Ordering::SeqCst), 1, "{name}");
     }
 }
 

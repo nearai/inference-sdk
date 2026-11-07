@@ -1113,7 +1113,7 @@ function registerCompletionResponse({
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
   const streaming = isServerSentEventResponse(response);
-  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decoder = new TextDecoder('utf-8', { fatal: !streaming });
   let pending = '';
   let registered = false;
   const body = response.body.pipeThrough(
@@ -1125,6 +1125,12 @@ function registerCompletionResponse({
             const complete = takeCompleteSseRecords(pending);
             pending = complete.pending;
             for (const record of complete.records) {
+              if (
+                protocol !== 'messages' &&
+                getSseDataRecords(record.value).includes('[DONE]')
+              ) {
+                throw invalidCompletionId();
+              }
               let id: string;
               try {
                 id = getSseCompletionId(record.value, protocol);
@@ -1200,12 +1206,9 @@ function captureResponseEntityBody(
     if (settled) return;
     try {
       const body = concatChunks(chunks);
-      if (
-        response.ok &&
-        protocol === 'messages' &&
-        isServerSentEventResponse(response)
-      ) {
-        validateMessageStream(body);
+      if (response.ok && isServerSentEventResponse(response)) {
+        if (protocol === 'messages') validateMessageStream(body);
+        if (protocol === 'responses') validateResponsesStream(body);
       }
       settled = true;
       resolveBody(body);
@@ -1277,7 +1280,8 @@ function getSseCompletionId(
   protocol: CompletionProtocol,
 ): string {
   for (const data of getSseDataRecords(text)) {
-    if (data === '' || data === '[DONE]') {
+    if (data === '[DONE]') break;
+    if (data === '') {
       continue;
     }
     let value: unknown;
@@ -1325,9 +1329,7 @@ function hasSseCompletionSentinel({
     return false;
   }
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(
-      concatChunks(chunks),
-    );
+    const text = new TextDecoder().decode(concatChunks(chunks));
     if (protocol === 'messages') {
       validateMessageStream(concatChunks(chunks));
       return true;
@@ -1336,6 +1338,59 @@ function hasSseCompletionSentinel({
   } catch {
     return false;
   }
+}
+
+/** Responses receipts require one consistent response ID before [DONE] or EOF. */
+function validateResponsesStream(body: Uint8Array): void {
+  // SSE delimiters are ASCII. A single-byte view keeps offsets into the signed body.
+  const framing = new TextDecoder('latin1').decode(body);
+  const { records, pending } = takeCompleteSseRecords(framing, true);
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let offset = 0;
+  let id: string | undefined;
+  for (const { value, separator } of [
+    ...records,
+    { value: pending, separator: '' },
+  ]) {
+    const end = offset + value.length + separator.length;
+    let record: string;
+    try {
+      record = decoder.decode(body.subarray(offset, end), {
+        stream: separator !== '',
+      });
+    } catch (cause) {
+      throw invalidCompletionId(cause);
+    }
+    offset = end;
+    const values = getSseDataRecords(record);
+    if (getSseEvent(record) === 'error') throw invalidCompletionId();
+    if (values.includes('[DONE]')) break;
+    for (const data of values) {
+      if (data === '') continue;
+      let event: unknown;
+      try {
+        event = JSON.parse(data);
+      } catch (cause) {
+        throw invalidCompletionId(cause);
+      }
+      if (
+        event === null ||
+        typeof event !== 'object' ||
+        Array.isArray(event) ||
+        'error' in event ||
+        ('type' in event && event.type === 'error')
+      )
+        throw invalidCompletionId();
+      // Output item IDs are not receipt IDs. EOF need not contain response.completed.
+      if (!('response' in event)) continue;
+      const parsed = v.safeParse(CompletionResponseIdSchema, event.response);
+      if (!parsed.success) throw invalidCompletionId();
+      if (id !== undefined && id !== parsed.output.id)
+        throw invalidCompletionId();
+      id = parsed.output.id;
+    }
+  }
+  if (id === undefined) throw invalidCompletionId();
 }
 
 /** EOF or a tool block alone cannot complete a signed Messages stream. */

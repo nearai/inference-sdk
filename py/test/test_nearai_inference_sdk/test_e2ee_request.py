@@ -30,13 +30,14 @@ def signing_algo(request):
 
 
 class ByteStream(httpx.AsyncByteStream):
-    def __init__(self, content: bytes):
+    def __init__(self, content: bytes, chunk_size: int = 1):
         self.content = content
+        self.chunk_size = chunk_size
         self.closed = False
 
     async def __aiter__(self):
-        for byte in self.content:
-            yield bytes([byte])
+        for offset in range(0, len(self.content), self.chunk_size):
+            yield self.content[offset : offset + self.chunk_size]
 
     async def aclose(self):
         self.closed = True
@@ -360,13 +361,14 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('fragmented', [False, True])
 @pytest.mark.parametrize(
     'line_ending,separator',
     [('\n', '\n\n'), ('\r\n', '\r\n\r\n'), ('\r', '\r\r'), ('\r', '\n\n')],
     ids=['LF', 'CRLF', 'CR', 'mixed'],
 )
 async def test_decrypts_multiline_sse_across_split_bytes(
-    signing_algo, line_ending, separator
+    signing_algo, line_ending, separator, fragmented
 ):
     model_key, _ = model_keys(signing_algo)
     prepared = await prepare_e2ee_chat_request(
@@ -382,8 +384,9 @@ async def test_decrypts_multiline_sse_across_split_bytes(
         f'event: message{line_ending}id: part-1{line_ending}'
     )
     data = f'data: {{"id":"chat-1",{line_ending}data: "choices":{json.dumps([{"delta": delta}])}}}'
-    suffix = 'event: error\ndata: {"message":"unchanged"}\n\ndata:\n\ndata\n\ndata: [DONE]\n\n'
-    source = ByteStream((prefix + data + separator + suffix).encode())
+    suffix = 'event: error\ndata: {"message":"unchanged"}\n\ndata:\n\ndata\n\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n'
+    content = (prefix + data + separator + suffix).encode() + b'\xff\xfe'
+    source = ByteStream(content, 1 if fragmented else len(content))
     response = await prepared.decrypt_response(
         httpx.Response(
             200,
@@ -410,9 +413,10 @@ async def test_decrypts_multiline_sse_across_split_bytes(
         'last-modified',
     ):
         assert name not in response.headers
-    text = (await response.aread()).decode()
+    raw = await response.aread()
+    assert raw.endswith(suffix.encode() + b'\xff\xfe')
+    text = raw[:-2].decode()
     assert text.startswith(prefix)
-    assert text.endswith(suffix)
     payload = next(
         value for value in get_sse_data_records(text) if value.startswith('{"id"')
     )

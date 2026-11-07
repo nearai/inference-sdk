@@ -147,6 +147,10 @@ OHTTP also supports Incognito models, protecting the exchange to the Gateway.
 A verified Gateway signature does not establish model TEE execution.
 
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
+In Chat and Responses SSE streams, `[DONE]` stops event processing. The SDK
+still captures the full response to EOF for signature verification and OHTTP
+authentication.
+
 Records retain complete request and response bodies until verification succeeds
 or returns a cached non-retryable failure. Verification results remain available
 until the original TTL expires. Unverified responses and retryable lookups retain

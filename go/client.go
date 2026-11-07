@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type session struct {
@@ -564,6 +565,9 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	messageStarted, messageStopped := false, false
 	firstRecord := true
 	transform := func(record []byte) ([]byte, error) {
+		if responses && !utf8.Valid(record) {
+			return nil, failure("api.invalid_response", nil)
+		}
 		parsed := record
 		if firstRecord {
 			parsed = bytes.TrimPrefix(record, []byte("\xef\xbb\xbf"))
@@ -571,6 +575,9 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		data, event, hasEvent := sseFields(parsed)
 		if messages && (!completeSSERecord(record) || event == "error" || data == "[DONE]") {
+			return nil, failure("api.invalid_response", nil)
+		}
+		if data == "[DONE]" && id == "" {
 			return nil, failure("api.invalid_response", nil)
 		}
 		if event == "error" {
@@ -582,6 +589,9 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, e
 			}
 			if _, ok := obj["error"]; ok {
+				failed = true
+			}
+			if responses && obj["type"] == "error" {
 				failed = true
 			}
 			if messages {
@@ -608,6 +618,13 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			if responses {
 				// Output item IDs are not response IDs. Lifecycle events carry
 				// the receipt ID inside their response object.
+				if response, exists := obj["response"]; exists {
+					identity, _ := response.(map[string]any)
+					candidate, _ := identity["id"].(string)
+					if candidate == "" {
+						return nil, failure("api.invalid_response", nil)
+					}
+				}
 				obj, _ = obj["response"].(map[string]any)
 			}
 			if candidate, ok := obj["id"].(string); ok && candidate != "" {

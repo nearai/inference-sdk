@@ -1,0 +1,100 @@
+[
+  {
+    "name": "created response at EOF",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\n",
+    "valid": true
+  },
+  {
+    "name": "lifecycle IDs ignore output item IDs",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"id\":\"event_only\",\"item\":{\"id\":\"msg_1\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fixture\"}}\n\n",
+    "valid": true
+  },
+  {
+    "name": "opaque bytes after DONE",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: [DONE]\n\n",
+    "tail": [255, 254],
+    "valid": true
+  },
+  {
+    "name": "invalid UTF-8 in a response event before DONE",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"},\"text\":\"",
+    "tail": [255, 34, 125, 10, 10, 100, 97, 116, 97, 58, 32, 91, 68, 79, 78, 69, 93, 10, 10],
+    "valid": false
+  },
+  {
+    "name": "invalid UTF-8 in an SSE comment before EOF",
+    "body": "data: {\"response\":{\"id\":\"resp_fixture\"}}\n\n: ",
+    "tail": [255],
+    "valid": false
+  },
+  {
+    "name": "conflicting response IDs",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"other\"}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "output item ID alone",
+    "body": "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\"}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "error event after a response ID",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\nevent: error\ndata: {\"message\":\"failed\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "error payload after a response ID",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"error\":{\"message\":\"failed\"}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "error event containing the DONE sentinel",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\nevent: error\ndata: [DONE]\n\n",
+    "valid": false
+  },
+  {
+    "name": "response ID after DONE",
+    "body": "data: [DONE]\n\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "empty response ID",
+    "body": "data: {\"response\":{\"id\":\"\"}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "non-string response ID",
+    "body": "data: {\"response\":{\"id\":17}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "malformed JSON after a response ID",
+    "body": "data: {\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\n\n",
+    "valid": false
+  },
+  {
+    "name": "typed error without SSE event field",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"failed\",\"param\":null,\"sequence_number\":1}\n\n",
+    "valid": false
+  },
+  {
+    "name": "null error field after a response ID",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"error\":null}\n\n",
+    "valid": false
+  },
+  {
+    "name": "invalid response ID after a valid ID",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"response\":{\"id\":17}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "non-object JSON after a response ID",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: []\n\n",
+    "valid": false
+  },
+  {
+    "name": "malformed undelimited tail",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {",
+    "valid": false
+  }
+]

@@ -86,6 +86,8 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                     yield bytes([byte])
                 test.assertEqual(output.getvalue(), 'Hello 🌍')
                 yield (separator * 2 + 'data: [DONE]' + separator * 2).encode()
+                if read_stream is read_gateway:
+                    yield ('data: ignored after [DONE]' + separator * 2).encode()
 
         with contextlib.redirect_stdout(output):
             response = httpx.Response(200, stream=Source())

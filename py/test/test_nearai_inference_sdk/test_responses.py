@@ -17,6 +17,7 @@ from .ohttp_fixtures import OhttpGateway
 from .test_inference_client import BASE_URL, MODEL, ChunkStream, Gateway
 
 FIXTURES = Path(__file__).resolve().parents[3] / 'test-fixtures' / 'responses'
+STREAM_CASES = json.loads((FIXTURES / 'streams.json').read_text())
 
 
 class ResponsesGateway(Gateway):
@@ -231,9 +232,8 @@ async def test_responses_retry_receipt_only(monkeypatch, httpx2):
         assert len(gateway.completion_requests) == 1
 
 
-@pytest.mark.parametrize('streaming', [False, True])
-async def test_responses_missing_id(monkeypatch, streaming):
-    gateway = ResponsesGateway(streaming=streaming)
+async def test_responses_json_requires_an_id(monkeypatch):
+    gateway = ResponsesGateway()
     gateway.missing_id = True
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
@@ -244,6 +244,38 @@ async def test_responses_missing_id(monkeypatch, streaming):
         )
         with pytest.raises(ApiError, match='api.invalid_response'):
             await response.aread()
+
+
+@pytest.mark.parametrize('case', STREAM_CASES, ids=lambda case: case['name'])
+async def test_responses_stream_identity_contract(monkeypatch, case):
+    gateway = ResponsesGateway(streaming=True)
+    gateway.raw = case['body'].encode() + bytes(case.get('tail', []))
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        response = await client.send(
+            httpx.Request(
+                'POST', BASE_URL + 'responses', json={'model': MODEL, 'input': 'Hi'}
+            )
+        )
+        if case['valid']:
+            assert await response.aread() == gateway.raw
+            receipt = await client.verify_response('resp_fixture')
+            assert receipt.signature_kind == 'gateway'
+            assert receipt.signature.signed_text == (
+                f'{hashlib.sha256(gateway.completion_requests[0].content).hexdigest()}:'
+                f'{hashlib.sha256(gateway.raw).hexdigest()}'
+            )
+            assert gateway.signature_requests == 1
+        else:
+            with pytest.raises(ApiError, match='api.invalid_response'):
+                await response.aread()
+            with pytest.raises(ApiError):
+                await client.verify_response('resp_fixture')
+            assert gateway.signature_requests == 0
+        for unrelated_id in ('msg_1', 'event_only', 'other'):
+            with pytest.raises(ApiError, match='api.completion_not_found'):
+                await client.verify_response(unrelated_id)
+    assert len(gateway.completion_requests) == 1
 
 
 async def test_responses_http_error(monkeypatch):

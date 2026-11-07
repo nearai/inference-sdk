@@ -17,6 +17,7 @@ import {
 } from '../utils/errors';
 import {
   getSseData,
+  getSseDataRecords,
   type SseLine,
   splitSseLines,
   takeCompleteSseRecords,
@@ -91,12 +92,7 @@ export function parseE2eeChatStreamChunk({
 }
 
 /**
- * Encrypt protocol-defined request fields without mutating the caller's
- * object. Other Chat JSON is preserved for the Gateway and model to handle.
- *
- * E2EE requests always opt into the protocol's all-fields extension. That
- * extension is intentionally selective: it enables additional documented
- * fields but does not turn arbitrary JSON into ciphertext.
+ * Encrypt supported Chat request fields using the verified model key.
  */
 export function encryptE2eeChatRequest({
   body,
@@ -160,38 +156,66 @@ export function createE2eeChatSseTransform({
   clientKeyPair,
 }: CreateE2eeChatSseTransformParams): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder('utf-8', { fatal: true });
+  const framingDecoder = new TextDecoder('latin1');
   const encoder = new TextEncoder();
-  let pending = '';
+  let pending = new Uint8Array(0);
+  let text = '';
+  let done = false;
 
   return new TransformStream({
     transform(chunk, controller) {
+      if (done) {
+        controller.enqueue(chunk);
+        return;
+      }
       try {
-        pending += decoder.decode(chunk, { stream: true });
-        const complete = takeCompleteSseRecords(pending);
-        pending = complete.pending;
+        let decoded = pending.length;
+        const combined = new Uint8Array(pending.length + chunk.length);
+        combined.set(pending);
+        combined.set(chunk, pending.length);
+        pending = combined;
+        // ASCII framing with one character per byte preserves raw offsets.
+        const complete = takeCompleteSseRecords(framingDecoder.decode(pending));
+        let consumed = 0;
         for (const record of complete.records) {
+          const end = consumed + record.value.length + record.separator.length;
+          text += decoder.decode(pending.subarray(decoded, end), {
+            stream: true,
+          });
+          decoded = end;
+          if (getSseDataRecords(text).includes('[DONE]')) {
+            done = true;
+            controller.enqueue(pending.subarray(consumed));
+            pending = new Uint8Array(0);
+            text = '';
+            return;
+          }
           controller.enqueue(
             encoder.encode(
               transformSseRecord({
-                record: record.value,
+                record: text.slice(0, -record.separator.length),
                 separator: record.separator,
                 clientKeyPair,
               }),
             ),
           );
+          text = '';
+          consumed = end;
         }
+        text += decoder.decode(pending.subarray(decoded), { stream: true });
+        pending = pending.slice(consumed);
       } catch (cause) {
         throw asSseResponseError(cause);
       }
     },
     flush(controller) {
       try {
-        pending += decoder.decode();
-        if (pending.length > 0) {
+        text += decoder.decode();
+        if (text.length > 0) {
           controller.enqueue(
             encoder.encode(
               transformSseRecord({
-                record: pending,
+                record: text,
                 separator: '',
                 clientKeyPair,
               }),

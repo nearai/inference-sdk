@@ -6,6 +6,7 @@ export class ChatStreamOutput {
   done = false;
 
   push(chunk: string, eof = false): string {
+    if (this.done) return '';
     this.pending += chunk;
     if (!this.started && this.pending) {
       this.pending = this.pending.replace(/^\uFEFF/, '');
@@ -32,8 +33,11 @@ export class ChatStreamOutput {
                 : [],
           )
           .join('\n');
-        if (data === '[DONE]') this.done = true;
-        else if (data) {
+        if (data === '[DONE]') {
+          this.done = true;
+          this.pending = '';
+          return text;
+        } else if (data) {
           const value = JSON.parse(data);
           if (value.error || value.type === 'error')
             throw new Error('Stream returned an error');

@@ -1026,6 +1026,51 @@ func TestDirectClientE2EEIsOptIn(t *testing.T) {
 	}
 }
 
+func TestDoneWithoutIDIsRejectedBeforeExposingIt(t *testing.T) {
+	for _, endpoint := range []string{"chat/completions", "responses"} {
+		t.Run(endpoint, func(t *testing.T) {
+			cloud := newFakeCloud(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/"+endpoint {
+					cloud.ServeHTTP(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				payload := `{"id":"late-id"}`
+				if endpoint == "responses" {
+					payload = `{"response":{"id":"late-id"}}`
+				}
+				fmt.Fprintf(w, "data: [DONE]\n\ndata: %s\n\n", payload)
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+			client, err := NewInferenceClient(InferenceOptions{
+				ClientOptions:       ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
+				DisableTLSBinding:   true,
+				GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			body, _ := json.Marshal(chatRequest())
+			req, _ := http.NewRequestWithContext(ctx, "POST", client.BaseURL()+endpoint, bytes.NewReader(body))
+			response, err := client.HTTPClient().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			_, err = response.Body.Read(make([]byte, 64))
+			requireCode(t, err, "api.invalid_response")
+			_, err = client.VerifyResponse(context.Background(), "late-id")
+			requireCode(t, err, "api.completion_not_found")
+		})
+	}
+}
+
 func TestFailedStreamsAreNotRegistered(t *testing.T) {
 	for _, body := range []string{
 		"event: error\ndata: {\"error\":\"failed\"}\n\ndata: [DONE]\n\n",
