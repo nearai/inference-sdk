@@ -447,21 +447,26 @@ credentials from the Gateway and use separate fetch and verification APIs.
 
 ```ts
 import {
+  createPinnedTlsFetch,
   DirectAttestationClient,
   verifyDirectModelAttestations,
 } from '@nearai/inference-sdk/node';
 
-const client = new DirectAttestationClient({
-  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
-  apiKey: process.env.NEARAI_API_KEY,
-});
-const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
+const baseUrl = 'https://glm-5-3-flash.completions.near.ai/v1';
+const bootstrap = new DirectAttestationClient({ baseUrl });
+const fetched = await bootstrap.fetchModelAttestations({ signingAlgo: 'ed25519' });
 const verified = await verifyDirectModelAttestations(fetched);
+const pinnedFetch = createPinnedTlsFetch(verified.spkiFingerprints);
+const client = new DirectAttestationClient({
+  baseUrl,
+  apiKey: process.env.NEARAI_API_KEY,
+  fetch: pinnedFetch,
+});
 ```
 
-Send Chat with `fetch` and retain the exact request and response bytes.
-Then fetch its signature with `client.fetchCompletionSignature()` and pass the
-signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
+Send Chat with `pinnedFetch` and retain the exact request and response bytes.
+Use `client.fetchCompletionSignature({ completionId, signingAlgo: 'ed25519' })`
+and pass the signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
 It returns all verified attestations sharing the response's signer.
 
 `verifyDirectModelAttestation()` verifies one report;

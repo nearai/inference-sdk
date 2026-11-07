@@ -448,7 +448,10 @@ Direct clients are experimental. Requests use the verified model TLS fingerprint
 by default.
 
 `VerifyResponse` returns `VerifiedDirectCompletionResult` with all matching model
-reports in `Attestations`. Use `VerifyDirectModelResponse` for manual verification.
+reports in `Attestations`. For manual verification, build an HTTP client with
+`NewPinnedTransport(transport, verified.SPKIFingerprints...)` after `VerifyDirectModelAttestations`.
+Send Chat with it and pass it to `NewDirectAttestationClient` via `ClientOptions.HTTPClient`
+to fetch the signature for `VerifyDirectModelResponse`.
 
 ## Manual verification
 

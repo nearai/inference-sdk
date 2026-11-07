@@ -97,8 +97,9 @@ model report. Use `DirectInferenceClientOptions` with `e2ee: true` for encryptio
 `verify_response(id)` returns `VerifiedDirectCompletionResult` with all matching
 model reports in `attestations`.
 
-For manual workflows, use `DirectAttestationClient` and
-`verify_direct_model_attestation(s)` / `verify_direct_model_response`.
+For manual verification, pass the fingerprints from `verify_direct_model_attestations`
+to `create_pinned_tls_client`. Send Chat with that client and reuse it with
+`DirectAttestationClient::with_http_client` to fetch the signature for `verify_direct_model_response`.
 
 Direct clients are experimental. Requests use the verified model TLS fingerprints
 by default.

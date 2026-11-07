@@ -300,30 +300,33 @@ async with DirectInferenceClient(
 Set `e2ee=True` to enable encryption. Streaming, OHTTP, and OpenAI integration
 use the same interfaces as Gateway Chat.
 
-For a manual workflow:
+For a manual non-streaming call, prepare an `httpx.Request` named `chat_request`
+for the Direct Chat endpoint with the endpoint credentials, `Accept-Encoding: identity`,
+and `X-No-Aliasing: true`.
 
 ```python
 from nearai_inference_sdk import (
     DirectAttestationClient,
+    create_pinned_tls_client,
     verify_direct_model_attestations,
     verify_direct_model_response,
 )
 
-direct_client = DirectAttestationClient(direct_base_url, api_key=direct_api_key)
-fetched_attestations = await direct_client.fetch_model_attestations(
-    signing_algo='ed25519'
-)
+bootstrap = DirectAttestationClient(direct_base_url)
+fetched_attestations = await bootstrap.fetch_model_attestations(signing_algo='ed25519')
 verified = await verify_direct_model_attestations(fetched_attestations)
 
-# Application code sends Chat and retains its exact request and response bytes.
-signature = await direct_client.fetch_completion_signature(
-    completion_id, signing_algo='ed25519'
-)
+async with create_pinned_tls_client(verified.spki_fingerprints) as http:
+    response = await http.send(chat_request)
+    response.raise_for_status()
+    direct_client = DirectAttestationClient(
+        direct_base_url, api_key=direct_api_key, http_client=http
+    )
+    signature = await direct_client.fetch_completion_signature(
+        response.json()['id'], signing_algo='ed25519'
+    )
 matching = verify_direct_model_response(
-    request_body,
-    response_body,
-    signature,
-    verified.attestations,
+    chat_request.content, response.content, signature, verified.attestations
 )
 ```
 
