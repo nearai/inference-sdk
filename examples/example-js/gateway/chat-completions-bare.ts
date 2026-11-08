@@ -34,15 +34,20 @@ async function main(): Promise<void> {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const attestationClient = new AttestationClient({
+  const bootstrapClient = new AttestationClient({
     apiKey: API_KEY,
     baseUrl: BASE_URL,
   });
 
   // Verify the Gateway and every returned model report before sending a prompt.
   // A failed check throws and stops this flow before either Chat request.
-  const gateway = await fetchAndVerifyGateway(attestationClient);
+  const gateway = await fetchAndVerifyGateway(bootstrapClient);
   const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
+  const attestationClient = new AttestationClient({
+    apiKey: API_KEY,
+    baseUrl: BASE_URL,
+    fetch: pinnedTlsFetch,
+  });
   const modelAttestations =
     await fetchAndVerifyModelAttestations(attestationClient);
 

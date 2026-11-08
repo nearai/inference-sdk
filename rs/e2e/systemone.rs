@@ -120,6 +120,7 @@ async fn standalone_systemone_binds_exact_bytes() -> Result<(), Box<dyn Error>> 
             return Err("missing attested TLS binding".into());
         };
         let http = create_pinned_tls_client(std::slice::from_ref(spki_fingerprint))?;
+        let client = client.with_http_client(http.clone());
         let models = super::select_models(&super::required_env("NEARAI_E2E_MODELS")?, "systemone")?;
         let body = serde_json::to_vec(&systemone_request(&models[0].id))?;
         let response = http

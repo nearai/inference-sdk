@@ -202,10 +202,10 @@ async def verify_chat(
 ) -> None:
     base_url = required_env('NEARAI_BASE_URL').rstrip('/') + '/'
     api_key = required_env('NEARAI_API_KEY')
-    attestation_client = AttestationClient(api_key, base_url=base_url)
+    bootstrap_client = AttestationClient(api_key, base_url=base_url)
 
     # Only NEAR model evidence uses this SDK's model verification path.
-    fetched_gateway = await attestation_client.fetch_gateway_attestation(
+    fetched_gateway = await bootstrap_client.fetch_gateway_attestation(
         signing_algo=signing_algo,
     )
     gateway = await verify_gateway_attestation(
@@ -214,9 +214,13 @@ async def verify_chat(
     )
     assert gateway.tls_binding.kind == 'attested'
 
+    # Pin model evidence, Chat, and signatures to the verified Gateway.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
+        attestation_client = AttestationClient(
+            api_key, base_url=base_url, http_client=pinned_tls_client
+        )
         model_attestations = []
         if provider == 'near':
             fetched_model_attestations = (

@@ -152,10 +152,12 @@ export function mergeCloudApiRequestHeaders({
 export class CloudApiClient {
   private readonly baseUrl: string;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
+  private readonly apiFetch: typeof globalThis.fetch | undefined;
 
   constructor(options: AttestationClientOptions = {}) {
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
+    this.apiFetch = options.fetch;
   }
 
   /** Read the Gateway catalog's provider and capability; this does not verify a model. */
@@ -311,6 +313,7 @@ export class CloudApiClient {
 
   /** Override this in a runtime-specific client to control ordinary API requests. */
   protected async requestCloudApi(request: Request): Promise<Response> {
+    const fetch = this.apiFetch ?? globalThis.fetch;
     return fetch(request);
   }
 
