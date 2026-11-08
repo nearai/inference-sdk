@@ -193,67 +193,72 @@ async def verify_chat(
     )
     assert gateway.tls_binding.kind == 'attested'
 
-    models = []
-    if provider == 'near':
-        fetched_models = await client.fetch_model_attestations(
-            model,
-            signing_algo=signing_algo,
-        )
-        assert fetched_models.attestations, 'Expected NEAR model evidence'
-        for attestation in fetched_models.attestations:
-            verified = await verify_model_attestation(
-                attestation,
-                fetched_models.client_binding,
-                policy=ModelAttestationPolicy(gpu_evidence='required'),
-            )
-            models.append(verified)
-
-    request_body = json.dumps(
-        {
-            'model': model,
-            'messages': [{'role': 'user', 'content': 'Reply with the single word OK.'}],
-            # Reasoning tokens share this budget; leave room for a visible answer.
-            'max_completion_tokens': 1024,
-            'stream': stream,
-        },
-        separators=(',', ':'),
-    ).encode()
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json',
-        'Accept-Encoding': 'identity',
-        'x-no-aliasing': 'true',
-    }
     # Bind Chat's TLS peer to the Gateway whose attestation passed verification.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
+        client = AttestationClient(
+            api_key, base_url=base_url, http_client=pinned_tls_client
+        )
+        models = []
+        if provider == 'near':
+            fetched_models = await client.fetch_model_attestations(
+                model,
+                signing_algo=signing_algo,
+            )
+            assert fetched_models.attestations, 'Expected NEAR model evidence'
+            for attestation in fetched_models.attestations:
+                verified = await verify_model_attestation(
+                    attestation,
+                    fetched_models.client_binding,
+                    policy=ModelAttestationPolicy(gpu_evidence='required'),
+                )
+                models.append(verified)
+
+        request_body = json.dumps(
+            {
+                'model': model,
+                'messages': [
+                    {'role': 'user', 'content': 'Reply with the single word OK.'}
+                ],
+                # Reasoning tokens share this budget; leave room for a visible answer.
+                'max_completion_tokens': 1024,
+                'stream': stream,
+            },
+            separators=(',', ':'),
+        ).encode()
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'Accept-Encoding': 'identity',
+            'x-no-aliasing': 'true',
+        }
         response = await pinned_tls_client.post(
             base_url + 'chat/completions', content=request_body, headers=headers
         )
         assert response.status_code == 200, f'Chat returned HTTP {response.status_code}'
         response_body = response.content
 
-    completion_id = read_completion_id(response_body, stream)
-    signature = await retry_receipt(
-        lambda: client.fetch_completion_signature(
-            completion_id, signing_algo=signing_algo
+        completion_id = read_completion_id(response_body, stream)
+        signature = await retry_receipt(
+            lambda: client.fetch_completion_signature(
+                completion_id, signing_algo=signing_algo
+            )
         )
-    )
-    assert signature.signer.signing_algo == signing_algo
-    if provider != 'near':
-        assert signature.kind == 'gateway'
-    # Keep original wire bytes. Even appended whitespace must invalidate them.
-    altered = response_body + b' '
-    if signature.kind == 'provider_tee':
-        attestation = find_model_attestation_for_signature(models, signature)
-        verify_model_response(request_body, response_body, signature, attestation)
-        with pytest.raises(VerificationError):
-            verify_model_response(request_body, altered, signature, attestation)
-    else:
-        verify_gateway_response(request_body, response_body, signature, gateway)
-        with pytest.raises(VerificationError):
-            verify_gateway_response(request_body, altered, signature, gateway)
+        assert signature.signer.signing_algo == signing_algo
+        if provider != 'near':
+            assert signature.kind == 'gateway'
+        # Keep original wire bytes. Even appended whitespace must invalidate them.
+        altered = response_body + b' '
+        if signature.kind == 'provider_tee':
+            attestation = find_model_attestation_for_signature(models, signature)
+            verify_model_response(request_body, response_body, signature, attestation)
+            with pytest.raises(VerificationError):
+                verify_model_response(request_body, altered, signature, attestation)
+        else:
+            verify_gateway_response(request_body, response_body, signature, gateway)
+            with pytest.raises(VerificationError):
+                verify_gateway_response(request_body, altered, signature, gateway)
 
 
 def read_completion_id(response_body: bytes, stream: bool) -> str:

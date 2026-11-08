@@ -8,7 +8,6 @@ import {
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
 import type { CompletionSignature } from '../types/chat';
 import type {
-  AttestationClientOptions,
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestations,
@@ -198,29 +197,6 @@ type GatewaySessionTransport = {
   ) => Promise<CompletionSignature>;
 };
 
-type GatewaySessionEvidenceClientParams = {
-  readonly options: AttestationClientOptions;
-  readonly fetch: typeof globalThis.fetch;
-  readonly signal: AbortSignal;
-};
-
-/** Session evidence requests share the transport and cancellation owned by preflight. */
-class GatewaySessionEvidenceClient extends CloudApiClient {
-  private readonly gatewayFetch: typeof globalThis.fetch;
-  private readonly signal: AbortSignal;
-
-  constructor({ options, fetch, signal }: GatewaySessionEvidenceClientParams) {
-    super(options);
-    this.gatewayFetch = fetch;
-    this.signal = signal;
-  }
-
-  protected override requestCloudApi(request: Request): Promise<Response> {
-    this.signal.throwIfAborted();
-    return this.gatewayFetch(new Request(request, { signal: this.signal }));
-  }
-}
-
 type VerifyModelsParams = {
   readonly model: string;
   readonly transport: GatewaySessionTransport;
@@ -311,11 +287,7 @@ export abstract class VerifiedInferenceClientBase<
     return this.baseUrl;
   }
 
-  /**
-   * Verify the required attestations for a model and return the results without sending Chat.
-   * Reuses the same cache and in-flight verification as Chat. With a cache
-   * TTL of zero, a later Chat request verifies again.
-   */
+  /** Verify the required deployment attestations before sending a prompt. */
   async verify(model: string): Promise<AttestationResult> {
     if (model === '') {
       throw invalidInput({
@@ -440,7 +412,7 @@ export abstract class VerifiedInferenceClientBase<
     return record.verification;
   }
 
-  /** Release captured responses and expiry timers; keep the client reusable. */
+  /** Clear captured response verification records. */
   clearResponseCache(): void {
     this.responseCacheGeneration++;
     for (const record of this.responseRecords.values()) {
@@ -882,10 +854,13 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
     );
     const controller = new AbortController();
     const { signal } = controller;
-    const client = new GatewaySessionEvidenceClient({
-      options: this.gatewayOptions,
-      fetch: gatewayFetch,
-      signal,
+    const client = new CloudApiClient({
+      ...this.gatewayOptions,
+      // Evidence requests share the transport and cancellation owned by preflight.
+      fetch: (input, init) => {
+        signal.throwIfAborted();
+        return gatewayFetch(new Request(input, { ...init, signal }));
+      },
     });
     const transport: GatewaySessionTransport = {
       fetch: gatewayFetch,

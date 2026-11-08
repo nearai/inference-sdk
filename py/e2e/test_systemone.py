@@ -97,6 +97,9 @@ async def test_standalone_apis_bind_generation_id_to_exact_decision_bytes() -> N
         async with create_pinned_tls_client(
             gateway.tls_binding.spki_fingerprint
         ) as pinned_tls_client:
+            attestation_client = AttestationClient(
+                api_key, base_url=base_url, http_client=pinned_tls_client
+            )
             response = await pinned_tls_client.post(
                 base_url + 'systemone',
                 content=request_body,
@@ -113,11 +116,11 @@ async def test_standalone_apis_bind_generation_id_to_exact_decision_bytes() -> N
             decision_id = response.headers.get('x-generation-id')
             assert decision_id, 'Expected X-Generation-Id even when the body has no id'
             response_body = response.content
-        signature = await retry_receipt(
-            lambda: client.fetch_completion_signature(
-                decision_id, signing_algo=signing_algo
+            signature = await retry_receipt(
+                lambda: attestation_client.fetch_completion_signature(
+                    decision_id, signing_algo=signing_algo
+                )
             )
-        )
         assert signature.kind == 'gateway'
         verify_gateway_response(request_body, response_body, signature, gateway)
         # A real receipt rejects changed bytes on either side, without inference.

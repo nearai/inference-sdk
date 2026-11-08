@@ -64,11 +64,17 @@ async function main(): Promise<void> {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const client = new AttestationClient({ apiKey, baseUrl: BASE_URL });
+  const bootstrapClient = new AttestationClient({ apiKey, baseUrl: BASE_URL });
 
   // Verify the Gateway and every returned model report before sending a prompt.
   // A failed check throws and stops this flow before either Chat request.
-  const gateway = await fetchAndVerifyGateway(client);
+  const gateway = await fetchAndVerifyGateway(bootstrapClient);
+  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
+  const client = new AttestationClient({
+    apiKey,
+    baseUrl: BASE_URL,
+    fetch: pinnedTlsFetch,
+  });
   const models = await fetchAndVerifyModelAttestations(client);
 
   // Encryption needs only the verified public key and its algorithm. Keep the
@@ -78,10 +84,6 @@ async function main(): Promise<void> {
     signingAlgo: model.signer.signingAlgo,
     publicKey: model.signingPublicKey,
   };
-
-  // TLS pinning is recommended in Node. In browsers, use regular fetch instead;
-  // browser APIs do not expose the TLS peer certificate needed for this check.
-  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
 
   // Non-streaming: decrypt the JSON response, verify its signature, then display it.
   const nonStreamingCompletion = await runNonStreamingExample({

@@ -279,15 +279,18 @@ async def read_stream(response: httpx.Response) -> list[dict]:
 
 async def main() -> None:
     api_key = os.environ['NEARAI_API_KEY']
-    attestation_client = AttestationClient(api_key, base_url=BASE_URL)
-    gateway = await fetch_and_verify_gateway(attestation_client)
-    models = await fetch_and_verify_models(attestation_client)
-    recipient = find_e2ee_recipient(models)
+    bootstrap = AttestationClient(api_key, base_url=BASE_URL)
+    gateway = await fetch_and_verify_gateway(bootstrap)
 
     # Pin Chat TLS to the authenticated Gateway SPKI.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
+        attestation_client = AttestationClient(
+            api_key, base_url=BASE_URL, http_client=pinned_tls_client
+        )
+        models = await fetch_and_verify_models(attestation_client)
+        recipient = find_e2ee_recipient(models)
         completion = await run_non_streaming_example(
             pinned_tls_client, api_key, recipient
         )

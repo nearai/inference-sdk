@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
         _ => return Err("Gateway did not supply attested TLS binding".into()),
     };
     let http = create_pinned_tls_client(std::slice::from_ref(pin))?;
+    let api = api.with_http_client(http.clone());
     let fetched_models = api
         .fetch_model_attestations(&model(), Some(algo()?), None)
         .await?;
