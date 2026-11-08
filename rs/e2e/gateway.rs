@@ -110,7 +110,7 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         GatewayTlsBinding::Attested { .. }
     ));
 
-    // Pin Chat requests to the verified Gateway.
+    // Pin all subsequent evidence, Chat, and signature requests to the verified Gateway.
     let pin = match &gateway.tls_binding {
         GatewayTlsBinding::Attested { spki_fingerprint } => spki_fingerprint,
         GatewayTlsBinding::None => {
@@ -118,6 +118,7 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         }
     };
     let http = create_pinned_tls_client(std::slice::from_ref(pin))?;
+    let client = client.with_http_client(http.clone());
 
     let mut model_attestations = Vec::new();
     if model.provider == "near" {

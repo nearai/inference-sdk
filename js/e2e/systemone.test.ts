@@ -105,6 +105,11 @@ test('Standalone APIs bind the generation ID to exact Jev request and response b
   const pinnedTlsFetch = createPinnedTlsFetch(
     gateway.tlsBinding.spkiFingerprint,
   );
+  const attestationClient = new AttestationClient({
+    apiKey: API_KEY,
+    baseUrl: BASE_URL,
+    fetch: pinnedTlsFetch,
+  });
   const requestBody = new TextEncoder().encode(JSON.stringify(REQUEST));
   const response = await pinnedTlsFetch(new URL('systemone', BASE_URL), {
     method: 'POST',
@@ -124,7 +129,10 @@ test('Standalone APIs bind the generation ID to exact Jev request and response b
   );
   const responseBody = new Uint8Array(await response.arrayBuffer());
   const signature = await retryReceipt(() =>
-    client.fetchCompletionSignature({ completionId: decisionId, signingAlgo }),
+    attestationClient.fetchCompletionSignature({
+      completionId: decisionId,
+      signingAlgo,
+    }),
   );
   assert.equal(signature.kind, 'gateway');
   const params = { requestBody, responseBody, signature, attestation: gateway };

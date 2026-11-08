@@ -358,14 +358,11 @@ contains the decoded inner status, headers, and body.
 
 ## `AttestationClient`
 
-Construct `AttestationClient` once to fetch model metadata, attestations, and
-response signatures. It does not send Chat requests or retain their bodies.
+Fetches model metadata, attestations, and response signatures.
 
-The Node `AttestationClient` observes the TLS peer only for its Gateway
-attestation request. After `verifyGatewayAttestation` returns an
-`attested` TLS binding, pass its `spkiFingerprint` to
-`createPinnedTlsFetch` for raw HTTPS requests your application owns. The
-Node inference clients apply this automatically to their complete Chat flow.
+For manual verification in Node, pass the verified Gateway `spkiFingerprint` to
+`createPinnedTlsFetch`. Use the returned fetch for Chat and for the evidence client
+that retrieves model reports and response signatures.
 
 For one three-stage verification operation, pass the same explicit
 `signingAlgo` to both attestation fetches and `fetchCompletionSignature`.
@@ -376,23 +373,20 @@ The Gateway's report and signature endpoints have different defaults.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, and signature requests; overrides `headers.Authorization`. |
-| `headers?` | `HeadersInit` | No | — | Static request headers; Gateway reports omit `Authorization`, `api-key`, and `x-api-key`. Model reports use configured authentication. |
+| `headers?` | `HeadersInit` | No | — | Additional request headers; use `apiKey` for bearer authentication. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL without a query or fragment. Include the API path when using a custom endpoint. |
+| `fetch?` | `typeof globalThis.fetch` | No | Runtime Fetch | Transport for model reports, metadata, and completion signatures. Gateway attestation keeps its default transport and same-request TLS peer capture. |
 
-Use `new AttestationClient()` to fetch attestation without credentials.
-
-Model reports through the Gateway use the client's configured API key or authentication
-headers. Listed models can be queried without credentials; unlisted models require a
-key for an organization granted access. With standalone evidence clients, verify the
-Gateway before fetching an authenticated model report. Integrated clients perform
-this ordering automatically.
+Gateway and Direct attestation report requests omit `Authorization`, `api-key`,
+and `x-api-key`. Model reports fetched through the Gateway, model metadata,
+inference, and response signatures use the configured credentials.
 
 ### Methods
 
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelMetadata(model)` | `model: string` | `ModelMetadata` | Fetches `GET /v1/model/{model}` using a URL-encoded model ID and returns its provider type and attestation-support flag. Rejects HTTP errors and malformed metadata. This does not perform cryptographic verification. |
+| `fetchModelMetadata(model)` | `model: string` | `ModelMetadata` | Returns the provider type and model attestation support. |
 | `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model attestations matching the requested model and optional signing filters. Verify every returned attestation for a deployment check. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
@@ -415,10 +409,8 @@ and `attestationSupported` is `true`.
 
 ### Attestation fetch result types
 
-Every attestation fetch method generates and sends a fresh 32-byte client nonce
-and checks the service's echoed nonce. Each result places its client values in
-`clientBinding`. Pair that value with the result's attestation in the matching
-attestation verifier.
+Pass each fetch result's `clientBinding` and attestation together to the
+corresponding verifier.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |

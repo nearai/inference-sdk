@@ -174,12 +174,16 @@ async def verify_completion_response(
 
 async def main() -> None:
     api_key = os.environ['NEARAI_API_KEY']
-    attestation_client = AttestationClient(api_key, base_url=BASE_URL)
-    gateway = await fetch_and_verify_gateway(attestation_client)
+    bootstrap_client = AttestationClient(api_key, base_url=BASE_URL)
+    gateway = await fetch_and_verify_gateway(bootstrap_client)
 
+    # Pin model evidence, Chat, and signature requests to the verified Gateway.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
+        attestation_client = AttestationClient(
+            api_key, base_url=BASE_URL, http_client=pinned_tls_client
+        )
         model_attestations = await fetch_and_verify_model_attestations(
             attestation_client
         )

@@ -265,11 +265,11 @@ for (const selectedModel of MODELS) {
     test(`Standalone APIs handle ${selectedModel.provider} Chat: ${selectedModel.id}, ${signingAlgo}`, {
       timeout: 180_000,
     }, async () => {
-      const attestationClient = new AttestationClient({
+      const bootstrapClient = new AttestationClient({
         apiKey: API_KEY,
         baseUrl: BASE_URL,
       });
-      const fetchedGateway = await attestationClient.fetchGatewayAttestation({
+      const fetchedGateway = await bootstrapClient.fetchGatewayAttestation({
         signingAlgo,
       });
       const gateway = await verifyGatewayAttestation({
@@ -283,6 +283,11 @@ for (const selectedModel of MODELS) {
       const pinnedTlsFetch = createPinnedTlsFetch(
         gateway.tlsBinding.spkiFingerprint,
       );
+      const attestationClient = new AttestationClient({
+        apiKey: API_KEY,
+        baseUrl: BASE_URL,
+        fetch: pinnedTlsFetch,
+      });
 
       const modelAttestations = [];
       if (selectedModel.provider === 'near') {
