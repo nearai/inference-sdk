@@ -7,11 +7,13 @@ import {
 } from '@nearai/inference-sdk/node';
 import { transportOptions } from '../utils/transport-options.ts';
 
+const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 // Selects the algorithm for attestation, E2EE, and response signatures.
 const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || undefined;
 
 // Required Gateway images and build workflows. Add a reviewed `commit`
 // to each policy if your application also requires commit pinning.
@@ -42,14 +44,13 @@ const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
 };
 
 async function main(): Promise<void> {
-  const apiKey = process.env.NEARAI_API_KEY;
-  if (!apiKey) throw new Error('NEARAI_API_KEY is required');
+  if (!API_KEY) throw new Error('NEARAI_API_KEY is required');
 
   // Enable E2EE explicitly. Gateway TLS verification is enabled by default.
   // Attestations are reused for 60 minutes. Response records have a separate
   // 60-minute TTL, starting when the response finishes.
   const inferenceClient = new InferenceClient({
-    apiKey,
+    apiKey: API_KEY,
     baseUrl: BASE_URL,
     ...transportOptions(SIGNING_ALGO),
     e2ee: true,
@@ -59,7 +60,7 @@ async function main(): Promise<void> {
           verifyComposeManagerDeploymentImageProvenance({
             deployment,
             imagePolicies: MODEL_IMAGE_POLICIES,
-            githubToken: process.env.GITHUB_TOKEN || undefined,
+            githubToken: GITHUB_TOKEN,
             composeManagerImagePolicy: {
               imageRepository: 'nearaidev/compose-manager',
               repository: 'nearai/compose-manager',
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
           verifyDeploymentImageProvenance({
             appCompose,
             imagePolicies: GATEWAY_IMAGE_POLICIES,
-            githubToken: process.env.GITHUB_TOKEN || undefined,
+            githubToken: GITHUB_TOKEN,
           }),
       },
     },

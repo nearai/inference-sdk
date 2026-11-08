@@ -22,12 +22,14 @@ import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
 
 // This example composes the SDK's standalone APIs: verify deployments, encrypt
 // and send Chat requests, decrypt responses, then verify their signatures.
+const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL = `${(
   process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/'
 ).replace(/\/+$/, '')}/`;
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || undefined;
 
 // Require GitHub build provenance for these Gateway images. Add a reviewed
 // `commit` to pin a specific build.
@@ -60,12 +62,11 @@ const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
 await main();
 
 async function main(): Promise<void> {
-  const apiKey = process.env.NEARAI_API_KEY;
-  if (!apiKey) {
+  if (!API_KEY) {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const client = new AttestationClient({ apiKey, baseUrl: BASE_URL });
+  const client = new AttestationClient({ apiKey: API_KEY, baseUrl: BASE_URL });
 
   // Verify the Gateway and every returned model report before sending a prompt.
   // A failed check throws and stops this flow before either Chat request.
@@ -87,7 +88,7 @@ async function main(): Promise<void> {
 
   // Non-streaming: decrypt the JSON response, verify its signature, then display it.
   const nonStreamingCompletion = await runNonStreamingExample({
-    apiKey,
+    apiKey: API_KEY,
     pinnedTlsFetch,
     modelKey,
   });
@@ -102,7 +103,7 @@ async function main(): Promise<void> {
   // Streaming: display decrypted SSE as it arrives. Signature verification needs
   // the complete response bytes, so it runs after the stream finishes.
   const streamingCompletion = await runStreamingExample({
-    apiKey,
+    apiKey: API_KEY,
     pinnedTlsFetch,
     modelKey,
   });
@@ -159,7 +160,7 @@ async function fetchAndVerifyGateway(
         verifyDeploymentImageProvenance({
           appCompose,
           imagePolicies: GATEWAY_IMAGE_POLICIES,
-          githubToken: process.env.GITHUB_TOKEN || undefined,
+          githubToken: GITHUB_TOKEN,
         }),
     },
   });
@@ -193,7 +194,7 @@ async function fetchAndVerifyModelAttestations(
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: MODEL_IMAGE_POLICIES,
-              githubToken: process.env.GITHUB_TOKEN || undefined,
+              githubToken: GITHUB_TOKEN,
               composeManagerImagePolicy: {
                 imageRepository: 'nearaidev/compose-manager',
                 repository: 'nearai/compose-manager',

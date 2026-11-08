@@ -14,6 +14,11 @@ pub const DIRECT: &str = "https://glm-5-3-flash.completions.near.ai/v1/";
 pub fn api_key() -> Result<String> {
     Ok(std::env::var("NEARAI_API_KEY")?)
 }
+fn github_token() -> Option<String> {
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+}
 pub fn body(stream: bool) -> Value {
     json!({"model": model(), "messages": [{"role":"user", "content":"Reply with the word ok."}], "max_completion_tokens":1024, "stream":stream})
 }
@@ -51,13 +56,10 @@ impl DeploymentVerifier for GatewayImages {
             )
         })
         .collect();
-        let github_token = std::env::var("GITHUB_TOKEN")
-            .ok()
-            .filter(|token| !token.is_empty());
         verify_deployment_image_provenance(
             &deployment.app_compose,
             &policies,
-            github_token.as_deref(),
+            github_token().as_deref(),
         )
         .await
     }
@@ -264,15 +266,12 @@ impl DeploymentVerifier for ModelImages {
             ),
             signer_identity: None,
         };
-        let github_token = std::env::var("GITHUB_TOKEN")
-            .ok()
-            .filter(|token| !token.is_empty());
         verify_compose_manager_deployment_image_provenance(
             deployment,
             &policies,
             &manager,
             ComposeManagerDeploymentImageProvenanceOptions {
-                github_token: github_token.as_deref(),
+                github_token: github_token().as_deref(),
                 ..Default::default()
             },
         )

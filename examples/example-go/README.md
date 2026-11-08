@@ -33,8 +33,8 @@ Verification failures exit with an error. Official clients reuse
 Messages keep field-level E2EE disabled; OHTTP requires Ed25519.
 
 Native and standalone Gateway Chat apply both Gateway and Compose Manager model
-image policies. Add commit pins in `internal/demo.GatewayImages` and
-`internal/demo.ModelImages` for stricter admission. `GITHUB_TOKEN` may be used
+image policies. Add commit pins in `Config.GatewayImages` and
+`Config.ModelImages` for stricter admission. `GITHUB_TOKEN` may be used
 for GitHub provenance requests. See the shared guide for
 [direct endpoint verification](../README.md#direct-endpoints).
 

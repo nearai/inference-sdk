@@ -30,6 +30,8 @@ BASE_URL = (
 )
 MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
 SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN') or None
+
 GATEWAY_IMAGE_POLICIES = {
     'nearaidev/cloud-api': ImageProvenancePolicy(
         repository='nearai/cloud-api', workflow='.github/workflows/build.yml'
@@ -63,7 +65,7 @@ async def verify_model_images(deployment: MeasuredDeployment) -> None:
             repository='nearai/compose-manager',
             workflow='.github/workflows/build.yml',
         ),
-        github_token=os.environ.get('GITHUB_TOKEN') or None,
+        github_token=GITHUB_TOKEN,
     )
 
 
@@ -95,7 +97,7 @@ async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
     await verify_deployment_image_provenance(
         deployment.app_compose,
         GATEWAY_IMAGE_POLICIES,
-        github_token=os.environ.get('GITHUB_TOKEN') or None,
+        github_token=GITHUB_TOKEN,
     )
 
 
