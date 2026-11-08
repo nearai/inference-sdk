@@ -7,6 +7,7 @@ import {
   AttestationClient,
   InferenceClient,
   findModelAttestationForSignature,
+  findModelAttestationsForSignature,
 } from '../src';
 import {
   createCloudApiRequestConfiguration,
@@ -503,7 +504,7 @@ describe('AttestationClient', () => {
   });
 
   describe('model attestations', () => {
-    test('preserves every model candidate', async () => {
+    test('preserves model report order and duplicates while sending explicit signer filters', async () => {
       const selectedSigningAddress = `0x${'44'.repeat(20)}`;
       const otherSigningAddress = `0x${'55'.repeat(20)}`;
       const signature = modelSignature(selectedSigningAddress);
@@ -519,6 +520,10 @@ describe('AttestationClient', () => {
               signing_address: selectedSigningAddress,
               report_data: '44'.repeat(64),
             }),
+            cloudAttestation(clientNonce, {
+              signing_address: otherSigningAddress,
+              report_data: '55'.repeat(64),
+            }),
           ]),
         );
       });
@@ -529,7 +534,12 @@ describe('AttestationClient', () => {
           signingAlgo: signature.signer.signingAlgo,
           signingAddress: signature.signer.signingAddress,
         });
-      expect(attestations).toHaveLength(2);
+      expect(attestations.map(({ signer }) => signer.signingAddress)).toEqual([
+        otherSigningAddress,
+        selectedSigningAddress,
+        otherSigningAddress,
+      ]);
+      expect(attestations[0]).toEqual(attestations[2]);
       expect(
         attestations.every(
           (candidate) => candidate.nonce === clientBinding.nonce,
@@ -563,6 +573,86 @@ describe('AttestationClient', () => {
           signature,
         }),
       ).toBe(attestation);
+    });
+
+    test.each(['ed25519', 'ecdsa'] as const)(
+      'preserves nonadjacent and repeated %s reports without merging signers',
+      (signingAlgo) => {
+        const address = 'ab'.repeat(signingAlgo === 'ecdsa' ? 20 : 32);
+        const firstModelAttestation = verifiedModelAttestation({
+          signer: { signingAlgo, signingAddress: address },
+        });
+        const secondModelAttestation = verifiedModelAttestation({
+          signer: {
+            ...firstModelAttestation.signer,
+            signingAddress: `0X${firstModelAttestation.signer.signingAddress.replace(/^0x/i, '').toUpperCase()}`,
+          },
+        });
+        const otherModelAttestation = verifiedModelAttestation({
+          signer: {
+            signingAlgo,
+            signingAddress: '44'.repeat(address.length / 2),
+          },
+        });
+        const otherAlgorithmAttestation = verifiedModelAttestation({
+          signer:
+            signingAlgo === 'ecdsa'
+              ? { signingAlgo: 'ed25519', signingAddress: 'ab'.repeat(32) }
+              : { signingAlgo: 'ecdsa', signingAddress: 'ab'.repeat(20) },
+        });
+        const signature = {
+          ...modelSignature(),
+          signer: firstModelAttestation.signer,
+        };
+        const modelAttestations = [
+          otherModelAttestation,
+          secondModelAttestation,
+          otherAlgorithmAttestation,
+          firstModelAttestation,
+          firstModelAttestation,
+        ];
+        const matchingAttestations = findModelAttestationsForSignature({
+          attestations: modelAttestations,
+          signature,
+        });
+        expect(matchingAttestations).toEqual([
+          secondModelAttestation,
+          firstModelAttestation,
+          firstModelAttestation,
+        ]);
+        expect(
+          findModelAttestationForSignature({
+            attestations: modelAttestations,
+            signature,
+          }),
+        ).toBe(secondModelAttestation);
+        expect(() =>
+          findModelAttestationsForSignature({ attestations: [], signature }),
+        ).toThrow(
+          expect.objectContaining({
+            failure: expect.objectContaining({
+              code: 'api.model_attestation_signer_not_found',
+            }),
+          }),
+        );
+      },
+    );
+
+    test.each([
+      {
+        signature: modelSignature(`0x${'44'.repeat(20)}`),
+        code: 'api.model_attestation_signer_not_found',
+      },
+      { signature: gatewaySignature(), code: 'api.invalid_input' },
+    ])('rejects invalid plural selection with $code', ({ signature, code }) => {
+      expect(() =>
+        findModelAttestationsForSignature({
+          attestations: [verifiedModelAttestation()],
+          signature,
+        }),
+      ).toThrow(
+        expect.objectContaining({ failure: expect.objectContaining({ code }) }),
+      );
     });
 
     test('fetches model evidence without signer filters', async () => {
@@ -719,29 +809,6 @@ describe('AttestationClient', () => {
       expect(fetched.attestations).toEqual([]);
     });
 
-    test('returns all model attestations when Cloud API returns multiple candidates', async () => {
-      const api = cloudFor((request) => {
-        const clientNonce = requestNonce(request);
-        return jsonResponse(
-          modelReport(clientNonce, [
-            cloudAttestation(clientNonce),
-            cloudAttestation(clientNonce),
-          ]),
-        );
-      });
-
-      const fetched = await api.client.fetchModelAttestations({
-        model: 'canonical-model',
-      });
-
-      expect(fetched.attestations).toHaveLength(2);
-      expect(
-        fetched.attestations.every(
-          (attestation) => attestation.nonce === fetched.clientBinding.nonce,
-        ),
-      ).toBe(true);
-    });
-
     test.each([
       {
         label: 'a provider signer with no matching attestation',
@@ -749,15 +816,6 @@ describe('AttestationClient', () => {
         signature: modelSignature(`0x${'44'.repeat(20)}`),
         failure: {
           code: 'api.model_attestation_signer_not_found',
-        },
-      },
-      {
-        label: 'multiple attestations for the same signer',
-        attestations: [verifiedModelAttestation(), verifiedModelAttestation()],
-        signature: modelSignature(),
-        failure: {
-          code: 'api.ambiguous_model_attestation_signer',
-          details: { matchingCount: 2, totalCount: 2 },
         },
       },
       {

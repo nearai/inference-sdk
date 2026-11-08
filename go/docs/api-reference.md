@@ -141,6 +141,8 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
 func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedCompletionResult, error)
+func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error)
+// Deprecated: use FindModelAttestationsForSignature for shared signers.
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
 
 func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
@@ -362,8 +364,11 @@ type VerifiedCompletionResult struct {
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	Attestation   *VerifiedAttestation
-	// Attestations contains every matching direct deployment; a shared key does not identify one CVM.
+ // Gateway evidence for gateway receipts; nil for Direct.
+ // Deprecated for provider_tee receipts: use Attestations for all matching reports.
+ // Holds the report selected for the request key.
+ Attestation *VerifiedAttestation
+ // Every matching verified model deployment for provider_tee receipts.
 	Attestations []VerifiedAttestation
 }
 
@@ -426,18 +431,11 @@ Always close the client and each HTTP response body. `Close` cancels shared
 verification work and active requests, clears retained data, and closes owned
 idle connections. Caller-supplied HTTP clients/transports are borrowed.
 
-`Verify(ctx, model)` performs deployment admission without sending Chat and
-returns `AttestationVerificationResult`: Gateway evidence (nil for direct), all
-model reports, and the original `VerifiedAt` timestamp. Cache hits preserve the
-timestamp. Mutating returned evidence does not modify the internal cache.
+`Verify(ctx, model)` returns verified model reports and `VerifiedAt`.
+Gateway clients also return Gateway evidence.
 
-`AttestationTTL` and `ResponseTTL` are optional `*time.Duration` values, defaulting
-to one hour. A pointer to zero disables reuse/retention. Expired records are
-unavailable immediately and cleaned up periodically. Simultaneous callers share
-preflight and response-verification work. Cancelling one waiter leaves other
-waiters intact; shared verification is limited to two minutes. Failed preflight
-is not cached. Retryable signature retrieval failures can be attempted again
-without replaying the completion.
+`AttestationTTL` and `ResponseTTL` default to one hour. A pointer to zero disables
+that cache. Verify receipts before `ResponseTTL` expires.
 
 Streaming is incremental, but signature verification requires retaining the wire body.
 Once verification caches a success or a failure that cannot be retried, it releases
@@ -492,10 +490,10 @@ E2EE. It distinguishes:
 - `gateway`: a verified Gateway signer signed the exact client-visible bytes.
   This does not prove execution in a model TEE.
 
-`VerifiedCompletionResult.Attestation` contains Gateway/routed-model evidence.
-For direct endpoints, it is nil and `Attestations` includes every matching model
-report: a shared signing key cannot identify an individual serving instance.
-`VerifyDirectModelResponse` provides the same behavior for manual workflows.
+For model receipts, `Attestations` contains all verified reports sharing the selected signer.
+The model use of `Attestation` is deprecated. It holds the report selected for the request key.
+For Gateway receipts, `Attestation` contains the Gateway evidence.
+Direct receipts use `Attestations` and leave `Attestation` nil.
 
 Signatures and independently verified deployments do not establish a complete
 cryptographic chain from model execution through Gateway rewriting.
@@ -511,8 +509,11 @@ Manual workflow APIs:
   binds its optional fingerprint to the supplied observed peer.
 - `VerifyGatewayResponse`, `VerifyModelResponse`, `VerifyDirectModelResponse`
   verify exact bytes using already authenticated evidence.
-- `FindModelAttestationForSignature` requires exactly one matching model report;
-  it rejects missing and ambiguous matches.
+- `FindModelAttestationsForSignature` selects all matching reports from already
+  verified inputs. Verify the signature with `VerifyModelResponse` and the report
+  selected for the request key.
+- The deprecated `FindModelAttestationForSignature` returns the first matching
+  report in input order. An absent signer returns an error.
 
 ## Encryption
 

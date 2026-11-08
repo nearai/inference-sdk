@@ -376,6 +376,7 @@ async def test_decisions_verify_exact_bytes_with_the_selected_signer(
                 VerifiedModelCompletionResult(
                     id=verified.id,
                     signature=verified.signature,
+                    attestations=verified.attestations,
                     attestation=verified.attestation,
                 )
                 == verified

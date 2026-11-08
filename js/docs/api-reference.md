@@ -14,11 +14,7 @@ in whether they can bind endpoint evidence to the TLS peer that returned it.
 | `@nearai/inference-sdk` | Gateway clients use `include_tls_fingerprint=false`; their `includeSpkiFingerprint` option can only be `false`. The matching attestation verifier returns `tlsBinding.kind: 'none'`. |
 | `@nearai/inference-sdk/node` | Gateway attestation clients request SPKI evidence and capture the attestation request's TLS peer by default. `InferenceClient` pins later requests to that observed key and verifies it against Gateway attestation before sending Chat. Disable this through `gatewayVerification.includeSpkiFingerprint` or `includeSpkiFingerprint` on `AttestationClient.fetchGatewayAttestation()`. |
 
-Direct clients are experimental and not recommended for production in either
-entry point. Use the Gateway `InferenceClient` or `AttestationClient` for production.
-Direct clients always request `include_tls_fingerprint=false`.
-Direct TLS fingerprint binding and pinning are currently disabled; standard HTTPS
-certificate validation still applies.
+Experimental Direct clients use standard HTTPS without attested TLS pinning.
 
 TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
 the relevant `includeSpkiFingerprint` option to `false`.
@@ -33,8 +29,8 @@ the attestation socket to be reused.
 | --- | --- | --- |
 | `InferenceClient` | `new InferenceClient(options)` | Chat Completions, Responses, Messages, and System One with deployment and response verification; optional Chat E2EE. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches model metadata, Gateway signatures, and attestation evidence. |
-| `DirectInferenceClient` | `new DirectInferenceClient(options)` | Experimental. Not recommended for production. Verified Chat and E2EE through a model endpoint, without Gateway verification. |
-| `DirectAttestationClient` | `new DirectAttestationClient(options)` | Experimental. Not recommended for production. Fetches direct model attestations and signatures. |
+| `DirectInferenceClient` | `new DirectInferenceClient(options)` | Experimental. Verified Chat and E2EE through a model endpoint, without Gateway verification. |
+| `DirectAttestationClient` | `new DirectAttestationClient(options)` | Experimental. Fetches direct model attestations and signatures. |
 | `prepareE2eeChatRequest` | `(params: PrepareE2eeChatRequestParams) => Promise<PreparedE2eeChatRequest>` | Encrypts a Chat request to a model public key and returns its matching response decryptor. |
 | `verifyOhttpKeyConfig` | `(params: VerifyOhttpKeyConfigParams) => Uint8Array` | Authenticates an OHTTP key configuration against a verified Ed25519 signer. |
 | `createOhttpFetch` | `(params: CreateOhttpFetchParams) => typeof fetch` | Encapsulates requests using an authenticated OHTTP configuration and returns decrypted inner responses. |
@@ -46,7 +42,8 @@ the attestation socket to be reused.
 | `verifyDirectModelAttestation` | `(params: VerifyDirectModelAttestationParams) => Promise<VerifiedDirectModelAttestation>` | Verifies one direct model attestation, including its quote-authenticated SPKI when present. |
 | `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and checks the serving attestation's observed TLS binding when SPKI evidence is supplied. |
 | `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => readonly VerifiedDirectModelAttestation[]` | Verifies exact completion bytes and returns the verified attestations sharing its model signer. |
-| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
+| `findModelAttestationsForSignature` | `(params: FindModelAttestationsForSignatureParams) => readonly VerifiedModelAttestation[]` | Returns all verified reports matching a `provider_tee` signer. |
+| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Deprecated. Returns the first matching report. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
 | `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
@@ -124,13 +121,15 @@ Model reports through the Gateway use configured authentication after Gateway ve
 | `InferenceClient.clearResponseCache()` | `void` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
 | `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, Messages ID, or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
+| `VerifiedModelCompletionResult.attestations` | `readonly VerifiedModelAttestation[]` | Every verified report sharing the request's selected signer, in response order. |
+| `VerifiedModelCompletionResult.attestation` | `VerifiedModelAttestation` | Deprecated: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
 | `gateway` | `VerifiedGatewayAttestation` | Verified Gateway result and original `report`. |
 | `models` | `readonly VerifiedModelAttestation[]` | Every verified model report, in response order. Empty for Gateway-only models. |
-| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. Preserved on cache hits. |
+| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. |
 
 For attested models, every returned report must pass before the client
 selects a routing key. With `e2ee: false`, `X-Model-Pub-Key` contains the verified model
@@ -250,7 +249,7 @@ See the [native image example](../../examples/example-js/gateway/systemone.ts) a
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
-receipts return the matching model report in `attestation`.
+receipts return the selected signer group's verified reports in `attestations`.
 
 Inference is sent once. Its transport failures use `api.transport_failed` with
 `retryable: false`.
@@ -261,9 +260,6 @@ See the [guide](./verification-guide.md#system-one-decisions) for a complete cal
 and the [Node examples](../../examples/README.md#javascript-setup) to run it.
 
 ## `DirectInferenceClient`
-
-> **Experimental — not recommended for production.** Use the Gateway
-> `InferenceClient`. See the [known endpoint limitations](./verification-guide.md#use-a-direct-model-endpoint).
 
 Uses the same Chat, Fetch, E2EE, and cache options as `InferenceClient`, with E2EE
 disabled by default. Instead of Gateway metadata and evidence, it verifies every
@@ -302,7 +298,7 @@ There is no `gatewayVerification` option.
 | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified entry for the endpoint that returned the report. |
 | `tlsBinding` | `DirectTlsBinding` | Observed endpoint TLS binding, when enabled. |
 | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated fingerprints from all returned reports. |
-| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. Preserved on cache hits. |
+| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. |
 
 | `VerifiedDirectCompletionResult` field | Type | Description |
 | --- | --- | --- |
@@ -436,9 +432,6 @@ attestation verifier.
 
 ## `DirectAttestationClient`
 
-> **Experimental — not recommended for production.** Use the Gateway
-> `AttestationClient`. See the [known endpoint limitations](./verification-guide.md#use-a-direct-model-endpoint).
-
 Fetches `/attestation/report` and `/signature/{id}` relative to a direct model API
 base URL. Attestation requests omit `Authorization`, `api-key`, and `x-api-key`;
 signature requests use any configured authentication.
@@ -497,7 +490,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified serving attestation from the returned set. |
-|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Verified returned model-attestation set; verification does not establish fleet completeness. |
+|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Verified returned model-attestation set. |
 |  | `tlsBinding` | `GatewayTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
 |  | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated SPKI fingerprints from the verified model attestations. |
 | `VerifiedDirectModelAttestation` | Base fields | `VerifiedModelAttestation` | Verified quote, signer, measurements, and GPU result. |
@@ -512,18 +505,18 @@ and `spkiFingerprints` is empty.
 
 ## Model attestation selection
 
-### `findModelAttestationForSignature`
+### `findModelAttestationsForSignature`
 
-Use this function after verifying every candidate returned by
-`client.fetchModelAttestations`. It selects the one verified result whose
-signer matches a `provider_tee` signature. It requires exactly one signer
-match and performs no additional cryptographic verification.
+Returns all verified reports matching a `provider_tee` signature, in input order.
+An unmatched signer raises `ApiError`. Use `verifyModelResponse` to verify the signature.
 
-#### `FindModelAttestationForSignatureParams`
+The deprecated `findModelAttestationForSignature` returns the first matching report in input order.
+
+#### `FindModelAttestationsForSignatureParams`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. Exactly one item must match `signature.signer`. |
+| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. At least one item must match `signature.signer`. |
 | `signature` | `CompletionSignatureReference` | Yes | `provider_tee` signature whose signer is used for matching. A full `CompletionSignature` can be passed directly. |
 
 ## Verification functions
@@ -725,7 +718,7 @@ the provider signature no longer matches the client-visible bytes.
 |  | `signedText` | `string` | Text covered by the signature. |
 |  | `signature` | `string` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | `SigningIdentity` | Signing identity that must match verified evidence. |
-| `CompletionSignatureReference` | `kind` | `'provider_tee' \| 'gateway'` | Signature kind. `findModelAttestationForSignature` accepts only `provider_tee`. |
+| `CompletionSignatureReference` | `kind` | `'provider_tee' \| 'gateway'` | Signature kind. Model-attestation selection helpers accept only `provider_tee`. |
 |  | `signer` | `SigningIdentity` | Signing identity used when selecting evidence. |
 
 `CompletionSignatureKind` is the union `'provider_tee' | 'gateway'`.

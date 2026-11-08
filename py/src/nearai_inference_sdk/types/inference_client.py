@@ -45,8 +45,12 @@ class AttestationVerificationResult:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedModelCompletionResult:
+    """Model receipt with all verified reports sharing the selected signer."""
+
     id: str
     signature: CompletionSignature
+    attestations: tuple[VerifiedModelAttestation, ...]
+    #: Deprecated: the report selected for the request key. Use ``attestations``.
     attestation: VerifiedModelAttestation
     signature_kind: Literal['provider_tee'] = 'provider_tee'
 

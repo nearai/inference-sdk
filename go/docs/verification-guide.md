@@ -105,15 +105,13 @@ if err != nil {
 	return err
 }
 fmt.Println("Verified at:", evidence.VerifiedAt)
-for _, model := range evidence.Models {
-	fmt.Println(model.ModelName, model.TCBStatus)
+for _, modelAttestation := range evidence.Models {
+	fmt.Println(modelAttestation.ModelName, modelAttestation.TCBStatus)
 }
 ```
 
-`Verify` shares Chat and System One's cache and in-flight work without sending
-an inference request. Cached evidence keeps its original verification timestamp. Every
-returned model report must pass; unsupported model providers use Gateway-only
-verification, which cannot satisfy E2EE or a model deployment policy.
+`Verify` returns Gateway evidence and every verified model report for a supported provider.
+Gateway-only models use Gateway verification. E2EE and model deployment policies require model evidence.
 
 ## Use the official OpenAI Go client
 
@@ -371,8 +369,7 @@ func imagePolicy(
 Assign the returned callback to `options.DeploymentPolicy`. Supply nonempty
 policies keyed by image repository, specifying the trusted GitHub repository,
 workflow, and source constraints. Use `Commit` to pin reviewed source. See the
-[image provenance API](./api-reference.md#image-provenance-api) and the
-[runnable examples](../../examples/example-go/README.md) for policy configuration.
+[image provenance API](./api-reference.md#image-provenance-api) for policy configuration.
 The `imagePolicy` helper applies only to `options.DeploymentPolicy`, which runs
 for model deployments. Gateway verification uses a callback without a model
 argument. Use a separate helper for `options.GatewayVerification.DeploymentVerifier`:
@@ -504,13 +501,14 @@ defer client.Close()
 ```
 
 The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
-Use `E2EE` to configure encryption; `DisableE2EE` is deprecated. Direct clients omit
-Gateway verification and do not bind TLS identity to attestation; normal HTTPS
-validation still applies. They are experimental and not recommended for
-production. Use Gateway clients for production integrations.
+Use `E2EE` to configure encryption; `DisableE2EE` is deprecated.
+
+Direct uses standard HTTPS. The inference request can reach a different instance
+from the one verified during preflight. With E2EE disabled, that instance receives
+the plaintext prompt.
 
 Direct response results include all matching deployments in `Attestations` and
-leave `Attestation` nil: a shared signing key cannot identify one serving instance.
+leave `Attestation` nil.
 
 ## Manual verification
 

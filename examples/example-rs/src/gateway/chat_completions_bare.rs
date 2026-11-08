@@ -6,59 +6,60 @@ use std::sync::{Arc, Mutex};
 #[tokio::main]
 async fn main() -> Result<()> {
     let key = api_key()?;
+    let signing_algo = algo()?;
     let api = AttestationClient::with_base_url(key.clone(), &gateway())?;
     let fetched = api
         .fetch_gateway_attestation(GatewayAttestationFetchOptions {
-            signing_algo: Some(algo()?),
+            signing_algo: Some(signing_algo),
             ..Default::default()
         })
         .await?;
-    let images = GatewayImages;
     let verified_gateway = verify_gateway_attestation(
         &fetched.attestation,
         &fetched.client_binding,
         None,
-        AttestationVerifiers {
-            deployment: Some(&images),
-            ..Default::default()
-        },
+        AttestationVerifiers::default(),
     )
     .await?;
+    println!("Gateway attestation verified.");
     let pin = match &verified_gateway.tls_binding {
         GatewayTlsBinding::Attested { spki_fingerprint } => spki_fingerprint,
         _ => return Err("Gateway did not supply attested TLS binding".into()),
     };
     let http = create_pinned_tls_client(std::slice::from_ref(pin))?;
-    let fetched_models = api
-        .fetch_model_attestations(&model(), Some(algo()?), None)
+    let fetched_model_attestations = api
+        .fetch_model_attestations(&model(), Some(signing_algo), None)
         .await?;
-    let mut models = Vec::new();
-    for report in &fetched_models.attestations {
-        models.push(
+    if fetched_model_attestations.attestations.is_empty() {
+        return Err("Gateway returned no model attestations".into());
+    }
+    let mut model_attestations = Vec::new();
+    for report in &fetched_model_attestations.attestations {
+        model_attestations.push(
             verify_model_attestation(
                 report,
-                &fetched_models.client_binding,
+                &fetched_model_attestations.client_binding,
                 None,
-                ModelAttestationVerifiers {
-                    deployment: Some(&ModelImages),
-                    ..Default::default()
-                },
+                ModelAttestationVerifiers::default(),
             )
             .await?,
         );
     }
-    let recipient_algo = algo()?;
-    let recipient = models
+    println!("Verified {} model attestations.", model_attestations.len());
+    let selected_model_attestation = model_attestations
         .iter()
-        .find(|m| {
-            m.evidence.signer.signing_algo == recipient_algo && m.signing_public_key.is_some()
+        .find(|attestation| {
+            attestation.evidence.signer.signing_algo == signing_algo
+                && attestation.signing_public_key.is_some()
         })
         .ok_or("No verified model public key")?;
     let model_key = E2eeModelKey {
-        signing_algo: algo()?,
-        public_key: recipient.signing_public_key.clone().unwrap(),
+        signing_algo,
+        public_key: selected_model_attestation
+            .signing_public_key
+            .clone()
+            .unwrap(),
     };
-    println!("Gateway/model deployments and Gateway images verified");
     for stream in [false, true] {
         let prepared = prepare_e2ee_chat_request(request(&gateway(), &key, stream)?, &model_key)?;
         let wire_request = prepared
@@ -103,19 +104,34 @@ async fn main() -> Result<()> {
             (wire, plaintext)
         };
         let id = completion_id(&plaintext, stream)?;
-        let signature = api.fetch_completion_signature(&id, Some(algo()?)).await?;
+        let signature = api
+            .fetch_completion_signature(&id, Some(signing_algo))
+            .await?;
         match signature.kind {
             CompletionSignatureKind::ProviderTee => {
-                verify_model_response(&wire_request, &wire_response, &signature, recipient)?
+                verify_model_response(
+                    &wire_request,
+                    &wire_response,
+                    &signature,
+                    selected_model_attestation,
+                )?;
+                let matching_attestations =
+                    find_model_attestations_for_signature(&model_attestations, &signature)?;
+                println!(
+                    "Verified model response signature ({} matching reports).",
+                    matching_attestations.len()
+                );
             }
-            CompletionSignatureKind::Gateway => verify_gateway_response(
-                &wire_request,
-                &wire_response,
-                &signature,
-                &verified_gateway,
-            )?,
+            CompletionSignatureKind::Gateway => {
+                verify_gateway_response(
+                    &wire_request,
+                    &wire_response,
+                    &signature,
+                    &verified_gateway,
+                )?;
+                println!("Verified Gateway response signature.");
+            }
         }
-        println!("Verified {:?} ciphertext receipt", signature.kind);
         display(&plaintext, stream)?;
     }
     Ok(())

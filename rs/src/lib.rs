@@ -25,8 +25,8 @@ mod types;
 mod util;
 
 pub use cloud_api::{
-    find_model_attestation_for_signature, AttestationClient, DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-    NO_ALIASING_HEADER,
+    find_model_attestation_for_signature, find_model_attestations_for_signature, AttestationClient,
+    DEFAULT_NEAR_AI_CLOUD_BASE_URL, NO_ALIASING_HEADER,
 };
 pub use compose_manager::{
     ComposeManagerAction, ComposeManagerActionValue, ComposeManagerAttestation,

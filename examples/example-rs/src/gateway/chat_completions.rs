@@ -1,7 +1,6 @@
-// Integrated Gateway JSON/SSE, E2EE, build provenance, and receipt verification.
+// Integrated Gateway JSON/SSE, E2EE, and receipt verification.
 use example_rs::utils::*;
 use nearai_inference_sdk::*;
-use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = InferenceClient::with_options(InferenceClientOptions {
@@ -11,19 +10,11 @@ async fn main() -> Result<()> {
         e2ee: true,
         ohttp: ohttp(),
         // Optional: set ohttp: true with Ed25519; both Chat modes stay the same.
-        model_verification: ModelVerificationOptions {
-            deployment: Some(Arc::new(ModelImages)),
-            ..Default::default()
-        },
-        gateway_verification: GatewayVerificationOptions {
-            deployment: Some(Arc::new(GatewayImages)),
-            ..Default::default()
-        },
         ..Default::default()
     })?;
     let verified = client.verify(&model()).await?;
     println!(
-        "Gateway/model deployments and Gateway images verified at {}",
+        "Gateway and model attestations verified at {}",
         verified.verified_at
     );
     for stream in [false, true] {

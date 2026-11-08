@@ -1,6 +1,7 @@
 export {
   DEFAULT_NEAR_AI_CLOUD_BASE_URL,
   findModelAttestationForSignature,
+  findModelAttestationsForSignature,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export { InferenceClient } from './core/inference-client';
@@ -53,6 +54,7 @@ export type {
   FetchedModelAttestations,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
+  FindModelAttestationsForSignatureParams,
   ModelMetadata,
 } from './types/cloud-api';
 export type {

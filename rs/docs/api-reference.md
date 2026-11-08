@@ -6,7 +6,6 @@ This page lists the public Rust request and verification APIs exported by
 
 ## Integrated client
 
-`InferenceClient` is cheap to clone; clones share caches and in-flight verification.
 Construct it with `new(api_key: impl Into<Option<String>>)` or
 `with_options(InferenceClientOptions)`; both return `Result<InferenceClient, InferenceError>`.
 `new` accepts a `String`, `Some(String)`, or `None`.
@@ -22,7 +21,7 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 | `message_request(serde_json::Value)` | `reqwest::Request` | Build a Gateway Messages request for `send`, including streaming. |
 | `create_message(serde_json::Value)` | `serde_json::Value` | Create an Anthropic Message; verify its ID with `verify_response`. |
 | `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat, Gateway Responses, or Messages. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
-| `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. Cached terminal results release the original bytes and remain available until the original response TTL expires. |
+| `verify_response(id)` | `VerifiedCompletionResult` | Verify the response signature against the evidence selected for the request. |
 | `clear_response_cache().await` | `()` | Clear captured request/response bytes and cached receipt results across all clones; preserve attestation sessions. |
 
 `InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
@@ -30,15 +29,13 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 receipt registration. Non-2xx responses pass through `send`; `chat_completions`, `create_response`, and `create_message`
 turn them into `ApiError::HttpStatus`.
 
-`VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
-`Gateway`, `Model`, or `Direct` (the matching report group). `signature_kind()`
-returns `CompletionSignatureKind`.
+For `ProviderTee` receipts, `attestations` contains all verified reports sharing the selected signer.
+The deprecated `Model` variant holds the report selected for the request key.
+For Gateway-signed receipts, use `VerifiedCompletionAttestation::Gateway`.
+Direct receipts hold their matching reports in `VerifiedCompletionAttestation::Direct`.
+`signature_kind()` returns `CompletionSignatureKind`.
 
-Call `clear_response_cache().await` when discarding a conversation. Cleared IDs
-become unavailable to `verify_response`. The client remains reusable. Ongoing
-response captures stay discarded when they finish. To end active work and release
-its buffers, also cancel the requests and finish any
-ongoing verification. Direct clients support the same cleanup method.
+Use `clear_response_cache().await` to discard retained responses.
 
 `create_message(Value)` returns JSON; `message_request(Value)` builds an Anthropic
 Messages request for `send()`, including SSE. Both require a Gateway client with
@@ -151,11 +148,6 @@ For one three-stage verification operation, pass the same explicit
 `SigningAlgo` to both attestation fetches and `fetch_completion_signature`.
 The Gateway's report and signature endpoints have different defaults.
 
-The current Gateway interface does not cryptographically bind both preflight
-attestations to one completion or link a model signature through a Gateway
-transformation. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
-tracks a complete provider-signature and Gateway-receipt chain.
-
 ## Gateway client
 
 `AttestationClient` owns the optional API key, Gateway base URL, and its internal
@@ -190,7 +182,7 @@ All client methods below are asynchronous and return `Result<_, ApiError>`.
 
 `signing_algo` and `signing_address` only narrow the Gateway response. They
 do not replace local selection from verified model results. Use
-`find_model_attestation_for_signature` after verifying every fetched candidate.
+`find_model_attestations_for_signature` after verifying every fetched candidate.
 
 When supplied, `signing_address` must be hexadecimal: 20 or 32 bytes without
 `signing_algo`, or the exact length for the selected algorithm. Invalid filters
@@ -213,7 +205,8 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `find_model_attestation_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<&VerifiedModelAttestation, ApiError>` | Free pure function that selects the single verified result matching a `ProviderTee` signer. It does not verify the response signature. |
+| `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Returns every verified report matching a `ProviderTee` signer, or an error when none match. Shared signers do not identify an individual instance. It does not verify the response signature. |
+| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS
@@ -276,8 +269,11 @@ attestation must bind the signature signer.
 For a `Gateway` response, `verify_gateway_response` requires a
 `VerifiedGatewayAttestation` with the same signer. For a `ProviderTee`
 response, `verify_model_response` requires a `VerifiedModelAttestation` with
-the same signer. Select it from the verified preflight results with
-`find_model_attestation_for_signature`.
+the same signer. Obtain the matching group from verified preflight results with
+`find_model_attestations_for_signature`. One member supplies the shared key for
+cryptographic verification; retain the whole group as the matching evidence.
+Clients that selected a routing/encryption key must also require the response
+signer to match that selected key.
 
 ## Image build provenance
 

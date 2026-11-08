@@ -28,6 +28,9 @@ and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 Runnable examples make one explicit receipt-verification call and propagate failure.
 Native clients and official SDK adapters disable automatic inference retries.
 
+Bare Gateway Chat examples verify the response with the model key selected for the
+request, then show how many verified reports share the response signer.
+
 ## Entry points
 
 Each Chat, Responses, and Messages entry point runs JSON and SSE. Commands below
@@ -151,46 +154,12 @@ Run these commands from the corresponding language's example directory. Python
 example tests are also collected by the SDK's pytest configuration. Credentialed
 integration tests are described in the [live E2E guide](../e2e/README.md).
 
-## Image provenance
-
-The native and standalone Gateway Chat examples in every language require these
-Gateway image builds:
-
-| Image | GitHub repository | Build workflow |
-| --- | --- | --- |
-| `nearaidev/cloud-api` | `nearai/cloud-api` | `.github/workflows/build.yml` |
-| `nearaidev/cvm-ingress` | `nearai/cvm-ingress` | `.github/workflows/build-push.yml` |
-| `nearaidev/dstack-vpc` | `nearai/dstack-vpc` | `.github/workflows/build.yml` |
-| `nearaidev/dstack-vpc-client` | `nearai/dstack-vpc-client` | `.github/workflows/build.yml` |
-
-They also verify the following model image builds using authenticated
-Compose Manager deployment-control evidence:
-
-| Image | GitHub repository | Build workflow |
-| --- | --- | --- |
-| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
-| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
-
-These are example admission policies. Add reviewed commit pins for stricter
-policy. Gateway references must contain literal digests; `image:tag@sha256:...`
-is accepted, while tags alone and unresolved variables are not. Each listed
-image is required. Model checks authenticate recorded deployment intent; they
-do not establish which containers or weights are currently running.
-
-See the model image guides for [JavaScript](../js/docs/verification-guide.md#model-images-deployed-by-compose-manager),
-[Python](../py/docs/verification-guide.md#model-images-deployed-by-compose-manager),
-[Rust](../rs/docs/verification-guide.md), and [Go](../go/docs/verification-guide.md).
-The standalone Gateway examples retain ciphertext separately from decrypted
-output for receipt verification. Integrated clients capture those bytes internally.
-
 ## Direct endpoints
 
-Direct clients are experimental. Use Gateway clients for production and an
-endpoint-accepted credential for direct inference.
+Direct clients are experimental. Set `NEARAI_BASE_URL` and `NEARAI_API_KEY` for the model endpoint.
 
-All direct examples verify every returned model attestation; an endpoint may
-omit other serving instances. Standard HTTPS certificate validation applies,
-while direct TLS fingerprint binding to attestation remains disabled. Integrated
+Direct examples verify every returned model report and use standard HTTPS without
+attested TLS pinning. Integrated
 clients use E2EE and require response signatures from the selected model signer.
 Standalone direct examples send plaintext over HTTPS and verify exact response
 bytes against the matching attestation group.

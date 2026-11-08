@@ -84,6 +84,11 @@ func TestStandaloneSystemOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer transport.CloseIdleConnections()
+	httpClient := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client, err = nearai.NewAttestationClient(nearai.ClientOptions{APIKey: key, BaseURL: base, HTTPClient: httpClient})
+	if err != nil {
+		t.Fatal(err)
+	}
 	body, err := json.Marshal(systemOneRequest(selectedModels(t, "systemone")[0].ID))
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +101,7 @@ func TestStandaloneSystemOne(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set(nearai.NoAliasingHeader, "true")
-	res, err := (&http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
