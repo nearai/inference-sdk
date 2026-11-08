@@ -1,13 +1,22 @@
-#[path = "support/encryption.rs"]
-mod encryption;
+#[path = "inference/direct_inference_client.rs"]
+mod direct_inference_client;
+#[path = "support/inference.rs"]
+mod fixture;
+#[path = "inference/messages.rs"]
+mod messages;
+#[path = "inference/responses.rs"]
+mod responses;
 mod support;
+#[path = "inference/systemone.rs"]
+mod systemone;
+
 use async_trait::async_trait;
-use ed25519_dalek::Signer;
-use futures_util::io::{AsyncReadExt, AsyncWriteExt};
+use fixture::{
+    body, ohttp_config, response_request_body, setup, systemone_request, Fixture, Quote,
+};
 use futures_util::StreamExt;
 use nearai_inference_sdk::*;
-use serde_json::{json, Value};
-use sha2::Digest;
+use serde_json::json;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -15,618 +24,67 @@ use std::{
     },
     time::Duration,
 };
-use support::{model_quote, sha256_hex, APP_COMPOSE};
-use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
-
-struct Quote;
-#[async_trait]
-impl TdxQuoteVerifier for Quote {
-    async fn verify(&self, quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError> {
-        let mut result = model_quote(TcbStatus::UpToDate);
-        let quote = if let Some((label, quote)) = quote.split_once(':') {
-            result.advisory_ids.push(label.to_owned());
-            quote
-        } else {
-            quote
-        };
-        result.report_data = hex::decode(quote).unwrap();
-        Ok(result)
-    }
-}
-type ReceiptBytes = (Vec<u8>, Vec<u8>, String);
-#[derive(Default)]
-struct Fixture {
-    response_encoding: Option<&'static str>,
-    gateway: AtomicUsize,
-    model: AtomicUsize,
-    chat: AtomicUsize,
-    systemone: AtomicUsize,
-    systemone_body: Option<String>,
-    systemone_id: Option<String>,
-    systemone_status: Option<u16>,
-    missing_model_key: bool,
-    extra_model: bool,
-    shared_model: bool,
-    gateway_chat_receipt: bool,
-    systemone_tamper: bool,
-
-    signatures: AtomicUsize,
-    receipts: Mutex<std::collections::HashMap<String, ReceiptBytes>>,
-    metadata: Mutex<Option<Value>>,
-    empty: bool,
-    bad_key: bool,
-    bad_model: bool,
-    retry_signature: bool,
-    wrong_signer: bool,
-    wrong_algo: bool,
-    direct: bool,
-    header_auth: bool,
-    ecdsa: bool,
-    ohttp: Option<ohttp::KeyConfig>,
-    wrong_ohttp_signer: bool,
-    alternate_direct_signer: bool,
-    response_body: Option<Vec<u8>>,
-    response_provider_receipt: bool,
-    response_tamper: bool,
-    response_status: Option<u16>,
-}
-fn key(seed: u8) -> ed25519_dalek::SigningKey {
-    ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
-}
-fn report(nonce: &str, seed: u8) -> Value {
-    let public = hex::encode(key(seed).verifying_key().as_bytes());
-    let report_data = format!("{public}{nonce}");
-    json!({"request_nonce":nonce,"signing_algo":"ed25519","signing_address":public,"signing_public_key":public,"intel_quote":report_data,"report_data":report_data,"event_log":[{"digest":"00".repeat(48),"imr":3}],"info":{"tcb_info":{"app_compose":APP_COMPOSE}},"model_name":"vendor/model"})
-}
-impl Fixture {
-    fn response(&self, mut response: ResponseTemplate, mut body: Vec<u8>) -> ResponseTemplate {
-        if let Some(encoding) = self.response_encoding {
-            body = match encoding {
-                "gzip" => {
-                    let mut encoder =
-                        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-                    std::io::Write::write_all(&mut encoder, &body).unwrap();
-                    encoder.finish().unwrap()
-                }
-                "br" => {
-                    let mut encoded = Vec::new();
-                    brotli::BrotliCompress(&mut body.as_slice(), &mut encoded, &Default::default())
-                        .unwrap();
-                    encoded
-                }
-                _ => unreachable!(),
-            };
-            response = response.insert_header("content-encoding", encoding);
-        }
-        response.set_body_bytes(body)
-    }
-
-    fn report(&self, nonce: &str, seed: u8) -> Value {
-        let mut value = report(nonce, seed);
-        if self.ecdsa {
-            let (address, public) = encryption::ecdsa_identity(seed);
-            let data = format!("{address}{}{nonce}", "00".repeat(12));
-            value["signing_algo"] = json!("ecdsa");
-            value["signing_address"] = json!(address);
-            value["signing_public_key"] = json!(public);
-            value["report_data"] = json!(data);
-            value["intel_quote"] = json!(data);
-        }
-        if self.missing_model_key && seed != 9 {
-            value.as_object_mut().unwrap().remove("signing_public_key");
-        }
-        value
-    }
-    fn with_ohttp(&self, mut value: Value) -> Value {
-        if let Some(config) = &self.ohttp {
-            let bytes = config.encode().unwrap();
-            let signer = key(if self.wrong_ohttp_signer {
-                8
-            } else if self.direct {
-                7
-            } else {
-                9
-            });
-            value["ohttp_attestation"] = json!({"signing_algo":"ed25519","signing_key":hex::encode(signer.verifying_key().as_bytes()),"key_config":hex::encode(&bytes),"signature":hex::encode(signer.sign(&bytes).to_bytes())});
-        }
-        value
-    }
-}
-impl Respond for Fixture {
-    fn respond(&self, r: &Request) -> ResponseTemplate {
-        if r.url.path() == "/v1/attestation/report"
-            && (self.direct || !r.url.query_pairs().any(|(name, _)| name == "model"))
-        {
-            for name in ["authorization", "api-key", "x-api-key"] {
-                assert!(r.headers.get(name).is_none(), "attestation sent {name}");
-            }
-        } else if self.header_auth {
-            assert_eq!(r.headers.get("api-key").unwrap(), "fixture");
-            assert!(r.headers.get("authorization").is_none());
-        } else {
-            assert_eq!(r.headers.get("authorization").unwrap(), "Bearer fixture");
-        }
-        assert_eq!(r.headers.get("x-test").unwrap(), "custom");
-        match r.url.path() {
-            path if path.starts_with("/v1/model/") => ResponseTemplate::new(200).set_body_json(
-                self.metadata.lock().unwrap().clone().unwrap_or(
-                    json!({"metadata":{"providerType":"vllm","attestationSupported":true}}),
-                ),
-            ),
-            "/v1/attestation/report" => {
-                let q: std::collections::HashMap<_, _> = r.url.query_pairs().collect();
-                let nonce = &q["nonce"];
-                if self.direct {
-                    self.model.fetch_add(1, Ordering::SeqCst);
-                    let mut root = self.report(nonce, 7);
-                    root["info"]["instance_id"] = json!("serving");
-                    if self.alternate_direct_signer {
-                        root.as_object_mut().unwrap().remove("signing_public_key");
-                    }
-                    let mut other = self.report(nonce, 7);
-                    other["info"]["instance_id"] = json!("other");
-                    if self.alternate_direct_signer {
-                        other["signing_address"] = json!(format!(
-                            "0X{}",
-                            other["signing_address"].as_str().unwrap().to_uppercase()
-                        ));
-                    }
-                    if q["include_tls_fingerprint"] == "true" {
-                        for (report, pin) in
-                            [(&mut root, "11".repeat(32)), (&mut other, "22".repeat(32))]
-                        {
-                            let signer = hex::decode(
-                                report["signing_address"]
-                                    .as_str()
-                                    .unwrap()
-                                    .trim_start_matches("0X"),
-                            )
-                            .unwrap();
-                            let binding =
-                                sha2::Sha256::digest([signer, hex::decode(&pin).unwrap()].concat());
-                            let data = format!("{}{nonce}", hex::encode(binding));
-                            report["report_data"] = json!(data);
-                            report["intel_quote"] = json!(data);
-                            report["tls_cert_fingerprint"] = json!(pin);
-                        }
-                    }
-                    if self.bad_model {
-                        other["report_data"] = json!("ff".repeat(64));
-                    }
-                    let mut value = root.clone();
-                    value["all_attestations"] = json!([root, other]);
-                    return ResponseTemplate::new(200).set_body_json(self.with_ohttp(value));
-                }
-                assert_eq!(q["include_tls_fingerprint"], "false");
-                if q.contains_key("model") {
-                    let generation = self.model.fetch_add(1, Ordering::SeqCst);
-                    assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
-                    let mut value = self.report(nonce, 7);
-                    if self.bad_key {
-                        value["signing_public_key"] =
-                            json!(hex::encode(key(8).verifying_key().as_bytes()));
-                    }
-                    let mut reports = vec![value];
-                    if self.extra_model {
-                        reports.insert(usize::from(self.shared_model), self.report(nonce, 8));
-                    }
-                    if self.shared_model {
-                        let mut other = self.report(nonce, 7);
-                        other["intel_quote"] = json!(format!(
-                            "shared-{generation}:{}",
-                            other["intel_quote"].as_str().unwrap()
-                        ));
-                        if self.bad_model {
-                            other["report_data"] = json!("ff".repeat(64));
-                        }
-                        reports.push(other);
-                    } else if self.bad_model {
-                        let mut bad = self.report(nonce, 8);
-                        bad["report_data"] = json!("ff".repeat(64));
-                        reports.push(bad);
-                    }
-                    ResponseTemplate::new(200).set_body_json(
-                        json!({"model_attestations":if self.empty {vec![]} else {reports}}),
-                    )
-                } else {
-                    self.gateway.fetch_add(1, Ordering::SeqCst);
-                    ResponseTemplate::new(200)
-                        .set_body_json(
-                            self.with_ohttp(json!({"gateway_attestation":self.report(nonce,9)})),
-                        )
-                        .set_delay(Duration::from_millis(20))
-                }
-            }
-            "/v1/systemone" => {
-                let n = self.systemone.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(r.headers.get("accept-encoding").unwrap(), "identity");
-                assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
-                if self.metadata.lock().unwrap().is_none() {
-                    let seed = if self.extra_model { 8 } else { 7 };
-                    let public = if self.ecdsa {
-                        encryption::ecdsa_identity(seed).1
-                    } else {
-                        hex::encode(key(seed).verifying_key().as_bytes())
-                    };
-                    assert_eq!(r.headers.get("x-model-pub-key").unwrap(), public.as_str());
-                } else {
-                    assert!(r.headers.get("x-model-pub-key").is_none());
-                }
-                for name in [
-                    "x-client-pub-key",
-                    "x-signing-algo",
-                    "digest",
-                    "content-encoding",
-                ] {
-                    assert!(r.headers.get(name).is_none(), "unexpected {name}");
-                }
-                if let Some(status) = self.systemone_status {
-                    return ResponseTemplate::new(status);
-                }
-                let id = self
-                    .systemone_id
-                    .clone()
-                    .unwrap_or_else(|| format!("decision-{n}"));
-                let response = self
-                    .systemone_body
-                    .clone()
-                    .unwrap_or_else(|| {
-                        let v: Value = serde_json::from_str(include_str!(
-                            "../test-fixtures/systemone-responses.json"
-                        ))
-                        .unwrap();
-                        format!(" \n{} \n", v["valid"][0])
-                    })
-                    .into_bytes();
-                let kind = if self.metadata.lock().unwrap().is_some() {
-                    "gateway"
-                } else {
-                    "provider_tee"
-                };
-                let mut encoded = reqwest::Url::parse("http://localhost/").unwrap();
-                encoded.path_segments_mut().unwrap().push(&id);
-                self.receipts.lock().unwrap().insert(
-                    encoded.path()[1..].into(),
-                    (r.body.clone(), response.clone(), kind.into()),
-                );
-                let mut wire = response;
-                if self.systemone_tamper {
-                    wire.push(b' ');
-                }
-                self.response(
-                    ResponseTemplate::new(200).insert_header("x-generation-id", id),
-                    wire,
-                )
-            }
-            "/v1/responses" => {
-                self.chat.fetch_add(1, Ordering::SeqCst);
-                assert!(self.gateway.load(Ordering::SeqCst) > 0);
-                assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
-                assert!(r.headers.get("x-client-pub-key").is_none());
-                let request: Value = serde_json::from_slice(&r.body).unwrap();
-                assert_eq!(request["input"][1]["type"], "function_call_output");
-                let streaming = request["stream"] == true;
-                let raw = self.response_body.clone().unwrap_or_else(|| {
-                    if streaming {
-                        include_bytes!("../test-fixtures/responses/response.sse").to_vec()
-                    } else {
-                        include_bytes!("../test-fixtures/responses/response.json").to_vec()
-                    }
-                });
-                self.receipts.lock().unwrap().insert(
-                    "resp_fixture".into(),
-                    (
-                        r.body.clone(),
-                        raw.clone(),
-                        if self.response_provider_receipt {
-                            "provider_tee"
-                        } else {
-                            "gateway"
-                        }
-                        .into(),
-                    ),
-                );
-                let visible = if self.response_tamper {
-                    String::from_utf8(raw)
-                        .unwrap()
-                        .replace("Original", "Tampered")
-                        .into_bytes()
-                } else {
-                    raw
-                };
-                ResponseTemplate::new(self.response_status.unwrap_or(200))
-                    .insert_header(
-                        "content-type",
-                        if streaming {
-                            "text/event-stream"
-                        } else {
-                            "application/json"
-                        },
-                    )
-                    .set_body_bytes(visible)
-            }
-            "/v1/messages" => {
-                self.chat.fetch_add(1, Ordering::SeqCst);
-                assert!(self.gateway.load(Ordering::SeqCst) > 0);
-                assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
-                assert!(r.headers.get("x-client-pub-key").is_none());
-                let request: Value = serde_json::from_slice(&r.body).unwrap();
-                assert_eq!(request["messages"][1]["role"], "user");
-                assert!(r.headers.get("x-model-pub-key").is_none());
-                assert!(r.headers.get("x-api-key").is_none());
-                assert!(r.headers.get("anthropic-version").is_some());
-                let streaming = request["stream"] == true;
-                let raw = self.response_body.clone().unwrap_or_else(|| {
-                    if streaming {
-                        include_bytes!("../test-fixtures/messages/message.sse").to_vec()
-                    } else {
-                        include_bytes!("../test-fixtures/messages/message.json").to_vec()
-                    }
-                });
-                self.receipts.lock().unwrap().insert(
-                    "msg_fixture".into(),
-                    (
-                        r.body.clone(),
-                        raw.clone(),
-                        if self.response_provider_receipt {
-                            "provider_tee"
-                        } else {
-                            "gateway"
-                        }
-                        .into(),
-                    ),
-                );
-                let visible = if self.response_tamper {
-                    String::from_utf8(raw)
-                        .unwrap()
-                        .replace("Hello", "Altered")
-                        .into_bytes()
-                } else {
-                    raw
-                };
-                ResponseTemplate::new(self.response_status.unwrap_or(200))
-                    .insert_header(
-                        "content-type",
-                        if streaming {
-                            "text/event-stream"
-                        } else {
-                            "application/json"
-                        },
-                    )
-                    .set_body_bytes(visible)
-            }
-            "/v1/chat/completions" => {
-                let n = self.chat.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
-                assert_eq!(r.headers.get("accept-encoding").unwrap(), "identity");
-                if !self.header_auth {
-                    assert!(r.headers.get("api-key").is_none());
-                }
-                let body: Value = serde_json::from_slice(&r.body).unwrap();
-                let content = if let Some(public) = r.headers.get("x-client-pub-key") {
-                    let algo = if self.ecdsa {
-                        SigningAlgo::Ecdsa
-                    } else {
-                        SigningAlgo::Ed25519
-                    };
-                    assert_eq!(
-                        encryption::decrypt_request(
-                            body["messages"][0]["content"].as_str().unwrap(),
-                            algo,
-                            public.to_str().unwrap()
-                        ),
-                        "Hello"
-                    );
-                    assert_eq!(r.headers.get("x-encrypt-all-fields").unwrap(), "true");
-                    encryption::encrypt_response(public.to_str().unwrap(), algo)
-                } else {
-                    "Hello".into()
-                };
-                let id = format!("chat-{n}");
-                let response = if let Some(raw) = &self.response_body {
-                    raw.clone()
-                } else if body["stream"] == true {
-                    format!(
-                        "event: message\r\ndata: {}\r\n\r\ndata: [DONE]\n\n: tail\n\n",
-                        json!({"id":id,"choices":[{"delta":{"content":content}}]})
-                    )
-                    .into_bytes()
-                } else {
-                    json!({"id":id,"choices":[{"message":{"content":content}}]})
-                        .to_string()
-                        .into_bytes()
-                };
-                let kind = if self.gateway_chat_receipt || self.metadata.lock().unwrap().is_some() {
-                    "gateway"
-                } else {
-                    "provider_tee"
-                };
-                self.receipts
-                    .lock()
-                    .unwrap()
-                    .insert(id, (r.body.clone(), response.clone(), kind.into()));
-                self.response(
-                    ResponseTemplate::new(200).insert_header(
-                        "content-type",
-                        if body["stream"] == true {
-                            "text/event-stream"
-                        } else {
-                            "application/json"
-                        },
-                    ),
-                    response,
-                )
-            }
-            path if path.starts_with("/v1/signature/") => {
-                let n = self.signatures.fetch_add(1, Ordering::SeqCst);
-                if self.retry_signature && n == 0 {
-                    return ResponseTemplate::new(404).set_delay(Duration::from_millis(20));
-                }
-                let receipts = self.receipts.lock().unwrap();
-                let (req, res, kind) = receipts.get(path.rsplit('/').next().unwrap()).unwrap();
-                let text = if kind == "gateway" {
-                    format!("{}:{}", sha256_hex(req), sha256_hex(res))
-                } else {
-                    format!("vendor/model:{}:{}", sha256_hex(req), sha256_hex(res))
-                };
-                let signer = key(if self.wrong_signer {
-                    8
-                } else if kind == "gateway" {
-                    9
-                } else {
-                    7
-                });
-                let mut value = json!({"text":text,"signature":hex::encode(signer.sign(text.as_bytes()).to_bytes()),"signing_address":hex::encode(signer.verifying_key().as_bytes()),"signing_algo":"ed25519"});
-                if self.ecdsa {
-                    let seed = if kind == "gateway" { 9 } else { 7 };
-                    value["signing_algo"] = json!("ecdsa");
-                    value["signing_address"] = json!(encryption::ecdsa_identity(seed).0);
-                    value["signature"] = json!(encryption::ecdsa_signature(&text, seed));
-                }
-                if !self.direct {
-                    value["signature_kind"] = json!(kind);
-                }
-                if self.wrong_algo {
-                    value["signing_algo"] = json!("ecdsa");
-                    value["signing_address"] = json!("00".repeat(20));
-                }
-                ResponseTemplate::new(200)
-                    .set_body_json(value)
-                    .set_delay(Duration::from_millis(20))
-            }
-            "/ohttp" => futures::executor::block_on(async {
-                let server = ohttp::Server::new(self.ohttp.clone().unwrap()).unwrap();
-                let mut incoming = server.decapsulate_stream(r.body.as_slice());
-                let mut decoded = Vec::new();
-                incoming.read_to_end(&mut decoded).await.unwrap();
-                let message =
-                    bhttp::Message::read_bhttp(&mut std::io::Cursor::new(decoded)).unwrap();
-                let mut inner = r.clone();
-                inner
-                    .url
-                    .set_path(std::str::from_utf8(message.control().path().unwrap()).unwrap());
-                inner.headers.clear();
-                for field in message.header().iter() {
-                    inner.headers.append(
-                        reqwest::header::HeaderName::from_bytes(field.name()).unwrap(),
-                        reqwest::header::HeaderValue::from_bytes(field.value()).unwrap(),
-                    );
-                }
-                inner.body = message.content().to_vec();
-                let id = if inner.url.path() == "/v1/messages" {
-                    "msg_fixture".into()
-                } else if inner.url.path() == "/v1/responses" {
-                    "resp_fixture".into()
-                } else {
-                    format!("chat-{}", self.chat.load(Ordering::SeqCst))
-                };
-                self.respond(&inner);
-                let body = self.receipts.lock().unwrap()[&id].1.clone();
-                let mut response = bhttp::Message::response(bhttp::StatusCode::OK);
-                response.put_header(
-                    b"content-type".to_vec(),
-                    if body.starts_with(b"event:") || body.starts_with(b":") {
-                        b"text/event-stream".to_vec()
-                    } else {
-                        b"application/json".to_vec()
-                    },
-                );
-                response.write_content(&body);
-                let mut plain = Vec::new();
-                response
-                    .write_bhttp(bhttp::Mode::KnownLength, &mut plain)
-                    .unwrap();
-                let mut encrypted = Vec::new();
-                let mut writer = incoming.response(&mut encrypted).unwrap();
-                writer.write_all(&plain).await.unwrap();
-                writer.close().await.unwrap();
-                drop(writer);
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "message/ohttp-chunked-res")
-                    .set_body_bytes(encrypted)
-            }),
-            _ => panic!("unexpected request: {}", r.url),
-        }
-    }
-}
-struct Shared(Arc<Fixture>);
-impl Respond for Shared {
-    fn respond(&self, r: &Request) -> ResponseTemplate {
-        self.0.respond(r)
-    }
-}
-async fn setup(fixture: Fixture) -> (MockServer, Arc<Fixture>, InferenceClientOptions) {
-    let server = MockServer::start().await;
-    let fixture = Arc::new(fixture);
-    Mock::given(wiremock::matchers::any())
-        .respond_with(Shared(fixture.clone()))
-        .mount(&server)
-        .await;
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("x-test", "custom".parse().unwrap());
-    let options = InferenceClientOptions {
-        api_key: Some("fixture".into()),
-        base_url: format!("{}/v1", server.uri()),
-        headers,
-        gateway_verification: GatewayVerificationOptions {
-            include_spki_fingerprint: false,
-            tdx_quote: Some(Arc::new(Quote)),
-            ..Default::default()
-        },
-        model_verification: ModelVerificationOptions {
-            tdx_quote: Some(Arc::new(Quote)),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    (server, fixture, options)
-}
-fn body() -> Value {
-    json!({"model":"vendor/model","messages":[{"role":"user","content":"Hello"}]})
-}
-struct DeploymentCheck(Arc<AtomicUsize>);
-#[async_trait]
-impl DeploymentVerifier for DeploymentCheck {
-    async fn verify(&self, _: &MeasuredDeployment) -> Result<(), VerificationError> {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-}
-#[test]
-fn direct_requires_explicit_endpoint() {
-    let error = DirectInferenceClient::with_options(Default::default())
-        .err()
-        .expect("Direct requires a model endpoint URL");
-    assert_eq!(error.code(), "api.invalid_input");
-    let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
-        base_url: "https://model.test/v1".into(),
-        ..Default::default()
-    })
-    .unwrap();
-    assert_eq!(client.base_url(), "https://model.test/v1/");
-}
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn direct_deployment_verifier_checks_every_report() {
-    let (_server, _fixture, mut options) = setup(Fixture {
-        direct: true,
-        ..Default::default()
-    })
-    .await;
-    let calls = Arc::new(AtomicUsize::new(0));
-    options.model_verification.deployment = Some(Arc::new(DeploymentCheck(calls.clone())));
-    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
-    let verified = client.verify("vendor/model").await.unwrap();
-    assert_eq!(verified.attestations.len(), 2);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    client.chat_completions(body()).await.unwrap();
-    let receipt: VerifiedDirectCompletionResult = client.verify_response("chat-0").await.unwrap();
-    assert_eq!(receipt.attestations.len(), 2);
-    assert!(receipt.attestations.iter().all(|report| report
-        .attestation
-        .evidence
-        .deployment_provenance
-        == DeploymentProvenanceStatus::Verified));
+async fn chat_stream_receipt() {
+    let start = "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n";
+    for (name, ending, valid) in [
+        (
+            "normal EOF",
+            "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n",
+            true,
+        ),
+        (
+            "DONE with trailing bytes",
+            "data: [DONE]\n\ndata: not-json\n\n",
+            true,
+        ),
+        (
+            "conflicting response ID",
+            "data: {\"id\":\"other\",\"choices\":[]}\n\n",
+            false,
+        ),
+        (
+            "stream error",
+            "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n",
+            false,
+        ),
+    ] {
+        let wire = format!("{start}{ending}").into_bytes();
+        for e2ee in [false, true] {
+            let (_server, fixture, mut options) = setup(Fixture {
+                chat: AtomicUsize::new(1),
+                response_body: Some(wire.clone()),
+                ..Default::default()
+            })
+            .await;
+            options.e2ee = e2ee;
+            let client = InferenceClient::with_options(options).unwrap();
+            let mut request = body();
+            request["stream"] = json!(true);
+            let read = client
+                .send(client.chat_request(request).unwrap())
+                .await
+                .unwrap()
+                .bytes()
+                .await;
+            let receipt = client.verify_response("chat-1").await;
+            if valid {
+                read.unwrap();
+                assert_eq!(receipt.unwrap().id, "chat-1");
+                assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
+            } else {
+                assert_eq!(read.unwrap_err().code(), "api.invalid_response", "{name}");
+                assert_eq!(
+                    receipt.unwrap_err().code(),
+                    "api.completion_not_found",
+                    "{name}"
+                );
+                assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -1201,48 +659,6 @@ async fn zero_response_ttl_disables_retention() {
         "api.completion_not_found"
     );
 }
-#[tokio::test]
-async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
-    let (_server, f, options) = setup(Fixture {
-        direct: true,
-        ..Default::default()
-    })
-    .await;
-    let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
-        include_spki_fingerprint: false,
-        api_key: options.api_key,
-        base_url: options.base_url,
-        headers: options.headers,
-        model_verification: options.model_verification,
-        ..Default::default()
-    })
-    .unwrap();
-    let verified = client.verify("vendor/model").await.unwrap();
-    assert_eq!(verified.attestations.len(), 2);
-    assert_eq!(verified.tls_binding, GatewayTlsBinding::None);
-    client.chat_completions(body()).await.unwrap();
-    let receipt = client.verify_response("chat-0").await.unwrap();
-    assert_eq!(receipt.attestations.len(), 2);
-    assert_eq!(receipt.id, "chat-0");
-    assert_eq!(
-        receipt.signature_kind(),
-        CompletionSignatureKind::ProviderTee
-    );
-    assert_eq!(
-        client
-            .verify_response("chat-0")
-            .await
-            .unwrap()
-            .attestations
-            .len(),
-        2
-    );
-    assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
-    assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
-    let receipts = f.receipts.lock().unwrap();
-    let request: Value = serde_json::from_slice(&receipts["chat-0"].0).unwrap();
-    assert_eq!(request["messages"][0]["content"], "Hello");
-}
 
 #[tokio::test]
 async fn canceled_verifications_keep_other_waiters_alive() {
@@ -1288,18 +704,6 @@ async fn header_credentials_override_adapted_requests_and_disable_compression() 
     client.verify_response("chat-0").await.unwrap();
 }
 #[tokio::test]
-async fn direct_rejects_invalid_nonserving_report_before_chat() {
-    let (_server, f, options) = setup(Fixture {
-        direct: true,
-        bad_model: true,
-        ..Default::default()
-    })
-    .await;
-    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
-    assert!(client.chat_completions(body()).await.is_err());
-    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
-}
-#[tokio::test]
 async fn shares_concurrent_receipt_fetches_and_retries_transient_failures() {
     let (_server, f, options) = setup(Fixture {
         retry_signature: true,
@@ -1316,25 +720,16 @@ async fn shares_concurrent_receipt_fetches_and_retries_transient_failures() {
     assert!(b.unwrap_err().retryable());
     assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
     let (a, b) = tokio::join!(
-        client.verify_response("chat-0"),
+        tokio::time::timeout(Duration::from_millis(5), client.verify_response("chat-0")),
         client.verify_response("chat-0")
     );
-    a.unwrap();
+    assert!(a.is_err());
     b.unwrap();
+    client.verify_response("chat-0").await.unwrap();
     assert_eq!(f.signatures.load(Ordering::SeqCst), 2);
+    assert_eq!(f.chat.load(Ordering::SeqCst), 1);
 }
 
-fn ohttp_config() -> ohttp::KeyConfig {
-    ohttp::KeyConfig::new(
-        1,
-        ohttp::hpke::Kem::X25519Sha256,
-        vec![ohttp::SymmetricSuite::new(
-            ohttp::hpke::Kdf::HkdfSha256,
-            ohttp::hpke::Aead::Aes128Gcm,
-        )],
-    )
-    .unwrap()
-}
 #[tokio::test]
 async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
     for ecdsa in [false, true] {
@@ -1342,6 +737,7 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
             ecdsa,
             shared_model: true,
             extra_model: true,
+            first_model_key_missing: true,
             ..Default::default()
         })
         .await;
@@ -1351,8 +747,9 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
         }
         let client = InferenceClient::with_options(options).unwrap();
         let preflight = client.verify("vendor/model").await.unwrap();
-        assert_eq!(preflight.models.len(), 3);
-        let expected = vec![preflight.models[0].clone(), preflight.models[2].clone()];
+        assert_eq!(preflight.models.len(), 4);
+        assert!(preflight.models[0].signing_public_key.is_none());
+        let expected = vec![preflight.models[1].clone(), preflight.models[3].clone()];
         let completion = client.chat_completions(body()).await.unwrap();
         assert_eq!(completion["choices"][0]["message"]["content"], "Hello");
         assert_eq!(
@@ -1382,8 +779,16 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
 #[tokio::test]
 async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
     for direct in [false, true] {
-        for case in ["valid", "alternate_spelling", "missing", "wrong_signer"] {
-            let (_server, f, mut options) = setup(Fixture {
+        for case in [
+            "valid",
+            "alternate_spelling",
+            "missing",
+            "wrong_signer",
+            "bad_signature",
+            "bad_config",
+            "tampered_final",
+        ] {
+            let (server, f, mut options) = setup(Fixture {
                 direct,
                 ohttp: if case == "missing" {
                     None
@@ -1391,6 +796,9 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     Some(ohttp_config())
                 },
                 wrong_ohttp_signer: case == "wrong_signer",
+                bad_ohttp_signature: case == "bad_signature",
+                bad_ohttp_config: case == "bad_config",
+                tampered_ohttp_response: case == "tampered_final",
                 alternate_direct_signer: direct && case == "alternate_spelling",
                 ..Default::default()
             })
@@ -1402,9 +810,10 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                 let mut request = body();
                 request["stream"] = json!(streaming);
                 let (result, receipt) = if direct {
-                    let client =
-                        DirectInferenceClient::with_options(direct_options(options.clone()))
-                            .unwrap();
+                    let client = DirectInferenceClient::with_options(fixture::direct_options(
+                        options.clone(),
+                    ))
+                    .unwrap();
                     let result = match client.send(client.chat_request(request).unwrap()).await {
                         Ok(r) => r.bytes().await,
                         Err(e) => Err(e),
@@ -1417,6 +826,10 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                                 .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
+                        assert_eq!(
+                            client.verify_response("chat-0").await.unwrap_err().code(),
+                            "api.completion_not_found"
+                        );
                         None
                     };
                     (result, receipt)
@@ -1434,6 +847,10 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                                 .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
+                        assert_eq!(
+                            client.verify_response("chat-0").await.unwrap_err().code(),
+                            "api.completion_not_found"
+                        );
                         None
                     };
                     (result, receipt)
@@ -1445,8 +862,38 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     let attestation_count = receipt.unwrap().unwrap();
                     assert_eq!(attestation_count, if direct { 2 } else { 1 });
                 } else {
-                    assert!(result.is_err());
-                    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
+                    assert_eq!(
+                        result.unwrap_err().code(),
+                        match case {
+                            "missing" => "ohttp.attestation_required",
+                            "wrong_signer" => "ohttp.signer_mismatch",
+                            "bad_signature" => "ohttp.signature_invalid",
+                            "bad_config" => "ohttp.key_config_invalid",
+                            "tampered_final" => "ohttp.decryption_failed",
+                            _ => unreachable!(),
+                        }
+                    );
+                    assert_eq!(
+                        f.chat.load(Ordering::SeqCst),
+                        if case == "tampered_final" {
+                            1 + usize::from(streaming)
+                        } else {
+                            0
+                        }
+                    );
+                    assert_eq!(f.signatures.load(Ordering::SeqCst), 0);
+                    if !direct && case != "tampered_final" {
+                        assert_eq!(f.model.load(Ordering::SeqCst), 0);
+                        assert!(server
+                            .received_requests()
+                            .await
+                            .unwrap()
+                            .iter()
+                            .all(|request| {
+                                request.url.path() == "/v1/attestation/report"
+                                    && !request.url.query_pairs().any(|(key, _)| key == "model")
+                            }));
+                    }
                 }
             }
         }
@@ -1462,1184 +909,4 @@ async fn new_completions_keep_unexpired_receipts_verifiable() {
     }
     client.verify_response("chat-0").await.unwrap();
     client.verify_response("chat-1024").await.unwrap();
-}
-
-fn systemone_request() -> Value {
-    json!({
-        "model": "vendor/model",
-        "state": {"text": "hello"},
-        "questions": {
-            "q": {
-                "type": "noul",
-                "instructions": "Is this a greeting?"
-            }
-        }
-    })
-}
-
-#[tokio::test]
-async fn systemone_plaintext_key_routing_and_receipts() {
-    for gateway_only in [false, true] {
-        for ecdsa in [false, true] {
-            let fixture = Fixture {
-                ecdsa,
-                systemone_id: Some("decision/with % space".into()),
-                ..Default::default()
-            };
-            if gateway_only {
-                *fixture.metadata.lock().unwrap() = Some(json!({
-                    "metadata": {
-                        "providerType": "proxy",
-                        "attestationSupported": false
-                    }
-                }));
-            }
-            let (_server, f, mut options) = setup(fixture).await;
-            if ecdsa {
-                options.signing_algo = SigningAlgo::Ecdsa;
-            }
-            let client = InferenceClient::with_options(options).unwrap();
-            let mut headers = reqwest::header::HeaderMap::new();
-            for (k, v) in [
-                ("authorization", "Bearer bad"),
-                ("api-key", "bad"),
-                ("accept-encoding", "gzip"),
-                ("content-encoding", "gzip"),
-                ("x-model-pub-key", "bad"),
-                ("digest", "bad"),
-            ] {
-                headers.insert(k, v.parse().unwrap());
-            }
-
-            let mut result = client
-                .systemone_create_with_headers(&systemone_request(), headers)
-                .await
-                .unwrap();
-
-            assert_eq!(result.decision_id, "decision/with % space");
-            assert!(result.data.id.is_none());
-
-            result.data.model = "mutated".into();
-
-            let receipt = client.verify_response(&result.decision_id).await.unwrap();
-            assert_eq!(
-                receipt.signature_kind(),
-                if gateway_only {
-                    CompletionSignatureKind::Gateway
-                } else {
-                    CompletionSignatureKind::ProviderTee
-                }
-            );
-
-            client.verify_response(&result.decision_id).await.unwrap();
-            assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
-            assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
-        }
-    }
-}
-
-#[tokio::test]
-async fn systemone_preserves_json_images_and_box_receipts() {
-    let image = json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="}});
-    let request_json = json!({
-        "model": "vendor/model",
-        "state": {"canvas": image},
-        "questions": {
-            "region": {"type": "box", "instructions": ["Locate the rectangle", image]},
-            "present": {"type": "noul", "instructions": "Does the canvas match?", "criteria": {"true": image}}
-        }
-    });
-    for (ecdsa, assets) in [(false, false), (true, false), (false, true), (true, true)] {
-        let mut expected = request_json.clone();
-        if assets {
-            expected["assets"] =
-                json!({"<photo>": {"format": "png", "data_base64": "ZmFrZS1pbWFnZQ=="}});
-            expected["state"] = json!({"canvas": ["<photo>", image]});
-            expected["questions"]["region"]["instructions"] = json!("Locate <photo> now");
-            expected["questions"]["present"]["criteria"] = json!({"true": "<photo>"});
-        }
-        let request: SystemOneRequest = serde_json::from_value(expected.clone()).unwrap();
-        let fixture = Fixture {
-            ecdsa,
-            ..Default::default()
-        };
-        *fixture.metadata.lock().unwrap() = Some(json!({
-            "metadata": {"providerType": "proxy", "attestationSupported": false}
-        }));
-        let (_server, f, mut options) = setup(fixture).await;
-        if ecdsa {
-            options.signing_algo = SigningAlgo::Ecdsa;
-        }
-        let client = InferenceClient::with_options(options).unwrap();
-        let mut result = client.systemone_create(&request).await.unwrap();
-        let SystemOneAnswer::Box {
-            bounds, confidence, ..
-        } = result.data.answers.get_mut("region").unwrap()
-        else {
-            panic!("expected box");
-        };
-        assert_eq!(bounds.top, 0.31);
-        assert_eq!(*confidence, Some(0.82));
-        bounds.top = 0.0;
-        let receipt = client.verify_response(&result.decision_id).await.unwrap();
-        assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
-        let receipts = f.receipts.lock().unwrap();
-        let (sent, _, _) = receipts.values().next().unwrap();
-        assert_eq!(serde_json::from_slice::<Value>(sent).unwrap(), expected);
-        assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
-        assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[tokio::test]
-async fn systemone_compressed_responses() {
-    for encoding in ["gzip", "br"] {
-        for mode in ["receipt", "tamper", "padded"] {
-            let (_server, f, options) = setup(Fixture {
-                response_encoding: Some(encoding),
-                systemone_tamper: mode == "tamper",
-                systemone_body: (mode == "padded").then(|| {
-                    let fixture: Value = serde_json::from_str(include_str!(
-                        "../test-fixtures/systemone-responses.json"
-                    ))
-                    .unwrap();
-                    format!("{}{}", fixture["valid"][0], " ".repeat(4096))
-                }),
-                ..Default::default()
-            })
-            .await;
-            let client = InferenceClient::with_options(options).unwrap();
-            let result = client.systemone_create(&systemone_request()).await;
-            let receipt = client.verify_response(&result.unwrap().decision_id).await;
-            if mode == "tamper" {
-                assert_eq!(receipt.unwrap_err().code(), "signature.payload_mismatch");
-            } else {
-                receipt.unwrap();
-            }
-            assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
-        }
-    }
-}
-
-#[tokio::test]
-async fn systemone_shares_chat_session() {
-    for decision_first in [false, true] {
-        let (_server, f, options) = setup(Fixture::default()).await;
-        let client = InferenceClient::with_options(options).unwrap();
-
-        for decision in [decision_first, !decision_first] {
-            if decision {
-                client.systemone_create(&systemone_request()).await.unwrap();
-            } else {
-                client.chat_completions(body()).await.unwrap();
-            }
-        }
-
-        assert_eq!(f.gateway.load(Ordering::SeqCst), 1);
-        assert_eq!(f.model.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[tokio::test]
-async fn systemone_requires_model_public_key_before_send() {
-    let (_server, f, options) = setup(Fixture {
-        missing_model_key: true,
-        ..Default::default()
-    })
-    .await;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    assert!(client.systemone_create(&systemone_request()).await.is_err());
-    assert_eq!(f.systemone.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn systemone_preserves_structured_legend_numbers_and_receipt_bytes() {
-    for (number, canonical) in [
-        ("18446744073709551616", "18446744073709551616"),
-        ("-18446744073709551617", "-18446744073709551617"),
-        (
-            "0.12345678901234567890123456789",
-            "0.12345678901234567890123456789",
-        ),
-        ("1e400", "1e+400"),
-        ("-0.0", "-0.0"),
-    ] {
-        for gateway_only in [false, true] {
-            let response = format!(
-                r#" {{"model":"vendor/model","answers":{{"q":{{"type":"score","score":0.5,"confidence":0.75,"probabilities":{{"0":0.5}},"legend":{{"0":{{"value":{number},"nested":[{number},{{"value":{number}}}]}},"1":[{number},{{"value":{number}}}]}}}}}},"usage":{{"input_tokens":1,"output_tokens":1}}}} "#
-            );
-            let fixture = Fixture {
-                systemone_body: Some(response),
-                ..Default::default()
-            };
-            if gateway_only {
-                *fixture.metadata.lock().unwrap() = Some(json!({
-                    "metadata": {
-                        "providerType": "proxy",
-                        "attestationSupported": false
-                    }
-                }));
-            }
-            let (_server, f, options) = setup(fixture).await;
-            let client = InferenceClient::with_options(options).unwrap();
-
-            let result = client.systemone_create(&systemone_request()).await.unwrap();
-            let value = serde_json::to_value(&result.data).unwrap();
-            let legend = &value["answers"]["q"]["legend"];
-            for value in [
-                &legend["0"]["value"],
-                &legend["0"]["nested"][0],
-                &legend["0"]["nested"][1]["value"],
-                &legend["1"][0],
-                &legend["1"][1]["value"],
-            ] {
-                assert!(value.is_number());
-                assert_eq!(value.to_string(), canonical);
-            }
-
-            let encoded = serde_json::to_vec(&result.data).unwrap();
-            let decoded: SystemOneResponse = serde_json::from_slice(&encoded).unwrap();
-            assert_eq!(serde_json::to_value(decoded).unwrap(), value);
-
-            client.verify_response(&result.decision_id).await.unwrap();
-            assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
-            assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
-        }
-    }
-}
-
-#[tokio::test]
-async fn systemone_rejects_bad_evidence_unsupported_modes_and_stream_before_send() {
-    for mode in 0..4 {
-        let (_server, f, mut options) = setup(Fixture {
-            bad_model: mode == 3,
-            ..Default::default()
-        })
-        .await;
-        options.e2ee = mode == 0;
-        options.ohttp = mode == 1;
-        let client = InferenceClient::with_options(options).unwrap();
-        let mut request = systemone_request();
-        if mode == 2 {
-            request["stream"] = json!(false);
-        }
-
-        assert!(client.systemone_create(&request).await.is_err());
-        assert_eq!(f.systemone.load(Ordering::SeqCst), 0);
-        if mode < 3 {
-            assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
-        }
-    }
-}
-
-#[test]
-fn systemone_transport_failure_does_not_suggest_replay() {
-    for reason in [
-        ApiTransportReason::Request,
-        ApiTransportReason::ResponseBody,
-    ] {
-        let error = ApiError::Transport {
-            resource: ApiResource::SystemOne,
-            reason,
-        };
-        assert_eq!(error.code(), "api.transport_failed");
-        assert!(!error.retryable());
-        assert!(ApiError::Transport {
-            resource: ApiResource::CompletionSignature,
-            reason
-        }
-        .retryable());
-    }
-}
-
-#[tokio::test]
-async fn systemone_errors_do_not_retry_or_cache_unusable_responses() {
-    for fixture in [
-        Fixture {
-            systemone_status: Some(429),
-            ..Default::default()
-        },
-        Fixture {
-            systemone_status: Some(503),
-            ..Default::default()
-        },
-        Fixture {
-            systemone_body: Some("{}".into()),
-            ..Default::default()
-        },
-        Fixture {
-            systemone_id: Some(String::new()),
-            ..Default::default()
-        },
-    ] {
-        let (_server, f, options) = setup(fixture).await;
-        let client = InferenceClient::with_options(options).unwrap();
-
-        let error = client
-            .systemone_create(&systemone_request())
-            .await
-            .unwrap_err();
-
-        assert!(
-            !error.retryable(),
-            "inference failure must not suggest replay: {error}"
-        );
-        assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            client
-                .verify_response("decision-0")
-                .await
-                .unwrap_err()
-                .code(),
-            "api.completion_not_found"
-        );
-    }
-}
-
-#[tokio::test]
-async fn systemone_rejects_wire_tampering_and_wrong_signers() {
-    for fixture in [
-        Fixture {
-            extra_model: true,
-            ..Default::default()
-        },
-        Fixture {
-            systemone_tamper: true,
-            ..Default::default()
-        },
-        Fixture {
-            wrong_signer: true,
-            ..Default::default()
-        },
-        Fixture {
-            wrong_algo: true,
-            ..Default::default()
-        },
-    ] {
-        let (_server, _, options) = setup(fixture).await;
-        let client = InferenceClient::with_options(options).unwrap();
-        let result = client.systemone_create(&systemone_request()).await.unwrap();
-
-        assert!(client.verify_response(&result.decision_id).await.is_err());
-    }
-}
-
-fn response_request_body(streaming: bool) -> Value {
-    json!({
-        "model": "vendor/model",
-        "store": false,
-        "stream": streaming,
-        "input": [
-            {
-                "type": "function_call",
-                "call_id": "prior",
-                "name": "weather",
-                "arguments": "{}"
-            },
-            {
-                "type": "function_call_output",
-                "call_id": "prior",
-                "output": "{\"temperature\":20}"
-            }
-        ]
-    })
-}
-
-#[tokio::test]
-async fn responses_json_and_sse_retain_exact_gateway_receipts() {
-    for streaming in [false, true] {
-        for (ecdsa, oblivious) in [(false, false), (true, false), (false, true)] {
-            let fixture = Fixture {
-                ecdsa,
-                ohttp: oblivious.then(|| {
-                    ohttp::KeyConfig::new(
-                        1,
-                        ohttp::hpke::Kem::X25519Sha256,
-                        vec![ohttp::SymmetricSuite::new(
-                            ohttp::hpke::Kdf::HkdfSha256,
-                            ohttp::hpke::Aead::Aes128Gcm,
-                        )],
-                    )
-                    .unwrap()
-                }),
-                ..Default::default()
-            };
-            let (_server, f, mut options) = setup(fixture).await;
-            options.ohttp = oblivious;
-            if ecdsa {
-                options.signing_algo = SigningAlgo::Ecdsa;
-            }
-            let client = InferenceClient::with_options(options).unwrap();
-            let body = response_request_body(streaming);
-
-            if streaming {
-                let response = client
-                    .send(client.response_request(body).unwrap())
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    response.bytes().await.unwrap(),
-                    include_bytes!("../test-fixtures/responses/response.sse")
-                );
-            } else {
-                let response = client.create_response(body).await.unwrap();
-                assert_eq!(response["id"], "resp_fixture");
-                assert_eq!(
-                    response["output"][2]["arguments"],
-                    "{\"city\":\"UTF-8 City é € 🌍\"}"
-                );
-            }
-
-            let receipt = client.verify_response("resp_fixture").await.unwrap();
-            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
-            assert!(matches!(
-                receipt.attestation,
-                VerifiedCompletionAttestation::Gateway(_)
-            ));
-            assert_eq!(f.chat.load(Ordering::SeqCst), 1);
-            assert_eq!(
-                client.verify_response("msg_1").await.unwrap_err().code(),
-                "api.completion_not_found"
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn chat_stream_receipt() {
-    let start = "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n";
-    for (name, ending, valid) in [
-        (
-            "normal EOF",
-            "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n",
-            true,
-        ),
-        (
-            "DONE with trailing bytes",
-            "data: [DONE]\n\ndata: not-json\n\n",
-            true,
-        ),
-        (
-            "conflicting response ID",
-            "data: {\"id\":\"other\",\"choices\":[]}\n\n",
-            false,
-        ),
-        (
-            "stream error",
-            "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n",
-            false,
-        ),
-    ] {
-        let wire = format!("{start}{ending}").into_bytes();
-        for e2ee in [false, true] {
-            let (_server, fixture, mut options) = setup(Fixture {
-                chat: AtomicUsize::new(1),
-                response_body: Some(wire.clone()),
-                ..Default::default()
-            })
-            .await;
-            options.e2ee = e2ee;
-            let client = InferenceClient::with_options(options).unwrap();
-            let mut request = body();
-            request["stream"] = json!(true);
-            let read = client
-                .send(client.chat_request(request).unwrap())
-                .await
-                .unwrap()
-                .bytes()
-                .await;
-            let receipt = client.verify_response("chat-1").await;
-            if valid {
-                read.unwrap();
-                assert_eq!(receipt.unwrap().id, "chat-1");
-                assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
-            } else {
-                assert_eq!(read.unwrap_err().code(), "api.invalid_response", "{name}");
-                assert_eq!(
-                    receipt.unwrap_err().code(),
-                    "api.completion_not_found",
-                    "{name}"
-                );
-                assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn responses_stream_receipt() {
-    let start = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"in_progress\"}}\n\n";
-    for (name, ending, valid) in [
-        ("completed at EOF", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"completed\"}}\n\n", true),
-        ("output limit", "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n", true),
-        ("failed response", "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"failed\"}}}\n\n", true),
-        ("DONE with trailing bytes", "data: [DONE]\n\ndata: not-json\n\n", true),
-        ("conflicting response ID", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"other\",\"status\":\"completed\"}}\n\n", false),
-        ("stream error", "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n", false),
-    ] {
-        let raw = format!("{start}{ending}").into_bytes();
-        let (_server, f, options) = setup(Fixture {
-            response_body: Some(raw.clone()),
-            ..Default::default()
-        })
-        .await;
-        let client = InferenceClient::with_options(options).unwrap();
-        let result = client
-            .send(
-                client
-                    .response_request(response_request_body(true))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-            .bytes()
-            .await;
-        if valid {
-            assert_eq!(result.unwrap(), raw, "{name}");
-            let receipt = client.verify_response("resp_fixture").await.unwrap();
-            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
-            assert!(receipt.attestations.is_empty());
-            assert_eq!(f.signatures.load(Ordering::SeqCst), 1, "{name}");
-        } else {
-            assert_eq!(result.unwrap_err().code(), "api.invalid_response", "{name}");
-            assert_eq!(
-                client
-                    .verify_response("resp_fixture")
-                    .await
-                    .unwrap_err()
-                    .code(),
-                "api.completion_not_found",
-                "{name}"
-            );
-            assert_eq!(f.signatures.load(Ordering::SeqCst), 0, "{name}");
-        }
-        for unrelated_id in ["msg_1", "event_only", "other"] {
-            assert_eq!(
-                client
-                    .verify_response(unrelated_id)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                "api.completion_not_found",
-                "{name}: {unrelated_id}"
-            );
-        }
-        assert_eq!(f.chat.load(Ordering::SeqCst), 1, "{name}");
-    }
-}
-
-#[tokio::test]
-async fn responses_reject_tampering_and_provider_receipts() {
-    for streaming in [false, true] {
-        for provider in [false, true] {
-            let (_server, _f, options) = setup(Fixture {
-                response_tamper: !provider,
-                response_provider_receipt: provider,
-                ..Default::default()
-            })
-            .await;
-            let client = InferenceClient::with_options(options).unwrap();
-
-            client
-                .send(
-                    client
-                        .response_request(response_request_body(streaming))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-                .bytes()
-                .await
-                .unwrap();
-
-            assert_eq!(
-                client
-                    .verify_response("resp_fixture")
-                    .await
-                    .unwrap_err()
-                    .code(),
-                if provider {
-                    "signature.kind_mismatch"
-                } else {
-                    "signature.payload_mismatch"
-                }
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn responses_retry_receipts_without_repeating_inference() {
-    let (_server, f, options) = setup(Fixture {
-        retry_signature: true,
-        ..Default::default()
-    })
-    .await;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    client
-        .create_response(response_request_body(false))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        client
-            .verify_response("resp_fixture")
-            .await
-            .unwrap_err()
-            .code(),
-        "api.http_status"
-    );
-    client.verify_response("resp_fixture").await.unwrap();
-
-    assert_eq!(f.chat.load(Ordering::SeqCst), 1);
-    assert_eq!(f.signatures.load(Ordering::SeqCst), 2);
-}
-
-#[tokio::test]
-async fn responses_missing_ids_and_http_errors_are_not_receipts() {
-    for streaming in [false, true] {
-        let raw = if streaming {
-            b"data: {\"id\":\"item-only\",\"item\":{\"id\":\"msg_1\"}}\n\n".to_vec()
-        } else {
-            b"{\"output\":[]}".to_vec()
-        };
-        let (_server, _f, options) = setup(Fixture {
-            response_body: Some(raw),
-            ..Default::default()
-        })
-        .await;
-        let client = InferenceClient::with_options(options).unwrap();
-
-        let result = client
-            .send(
-                client
-                    .response_request(response_request_body(streaming))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            result.bytes().await.unwrap_err().code(),
-            "api.invalid_response"
-        );
-    }
-
-    let (_server, _f, options) = setup(Fixture {
-        response_status: Some(400),
-        ..Default::default()
-    })
-    .await;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    assert_eq!(
-        client
-            .create_response(response_request_body(false))
-            .await
-            .unwrap_err()
-            .code(),
-        "api.http_status"
-    );
-    assert_eq!(
-        client
-            .verify_response("resp_fixture")
-            .await
-            .unwrap_err()
-            .code(),
-        "api.completion_not_found"
-    );
-}
-
-#[tokio::test]
-async fn responses_unsupported_modes_are_rejected_before_preflight() {
-    let (_server, f, mut options) = setup(Fixture::default()).await;
-    options.e2ee = true;
-    let client = InferenceClient::with_options(options.clone()).unwrap();
-
-    assert_eq!(
-        client
-            .create_response(response_request_body(false))
-            .await
-            .unwrap_err()
-            .code(),
-        "api.invalid_input"
-    );
-
-    options.e2ee = false;
-    let direct = DirectInferenceClient::with_options(direct_options(options.clone())).unwrap();
-    let client = InferenceClient::with_options(options).unwrap();
-
-    assert_eq!(
-        client
-            .create_response(response_request_body(true))
-            .await
-            .unwrap_err()
-            .code(),
-        "api.invalid_input"
-    );
-    assert_eq!(
-        direct
-            .send(
-                client
-                    .response_request(response_request_body(false))
-                    .unwrap()
-            )
-            .await
-            .err()
-            .unwrap()
-            .code(),
-        "api.invalid_input"
-    );
-
-    let mut request = client
-        .response_request(response_request_body(false))
-        .unwrap();
-    request.url_mut().set_path("/v1/responses/resp_fixture");
-
-    assert_eq!(
-        client.send(request).await.err().unwrap().code(),
-        "api.invalid_input"
-    );
-    assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
-    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
-}
-
-fn message_request_body(streaming: bool) -> Value {
-    json!({
-        "model": "vendor/model", "max_tokens": 128, "stream": streaming,
-        "messages": [
-            {"role":"assistant", "content":[{"type":"tool_use", "id":"prior", "name":"weather", "input":{}}]},
-            {"role":"user", "content":[{"type":"tool_result", "tool_use_id":"prior", "content":"20"}]}
-        ]
-    })
-}
-
-#[tokio::test]
-async fn messages_json_and_sse_retain_exact_gateway_receipts() {
-    for streaming in [false, true] {
-        for (oblivious, ecdsa) in [(false, false), (false, true), (true, false)] {
-            let fixture = Fixture {
-                ecdsa,
-                ohttp: oblivious.then(|| {
-                    ohttp::KeyConfig::new(
-                        1,
-                        ohttp::hpke::Kem::X25519Sha256,
-                        vec![ohttp::SymmetricSuite::new(
-                            ohttp::hpke::Kdf::HkdfSha256,
-                            ohttp::hpke::Aead::Aes128Gcm,
-                        )],
-                    )
-                    .unwrap()
-                }),
-                ..Default::default()
-            };
-            let (_server, f, mut options) = setup(fixture).await;
-            options.ohttp = oblivious;
-            if ecdsa {
-                options.signing_algo = SigningAlgo::Ecdsa;
-            }
-            let client = InferenceClient::with_options(options).unwrap();
-            let body = message_request_body(streaming);
-
-            if streaming {
-                let response = client
-                    .send(client.message_request(body).unwrap())
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    response.bytes().await.unwrap(),
-                    include_bytes!("../test-fixtures/messages/message.sse")
-                );
-            } else {
-                let response = client.create_message(body).await.unwrap();
-                assert_eq!(response["id"], "msg_fixture");
-                assert_eq!(response["content"][1]["input"]["city"], "Beijing");
-            }
-
-            let receipt = client.verify_response("msg_fixture").await.unwrap();
-            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
-            assert!(matches!(
-                receipt.attestation,
-                VerifiedCompletionAttestation::Gateway(_)
-            ));
-            assert_eq!(f.chat.load(Ordering::SeqCst), 1);
-            assert_eq!(
-                client
-                    .verify_response("toolu_fixture")
-                    .await
-                    .unwrap_err()
-                    .code(),
-                "api.completion_not_found"
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn messages_reject_tampering_and_provider_receipts() {
-    for streaming in [false, true] {
-        for provider in [false, true] {
-            let (_server, _f, options) = setup(Fixture {
-                response_tamper: !provider,
-                response_provider_receipt: provider,
-                ..Default::default()
-            })
-            .await;
-            let client = InferenceClient::with_options(options).unwrap();
-
-            client
-                .send(
-                    client
-                        .message_request(message_request_body(streaming))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-                .bytes()
-                .await
-                .unwrap();
-
-            assert_eq!(
-                client
-                    .verify_response("msg_fixture")
-                    .await
-                    .unwrap_err()
-                    .code(),
-                if provider {
-                    "signature.kind_mismatch"
-                } else {
-                    "signature.payload_mismatch"
-                }
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn messages_retry_receipts_without_repeating_inference() {
-    let (_server, f, options) = setup(Fixture {
-        retry_signature: true,
-        ..Default::default()
-    })
-    .await;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    client
-        .create_message(message_request_body(false))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        client
-            .verify_response("msg_fixture")
-            .await
-            .unwrap_err()
-            .code(),
-        "api.http_status"
-    );
-    client.verify_response("msg_fixture").await.unwrap();
-
-    assert_eq!(f.chat.load(Ordering::SeqCst), 1);
-    assert_eq!(f.signatures.load(Ordering::SeqCst), 2);
-}
-
-#[tokio::test]
-async fn messages_missing_ids_and_http_errors_are_not_receipts() {
-    for streaming in [false, true] {
-        let raw = if streaming {
-            b"data: {\"id\":\"item-only\",\"item\":{\"id\":\"msg_1\"}}\n\n".to_vec()
-        } else {
-            b"{\"output\":[]}".to_vec()
-        };
-        let (_server, _f, options) = setup(Fixture {
-            response_body: Some(raw),
-            ..Default::default()
-        })
-        .await;
-        let client = InferenceClient::with_options(options).unwrap();
-
-        let result = client
-            .send(
-                client
-                    .message_request(message_request_body(streaming))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            result.bytes().await.unwrap_err().code(),
-            "api.invalid_response"
-        );
-    }
-
-    let (_server, _f, options) = setup(Fixture {
-        response_status: Some(400),
-        ..Default::default()
-    })
-    .await;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    assert_eq!(
-        client
-            .create_message(message_request_body(false))
-            .await
-            .unwrap_err()
-            .code(),
-        "api.http_status"
-    );
-    assert_eq!(
-        client
-            .verify_response("msg_fixture")
-            .await
-            .unwrap_err()
-            .code(),
-        "api.completion_not_found"
-    );
-}
-
-#[tokio::test]
-async fn messages_unsupported_modes_are_rejected_before_preflight() {
-    let (_server, f, mut options) = setup(Fixture::default()).await;
-    options.e2ee = true;
-    let client = InferenceClient::with_options(options.clone()).unwrap();
-
-    assert_eq!(
-        client
-            .create_message(message_request_body(false))
-            .await
-            .unwrap_err()
-            .code(),
-        "api.invalid_input"
-    );
-
-    options.e2ee = false;
-    let direct = DirectInferenceClient::with_options(direct_options(options.clone())).unwrap();
-    let client = InferenceClient::with_options(options).unwrap();
-
-    assert_eq!(
-        client
-            .create_message(message_request_body(true))
-            .await
-            .unwrap_err()
-            .code(),
-        "api.invalid_input"
-    );
-    assert_eq!(
-        direct
-            .send(client.message_request(message_request_body(false)).unwrap())
-            .await
-            .err()
-            .unwrap()
-            .code(),
-        "api.invalid_input"
-    );
-
-    let mut request = client.message_request(message_request_body(false)).unwrap();
-    request.url_mut().set_path("/v1/messages/resp_fixture");
-
-    assert_eq!(
-        client.send(request).await.err().unwrap().code(),
-        "api.invalid_input"
-    );
-    assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
-    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn messages_incomplete_or_failed_streams_have_no_receipt() {
-    for ending in [
-        "",
-        "event: message_stop\ndata: {\"type\":\"message_stop\"}",
-        "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"other\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-    ] {
-        let raw = format!("event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_fixture\"}}}}\n\n{ending}").into_bytes();
-        let (_server, f, options) = setup(Fixture { response_body: Some(raw), ..Default::default() }).await;
-        let client = InferenceClient::with_options(options).unwrap();
-        let response = client.send(client.message_request(message_request_body(true)).unwrap()).await.unwrap();
-        assert_eq!(response.bytes().await.unwrap_err().code(), "api.invalid_response");
-        assert_eq!(client.verify_response("msg_fixture").await.unwrap_err().code(), "api.completion_not_found");
-        assert_eq!(f.chat.load(Ordering::SeqCst), 1);
-        assert_eq!(f.signatures.load(Ordering::SeqCst), 0);
-    }
-}
-
-#[tokio::test]
-async fn messages_dropped_stream_has_no_receipt() {
-    let (_server, f, options) = setup(Fixture::default()).await;
-    let client = InferenceClient::with_options(options).unwrap();
-    let mut response = client
-        .send(client.message_request(message_request_body(true)).unwrap())
-        .await
-        .unwrap();
-    response.body.next().await.unwrap().unwrap();
-    drop(response);
-    assert_eq!(
-        client
-            .verify_response("msg_fixture")
-            .await
-            .unwrap_err()
-            .code(),
-        "api.completion_not_found"
-    );
-    assert_eq!(f.chat.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn messages_stream_contract() {
-    let cases: Value =
-        serde_json::from_str(include_str!("../test-fixtures/messages/streams.json")).unwrap();
-    for case in cases.as_array().unwrap() {
-        let raw = case["body"].as_str().unwrap().as_bytes().to_vec();
-        let (_server, fixture, options) = setup(Fixture {
-            response_body: Some(raw.clone()),
-            ..Default::default()
-        })
-        .await;
-        let client = InferenceClient::with_options(options).unwrap();
-        let response = client
-            .send(client.message_request(message_request_body(true)).unwrap())
-            .await
-            .unwrap();
-        let body = response.bytes().await;
-        if case["valid"].as_bool().unwrap() {
-            assert_eq!(body.unwrap(), raw, "{}", case["name"]);
-            client.verify_response("msg_fixture").await.unwrap();
-        } else {
-            assert_eq!(
-                body.unwrap_err().code(),
-                "api.invalid_response",
-                "{}",
-                case["name"]
-            );
-            assert_eq!(
-                client
-                    .verify_response("msg_fixture")
-                    .await
-                    .unwrap_err()
-                    .code(),
-                "api.completion_not_found"
-            );
-            assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
-        }
-        assert_eq!(fixture.chat.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[tokio::test]
-async fn messages_duplicate_id_preserves_original_receipt() {
-    for streaming in [false, true] {
-        let (_server, fixture, options) = setup(Fixture::default()).await;
-        let client = InferenceClient::with_options(options).unwrap();
-        let request = client
-            .message_request(message_request_body(streaming))
-            .unwrap();
-
-        let response = client.send(request).await.unwrap();
-        response.bytes().await.unwrap();
-        let receipt = client.verify_response("msg_fixture").await.unwrap();
-        assert_eq!(receipt.id, "msg_fixture");
-
-        let duplicate = client
-            .message_request(message_request_body(streaming))
-            .unwrap();
-        let response = client.send(duplicate).await.unwrap();
-        let error = response.bytes().await.unwrap_err();
-        assert_eq!(error.code(), "api.duplicate_completion_id");
-        assert_eq!(
-            client.verify_response("msg_fixture").await.unwrap().id,
-            receipt.id
-        );
-        assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.chat.load(Ordering::SeqCst), 2);
-    }
-}
-
-#[tokio::test]
-async fn messages_zero_response_ttl_disables_retention() {
-    for streaming in [false, true] {
-        let (_server, fixture, mut options) = setup(Fixture::default()).await;
-        options.response_cache_ttl = Duration::ZERO;
-        let client = InferenceClient::with_options(options).unwrap();
-
-        for _ in 0..2 {
-            let request = client
-                .message_request(message_request_body(streaming))
-                .unwrap();
-            let response = client.send(request).await.unwrap();
-            response.bytes().await.unwrap();
-
-            let error = client.verify_response("msg_fixture").await.unwrap_err();
-            assert_eq!(error.code(), "api.completion_not_found");
-        }
-        assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
-    }
-}
-
-fn direct_options(options: InferenceClientOptions) -> DirectInferenceClientOptions {
-    DirectInferenceClientOptions {
-        include_spki_fingerprint: false,
-        api_key: options.api_key,
-        base_url: options.base_url,
-        headers: options.headers,
-        e2ee: options.e2ee,
-        ohttp: options.ohttp,
-        signing_algo: options.signing_algo,
-        attestation_cache_ttl: options.attestation_cache_ttl,
-        response_cache_ttl: options.response_cache_ttl,
-        model_verification: options.model_verification,
-        deployment_policy: options.deployment_policy,
-    }
-}
-
-#[tokio::test]
-async fn direct_tls_verifies_every_report_and_the_serving_peer() {
-    for case in ["valid", "wrong peer", "invalid sibling"] {
-        let (_server, _, options) = setup(Fixture {
-            direct: true,
-            bad_model: case == "invalid sibling",
-            ..Default::default()
-        })
-        .await;
-        let api = DirectAttestationClient::new(&options.base_url, options.api_key.clone())
-            .unwrap()
-            .with_headers(options.headers);
-        let mut fetched = api
-            .fetch_model_attestations(Some(SigningAlgo::Ed25519), None)
-            .await
-            .unwrap();
-        fetched.client_binding.spki_fingerprint =
-            Some(if case == "wrong peer" { "33" } else { "11" }.repeat(32));
-        let result = verify_direct_model_attestations(
-            &fetched,
-            None,
-            ModelAttestationVerifiers {
-                tdx_quote: options.model_verification.tdx_quote.as_deref(),
-                ..Default::default()
-            },
-        )
-        .await;
-        match case {
-            "valid" => {
-                let verified = result.unwrap();
-                assert_eq!(verified.attestations.len(), 2);
-                assert_eq!(
-                    verified.spki_fingerprints,
-                    ["11".repeat(32), "22".repeat(32)]
-                );
-                assert!(matches!(
-                    verified.tls_binding,
-                    GatewayTlsBinding::Attested { .. }
-                ));
-            }
-            "wrong peer" => assert_eq!(
-                result.unwrap_err().code(),
-                "binding.spki_fingerprint_mismatch"
-            ),
-            _ => assert_eq!(result.unwrap_err().code(), "binding.report_data_mismatch"),
-        }
-    }
 }

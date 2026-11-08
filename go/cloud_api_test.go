@@ -1,0 +1,340 @@
+package nearai
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+func TestSignatureAPIErrorBoundaries(t *testing.T) {
+	for _, tt := range []struct{ body, code string }{
+		{`{"error_code":"pending","message":"Try later"}`, "api.completion_signature_unavailable"},
+		{`{"error_code":"pending","message":"Try later","text":"abc"}`, "api.invalid_response"},
+		{`{}`, "api.invalid_response"},
+		{
+			`{"text":"abc","signature":"ff","signing_algo":"ed25519","signing_address":"ff","signature_kind":"gateway"}`,
+			"api.invalid_response",
+		},
+		{
+			`{"text":"abc","signature":"ff","signing_algo":"ed25519","signing_address":"ff","signature_kind":"unknown"}`,
+			"api.invalid_response",
+		},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, tt.body) }))
+		c, e := NewAttestationClient(ClientOptions{BaseURL: server.URL})
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, e = c.FetchCompletionSignature(context.Background(), "test", Ed25519)
+		server.Close()
+		requireCode(t, e, tt.code)
+		if tt.code == "api.completion_signature_unavailable" {
+			sdk := e.(*Error)
+			if sdk.Details["providerErrorCode"] != "pending" || sdk.Details["providerMessage"] != "Try later" {
+				t.Fatal(sdk.Details)
+			}
+		}
+	}
+}
+
+func TestHTTPStatusRetryabilityDependsOnResource(t *testing.T) {
+	for _, status := range []int{400, 401, 404, 408, 425, 429, 500} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+			defer server.Close()
+			c, err := NewAttestationClient(ClientOptions{BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = c.get(context.Background(), "model/test", nil)
+			requireCode(t, err, "api.http_status")
+			want := status == 408 || status == 425 || status == 429 || status >= 500
+			if err.(*Error).Retryable != want {
+				t.Fatalf("model status %d: %v", status, err)
+			}
+			_, err = c.FetchCompletionSignature(context.Background(), "test", Ed25519)
+			requireCode(t, err, "api.http_status")
+			if err.(*Error).Retryable != (want || status == 404) {
+				t.Fatalf("signature status %d: %v", status, err)
+			}
+		})
+	}
+}
+
+func TestAddressOnlyAttestationFilter(t *testing.T) {
+	for _, length := range []int{20, 32} {
+		address := strings.Repeat("ab", length)
+		q, err := optionsQuery(FetchOptions{SigningAddress: address})
+		if err != nil || q.Get("signing_address") != address || q.Get("signing_algo") != "" {
+			t.Fatalf("%v %v", q, err)
+		}
+	}
+	if _, err := optionsQuery(FetchOptions{SigningAddress: "ab"}); err == nil {
+		t.Fatal("invalid address accepted")
+	}
+	if _, err := optionsQuery(FetchOptions{SigningAlgo: Ed25519, SigningAddress: strings.Repeat("ab", 20)}); err == nil {
+		t.Fatal("algorithm length mismatch accepted")
+	}
+}
+
+func TestFindModelAttestationsForSignature(t *testing.T) {
+	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+		t.Run(string(algo), func(t *testing.T) {
+			length, otherAlgo := 32, ECDSA
+			if algo == ECDSA {
+				length, otherAlgo = 20, Ed25519
+			}
+			signer := SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ab", length)}
+			items := []VerifiedAttestation{
+				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("cd", length)}, InstanceID: "other-key"},
+				{Signer: signer, InstanceID: "first", AdvisoryIDs: []string{"original"}, Deployment: MeasuredDeployment{AppCompose: "first-compose"}},
+				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: "0X" + strings.Repeat("AB", length)}, InstanceID: "second", Deployment: MeasuredDeployment{AppCompose: "second-compose"}},
+			}
+			items = append(items, items[2])
+			sig := CompletionSignature{Kind: "provider_tee", Signer: signer}
+			matchingAttestations, err := FindModelAttestationsForSignature(items, sig)
+			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].InstanceID != "first" || matchingAttestations[1].InstanceID != "second" || matchingAttestations[2].InstanceID != "second" {
+				t.Fatalf("shared-signer reports and duplicates: %#v %v", matchingAttestations, err)
+			}
+			first, err := FindModelAttestationForSignature(items, sig)
+			if err != nil || first.InstanceID != "first" {
+				t.Fatalf("first matching report: %#v %v", first, err)
+			}
+			one, err := FindModelAttestationsForSignature(items[1:2], sig)
+			if err != nil || len(one) != 1 {
+				t.Fatalf("single match: %v", err)
+			}
+			_, err = FindModelAttestationsForSignature(nil, sig)
+			requireCode(t, err, "api.model_attestation_not_found")
+			for _, tc := range []struct {
+				name string
+				sig  CompletionSignature
+				code string
+			}{
+				{"wrong kind", CompletionSignature{Kind: "gateway", Signer: signer}, "api.invalid_input"},
+				{"missing signer", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ef", length)}}, "api.model_attestation_not_found"},
+				{"wrong algorithm", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: otherAlgo, SigningAddress: signer.SigningAddress}}, "api.model_attestation_not_found"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					_, err := FindModelAttestationForSignature(items, tc.sig)
+					requireCode(t, err, tc.code)
+					_, err = FindModelAttestationsForSignature(items, tc.sig)
+					requireCode(t, err, tc.code)
+				})
+			}
+		})
+	}
+}
+
+func TestStructuralAttestationComparison(t *testing.T) {
+	a := Attestation{EventLog: json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740993}}]`)}
+	b := a
+	b.EventLog = json.RawMessage(`[ {"nested": {"a":9007199254740993,"b":2}, "imr":3} ]`)
+	if !sameAttestation(a, b) {
+		t.Fatal("JSON serialization changed report identity")
+	}
+	b.EventLog = json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740992}}]`)
+	if sameAttestation(a, b) {
+		t.Fatal("different integer values matched")
+	}
+	a.EventLog = json.RawMessage(`[1,2]`)
+	b.EventLog = json.RawMessage(`[2,1]`)
+	if sameAttestation(a, b) {
+		t.Fatal("array order ignored")
+	}
+}
+
+func TestReadBoundedMaximumLimit(t *testing.T) {
+	body, err := readBounded(strings.NewReader("completion"), math.MaxInt64)
+	if err != nil || string(body) != "completion" {
+		t.Fatalf("maximum limit discarded body: %q, %v", body, err)
+	}
+}
+
+func TestUnlistedModelReportUsesConfiguredOrganizationKey(t *testing.T) {
+	fixture := newFakeCloud(t)
+	fixture.authorization = "Bearer allowed-org-key"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("model") {
+			if r.URL.Query().Get("model") != "unlisted-model" {
+				t.Errorf("unexpected model: %s", r.URL.Query().Get("model"))
+			}
+			if r.Header.Get("Authorization") != fixture.authorization {
+				http.Error(w, "Unknown model", http.StatusBadRequest)
+				return
+			}
+		}
+		fixture.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	for _, key := range []string{"", "other-org-key", "allowed-org-key"} {
+		t.Run(key, func(t *testing.T) {
+			client, err := NewAttestationClient(ClientOptions{APIKey: key, BaseURL: server.URL + "/v1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if _, err = client.FetchGatewayAttestation(ctx, FetchOptions{DisableTLSBinding: true}); err != nil {
+				t.Fatal(err)
+			}
+			report, err := client.FetchModelAttestations(ctx, "unlisted-model", FetchOptions{})
+			if key == "allowed-org-key" {
+				if err != nil || len(report.Attestations) != 1 {
+					t.Fatalf("authorized report: %v, %v", report, err)
+				}
+			} else if sdk, ok := err.(*Error); !ok || sdk.Code != "api.http_status" || sdk.Details["status"] != 400 {
+				t.Fatalf("expected anonymous/unauthorized model rejection, got %v", err)
+			}
+		})
+	}
+}
+
+func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
+	for _, direct := range []bool{false, true} {
+		for _, apiKey := range []string{"", "test"} {
+			for _, customHeaders := range []bool{false, true} {
+				t.Run(fmt.Sprintf("direct=%t/key=%s/headers=%t", direct, apiKey, customHeaders), func(t *testing.T) {
+					fixture := newFakeCloud(t)
+					fixture.direct = direct
+					fixture.authorization = ""
+					if apiKey != "" {
+						fixture.authorization = "Bearer test"
+					} else if customHeaders {
+						fixture.authorization = "Bearer custom"
+					}
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if customHeaders && r.Header.Get("X-Tenant") != "tenant" {
+							t.Error("custom header missing")
+						}
+						if r.URL.Path == "/v1/attestation/report" {
+							fixture.ServeHTTP(w, r)
+							return
+						}
+						want := ""
+						if apiKey != "" {
+							want = "Bearer test"
+						} else if customHeaders {
+							want = "Bearer custom"
+						}
+						if r.Header.Get("Authorization") != want {
+							t.Errorf("signature authorization = %q, want %q", r.Header.Get("Authorization"), want)
+						}
+						json.NewEncoder(w).Encode(map[string]string{
+							"text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
+							"signing_algo": "ed25519", "signing_address": strings.Repeat("22", 32),
+						})
+					}))
+					defer server.Close()
+					options := ClientOptions{BaseURL: server.URL + "/v1", APIKey: apiKey}
+					if customHeaders {
+						options.Headers = http.Header{"Authorization": {"Bearer custom"}, "Api-Key": {"api-key"}, "X-Api-Key": {"x-api-key"}, "X-Tenant": {"tenant"}}
+					}
+					constructor := NewAttestationClient
+					if direct {
+						constructor = NewDirectAttestationClient
+					}
+					client, err := constructor(options)
+					if err != nil {
+						t.Fatal(err)
+					}
+					ctx := context.Background()
+					if !direct {
+						if _, err = client.FetchGatewayAttestation(ctx, FetchOptions{DisableTLSBinding: true}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if _, err = client.FetchModelAttestations(ctx, "canonical/model", FetchOptions{DisableTLSBinding: true}); err != nil {
+						t.Fatal(err)
+					}
+					if _, err = client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAttestationAPIBindsEveryReport(t *testing.T) {
+	for _, kind := range []string{"gateway", "model", "direct"} {
+		for _, invalid := range []string{"nonce", "TLS layout", "secondary report"} {
+			if kind == "gateway" && invalid == "secondary report" {
+				continue
+			}
+			t.Run(kind+"/"+invalid, func(t *testing.T) {
+				fixture := newFakeCloud(t)
+				fixture.direct = kind == "direct"
+				var nonces []string
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					nonces = append(nonces, r.URL.Query().Get("nonce"))
+					recorder := httptest.NewRecorder()
+					fixture.ServeHTTP(recorder, r)
+					var envelope map[string]any
+					if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+						t.Error(err)
+						return
+					}
+					if len(nonces) == 1 {
+						json.NewEncoder(w).Encode(envelope)
+						return
+					}
+					var report map[string]any
+					field := "model_attestations"
+					if kind == "direct" {
+						field = "all_attestations"
+					}
+					if kind == "gateway" {
+						report = envelope["gateway_attestation"].(map[string]any)
+					} else {
+						report = envelope[field].([]any)[0].(map[string]any)
+					}
+					switch invalid {
+					case "nonce":
+						report["request_nonce"] = nonces[0]
+					case "TLS layout":
+						report["tls_cert_fingerprint"] = strings.Repeat("11", 32)
+					case "secondary report":
+						second := make(map[string]any)
+						for key, value := range report {
+							second[key] = value
+						}
+						second["request_nonce"] = nonces[0]
+						envelope[field] = []any{report, second}
+					}
+					json.NewEncoder(w).Encode(envelope)
+				}))
+				defer server.Close()
+				constructor := NewAttestationClient
+				if kind == "direct" {
+					constructor = NewDirectAttestationClient
+				}
+				client, err := constructor(ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				fetch := func() error {
+					if kind == "gateway" {
+						_, err := client.FetchGatewayAttestation(context.Background(), FetchOptions{DisableTLSBinding: true})
+						return err
+					}
+					_, err := client.FetchModelAttestations(context.Background(), "canonical/model", FetchOptions{DisableTLSBinding: true})
+					return err
+				}
+				if err := fetch(); err != nil {
+					t.Fatal(err)
+				}
+				requireCode(t, fetch(), "api.invalid_response")
+				if len(nonces) != 2 || len(nonces[0]) != 64 || nonces[0] == nonces[1] {
+					t.Fatalf("requests did not get independent client nonces: %v", nonces)
+				}
+			})
+		}
+	}
+}

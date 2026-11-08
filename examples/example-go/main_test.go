@@ -139,20 +139,16 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 				reply = "data: {\"id\":\"stream\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"
 			}
 			if protocol != "chat" {
-				name := "message"
-				if protocol == "responses" {
-					name = "response"
-				}
 				suffix := ".json"
 				if parsed.Stream {
 					suffix = ".sse"
 				}
-				raw, err := os.ReadFile("../../test-fixtures/" + protocol + "/" + name + suffix)
+				raw, err := os.ReadFile("testdata/" + protocol + suffix)
 				if err != nil {
 					t.Error(err)
 					return
 				}
-				reply = strings.ReplaceAll(string(raw), map[string]string{"messages": "msg_fixture", "responses": "resp_fixture"}[protocol], id)
+				reply = string(raw)
 			}
 
 			reqHash, resHash := sha256.Sum256(body), sha256.Sum256([]byte(reply))

@@ -20,7 +20,7 @@ import {
   sha256,
 } from './fixtures';
 
-const FIXTURES = resolve(__dirname, '../../test-fixtures/provenance');
+const FIXTURES = resolve(__dirname, './fixtures/provenance');
 const BUNDLE = JSON.parse(
   readFileSync(
     resolve(FIXTURES, 'compose-manager-launcher.bundle.json'),

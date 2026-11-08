@@ -5,12 +5,10 @@ use nearai_inference_sdk::{
 };
 use serde_json::Value;
 
-const BUNDLE: &str =
-    include_str!("../../test-fixtures/provenance/compose-manager-launcher.bundle.json");
+const BUNDLE: &str = include_str!("fixtures/provenance/compose-manager-launcher.bundle.json");
 const DIGEST: &str = "sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56";
 const COMMIT: &str = "8e07c3583909c9ab9da94d883e87add1ae90832d";
-const REUSABLE_BUNDLE: &str =
-    include_str!("../../test-fixtures/provenance/reusable-workflow.bundle.json");
+const REUSABLE_BUNDLE: &str = include_str!("fixtures/provenance/reusable-workflow.bundle.json");
 const REUSABLE_DIGEST: &str =
     "sha256:49a3aa6075e0f49f82843e74b5baa614ad2a588e6675612bf108a0a008c5ac25";
 const SOURCE_COMMIT: &str = "95baf27389e83e6a5c48f42e190d48d7abcea19e";
