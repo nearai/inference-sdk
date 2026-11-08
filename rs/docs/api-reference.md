@@ -247,8 +247,8 @@ reports sharing the signer. Use the report selected for the request key in
 
 ### Measured compose and individual image helpers
 
-These functions are asynchronous. The low-level functions separate retrieval
-from verification; the deployment helper combines them for required images.
+Pass `app_compose` to the deployment helpers from your `DeploymentVerifier` or
+from an already verified deployment.
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |

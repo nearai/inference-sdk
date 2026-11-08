@@ -499,7 +499,9 @@ Authenticate the key configuration before using `NewOHTTPTransport`.
 `DeploymentPolicy(ctx, model, deployment)` applies application-specific model
 deployment checks. Use image policies to require particular GitHub builds.
 
-`VerifyDeploymentImageProvenance` checks required images from measured Compose.
+`VerifyDeploymentImageProvenance` checks required images against their GitHub
+build policies. Pass `AppCompose` from the deployment callback or from an
+already verified deployment.
 Each configured image repository is required, with a literal SHA-256 digest.
 
 `FetchImageProvenance` retrieves Sigstore bundles. `VerifyImageProvenance` checks

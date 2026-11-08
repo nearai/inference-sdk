@@ -462,8 +462,9 @@ the supplied verified result.
 
 ### `verify_deployment_image_provenance`
 
-Verifies required container images from measured `app_compose` against their
-GitHub build policies. Use in a deployment callback. Returns `None`.
+Verifies required container images against their GitHub build policies. Pass
+`app_compose` from the deployment callback or from an already verified deployment.
+Returns `None`.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

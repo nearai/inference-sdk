@@ -496,8 +496,9 @@ response verifier.
 
 ### `verifyDeploymentImageProvenance`
 
-Verifies required container images from measured `appCompose` against their
-GitHub build policies. Use in a deployment callback. Returns `Promise<void>`.
+Verifies required container images against their GitHub build policies. Pass
+`appCompose` from the deployment callback or from an already verified deployment.
+Returns `Promise<void>`.
 
 | `VerifyDeploymentImageProvenanceParams` field | Type | Required | Description |
 | --- | --- | --- | --- |

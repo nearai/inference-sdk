@@ -780,7 +780,9 @@ if (signature.kind === 'provider_tee') {
 console.log(plaintext);
 ```
 
-Gateway clients return the matching model reports in `result.attestations`.
+For model-signed `verifyResponse()` results (`signatureKind === 'provider_tee'`),
+read the matching model reports from `result.attestations`. For `'gateway'`,
+read the Gateway report from `result.attestation`.
 
 ## Handle errors
 
