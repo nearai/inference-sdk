@@ -381,8 +381,9 @@ The Gateway's report and signature endpoints have different defaults.
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL without a query or fragment. Include the API path when using a custom endpoint. |
 | `fetch?` | `typeof globalThis.fetch` | No | Runtime Fetch | Transport for model reports, metadata, and completion signatures. Gateway attestation keeps its default transport and same-request TLS peer capture. |
 
-Credentials are optional for public evidence. Configure `apiKey` or `headers`
-when the endpoint requires authentication.
+Gateway and Direct attestation report requests omit `Authorization`, `api-key`,
+and `x-api-key`. Model reports fetched through the Gateway, model metadata,
+inference, and response signatures use the configured credentials.
 
 ### Methods
 

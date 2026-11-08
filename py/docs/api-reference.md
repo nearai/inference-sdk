@@ -380,8 +380,11 @@ The Gateway's report and signature endpoints have different defaults.
 | `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers; use `api_key` for bearer authentication. |
 | `http_client` | `httpx.AsyncClient \| None` | No | `None` | HTTP transport for model reports, metadata, and signature requests. |
 
-Credentials are optional for public evidence. Configure `api_key` or `headers`
-when the endpoint requires authentication. Use `http_client` to supply a pinned
+Gateway and Direct attestation report requests omit `Authorization`, `api-key`,
+and `x-api-key`. Model reports fetched through the Gateway, model metadata,
+inference, and response signatures use the configured credentials.
+
+Use `http_client` to supply a pinned
 transport after Gateway verification.
 
 Model reports through the Gateway use the client's configured API key or authentication
