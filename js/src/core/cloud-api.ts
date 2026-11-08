@@ -312,9 +312,8 @@ export class CloudApiClient {
 
   /** Override this in a runtime-specific client to control ordinary API requests. */
   protected async requestCloudApi(request: Request): Promise<Response> {
-    return this.apiFetch === undefined
-      ? fetch(request)
-      : this.apiFetch(request);
+    const fetch = this.apiFetch ?? globalThis.fetch;
+    return fetch(request);
   }
 
   private async getCloudApiJson({
