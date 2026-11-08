@@ -157,7 +157,9 @@ OHTTP is bound to the serving signer. `DirectAttestationClient` and the standalo
 support manual flows. Model names and instance IDs are endpoint metadata, not
 quote-authenticated model identity claims.
 
-Direct requests use standard HTTPS. Attested TLS pinning is disabled by default.
+Direct uses standard HTTPS. The inference request can reach a different instance
+from the one verified during preflight. With E2EE disabled, that instance receives
+the plaintext prompt.
 
 ### Existing Rust callers
 

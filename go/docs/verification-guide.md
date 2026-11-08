@@ -501,8 +501,11 @@ defer client.Close()
 ```
 
 The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
-Use `E2EE` to configure encryption; `DisableE2EE` is deprecated. Direct clients omit
-Gateway verification and use standard HTTPS without attested TLS pinning.
+Use `E2EE` to configure encryption; `DisableE2EE` is deprecated.
+
+Direct uses standard HTTPS. The inference request can reach a different instance
+from the one verified during preflight. With E2EE disabled, that instance receives
+the plaintext prompt.
 
 Direct response results include all matching deployments in `Attestations` and
 leave `Attestation` nil.

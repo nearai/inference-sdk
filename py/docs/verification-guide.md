@@ -394,7 +394,9 @@ Set `stream=True` and use `async for` for typed Responses events. An external
 
 ## Direct model endpoints
 
-Experimental Direct clients connect to the model endpoint.
+Experimental Direct clients use standard HTTPS. The inference request can reach a different instance
+from the one verified during preflight. With E2EE disabled, that instance receives
+the plaintext prompt.
 
 ```python
 from nearai_inference_sdk import DirectInferenceClient

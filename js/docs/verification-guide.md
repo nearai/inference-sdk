@@ -591,9 +591,11 @@ Use `client.chat.completions.create()`, `client.fetch`, and
 credentials from the Gateway and use separate fetch and verification APIs.
 
 The client selects a verified model key for routing and E2EE; response signatures
-must match that selected signer. Both entry points request
-`include_tls_fingerprint=false`. Direct TLS fingerprint binding and pinning are
-currently disabled; standard HTTPS certificate validation still applies.
+must match that selected signer.
+
+Direct uses standard HTTPS. The inference request can reach a different instance
+from the one verified during preflight. With E2EE disabled, that instance receives
+the plaintext prompt.
 
 ### Verify direct evidence manually
 
