@@ -88,6 +88,7 @@ class Gateway:
         self.additional_model_is_invalid = False
         self.bad_quote = False
         self.tail_gate: asyncio.Event | None = None
+        self.chat_body: bytes | None = None
         self.seed = seed
         if signing_algo == 'ed25519':
             self.key = SigningKey(self.seed)
@@ -245,6 +246,8 @@ class Gateway:
         else:
             response_bytes = json.dumps(completion).encode()
             content_type = 'application/json'
+        if self.chat_body is not None:
+            completion_id, response_bytes = 'chat-1', self.chat_body
 
         signed_text = ':'.join(
             (
@@ -266,7 +269,11 @@ class Gateway:
             'signing_address': self.address,
             'signature_kind': self.kind,
         }
-        chunks = response_bytes.split(b'data: [DONE]')
+        chunks = (
+            [response_bytes]
+            if self.chat_body is not None
+            else response_bytes.split(b'data: [DONE]')
+        )
         if len(chunks) == 2:
             chunks[1] = b'data: [DONE]' + chunks[1]
         if self.tail_gate is not None:
@@ -478,6 +485,46 @@ async def test_clear_response_cache_during_stream_does_not_schedule_expiry(monke
         finally:
             gateway.tail_gate.set()
             await stream.close()
+
+
+@pytest.mark.parametrize('endpoint', ['chat/completions', 'responses'])
+async def test_done_without_id_is_rejected_before_exposing_it(monkeypatch, endpoint):
+    gateway = Gateway()
+    original_handle = gateway.handle
+    payload = (
+        {'response': {'id': 'late-id'}}
+        if endpoint == 'responses'
+        else {'id': 'late-id'}
+    )
+
+    async def handle(request):
+        if request.url.path == '/v1/' + endpoint:
+            return httpx.Response(
+                200,
+                headers={'content-type': 'text/event-stream'},
+                stream=ChunkStream(
+                    [b'data: [DONE]\n\n', f'data: {json.dumps(payload)}\n\n'.encode()]
+                ),
+            )
+        return await original_handle(request)
+
+    monkeypatch.setattr(gateway, 'handle', handle)
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        async with client.http_client.stream(
+            'POST',
+            BASE_URL + endpoint,
+            json={
+                'model': MODEL,
+                'messages': MESSAGES,
+                'input': 'Hello',
+                'stream': True,
+            },
+        ) as response:
+            with pytest.raises(ApiError, match='api.invalid_response'):
+                await anext(response.aiter_bytes())
+        with pytest.raises(ApiError, match='api.completion_not_found'):
+            await client.verify_response('late-id')
 
 
 @pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
@@ -1061,6 +1108,75 @@ async def test_async_request_body_is_sent_with_buffered_framing(
     assert 'trailer' not in sent.headers
     assert sent.headers['content-length'] == str(len(sent.content))
     assert gateway.plaintexts == ['Hello']
+
+
+@pytest.mark.parametrize(
+    'ending, valid',
+    [
+        pytest.param(b'data: {"id":"chat-1","choices":[]}\n\n', True, id='normal-EOF'),
+        pytest.param(
+            b'data: [DONE]\n\ndata: not-json\n\n', True, id='DONE-with-trailing-bytes'
+        ),
+        pytest.param(
+            b'data: {"id":"other","choices":[]}\n\n',
+            False,
+            id='conflicting-response-ID',
+        ),
+        pytest.param(
+            b'event: error\ndata: {"type":"error","error":{"message":"failed"}}\n\n',
+            False,
+            id='stream-error',
+        ),
+    ],
+)
+async def test_chat_stream_receipt(monkeypatch, gateway, ending, valid):
+    gateway.chat_body = b'data: {"id":"chat-1","choices":[]}\n\n' + ending
+    gateway.install(monkeypatch)
+    for e2ee in (False, True):
+        async with gateway.client(e2ee=e2ee) as client:
+            response = await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES, 'stream': True},
+                )
+            )
+            if valid:
+                await response.aread()
+                assert (await client.verify_response('chat-1')).id == 'chat-1'
+            else:
+                with pytest.raises(ApiError):
+                    await response.aread()
+                with pytest.raises(ApiError):
+                    await client.verify_response('chat-1')
+    assert gateway.signature_requests == (2 if valid else 0)
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['json', 'stream'])
+async def test_rejects_receipt_when_signed_chat_fails_decryption(
+    monkeypatch, gateway, stream
+):
+    gateway.chat_body = (
+        b'data: {"id":"chat-1","choices":[]}\n\n'
+        b'data: {"id":"chat-1","choices":[{"delta":{"content":"invalid"}}]}\n\n'
+        b'data: [DONE]\n\n'
+        if stream
+        else b'{"id":"chat-1","choices":[{"message":{"content":"invalid"}}]}'
+    )
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=True) as client:
+        with pytest.raises(VerificationError, match='e2ee.decryption_failed'):
+            response = await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES, 'stream': stream},
+                )
+            )
+            await response.aread()
+        with pytest.raises((ApiError, VerificationError)):
+            await client.verify_response('chat-1')
+    assert gateway.signature_requests == 0
 
 
 @pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])

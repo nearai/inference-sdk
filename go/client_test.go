@@ -882,30 +882,92 @@ func TestDirectClientE2EEIsOptIn(t *testing.T) {
 	}
 }
 
-func TestFailedStreamsAreNotRegistered(t *testing.T) {
-	for _, body := range []string{
-		"event: error\ndata: {\"error\":\"failed\"}\n\ndata: [DONE]\n\n",
-		"data: {\"id\":\"chat-1\",\"error\":\"failed\"}\n\ndata: [DONE]\n\n",
-		"data: {\"id\":\"chat-1\"}\n\ndata: {\"id\":\"chat-2\"}\n\ndata: [DONE]\n\n",
-		"data: malformed\n\ndata: [DONE]\n\n",
+func TestDoneWithoutIDIsRejectedBeforeExposingIt(t *testing.T) {
+	for _, endpoint := range []string{"chat/completions", "responses"} {
+		t.Run(endpoint, func(t *testing.T) {
+			cloud := newFakeCloud(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/"+endpoint {
+					cloud.ServeHTTP(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				payload := `{"id":"late-id"}`
+				if endpoint == "responses" {
+					payload = `{"response":{"id":"late-id"}}`
+				}
+				fmt.Fprintf(w, "data: [DONE]\n\ndata: %s\n\n", payload)
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+			client, err := NewInferenceClient(InferenceOptions{
+				ClientOptions:       ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
+				DisableTLSBinding:   true,
+				GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			body, _ := json.Marshal(chatRequest())
+			req, _ := http.NewRequestWithContext(ctx, "POST", client.BaseURL()+endpoint, bytes.NewReader(body))
+			response, err := client.HTTPClient().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			_, err = response.Body.Read(make([]byte, 64))
+			requireCode(t, err, "api.invalid_response")
+			_, err = client.VerifyResponse(context.Background(), "late-id")
+			requireCode(t, err, "api.completion_not_found")
+		})
+	}
+}
+
+func TestChatStreamReceipt(t *testing.T) {
+	const start = "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n"
+	for _, tc := range []struct {
+		name, ending string
+		valid        bool
+	}{
+		{"normal EOF", "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n", true},
+		{"DONE with trailing bytes", "data: [DONE]\n\ndata: not-json\n\n", true},
+		{"conflicting response ID", "data: {\"id\":\"other\",\"choices\":[]}\n\n", false},
+		{"stream error", "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n", false},
 	} {
-		f := newFakeCloud(t)
-		f.stream = true
-		f.streamBody = body
-		c, _ := fakeClient(t, f, nil)
-		raw, _ := json.Marshal(chatRequest())
-		req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(raw))
-		res, e := c.HTTPClient().Do(req)
-		if e != nil {
-			t.Fatal(e)
-		}
-		_, e = io.ReadAll(res.Body)
-		res.Body.Close()
-		if e == nil {
-			t.Fatalf("accepted failed stream %q", body)
-		}
-		_, e = c.VerifyResponse(context.Background(), "chat-1")
-		requireCode(t, e, "api.completion_not_found")
+		t.Run(tc.name, func(t *testing.T) {
+			for _, e2ee := range []bool{false, true} {
+				f := newFakeCloud(t)
+				f.tee, f.stream, f.encrypt = true, true, e2ee
+				f.streamBody = start + tc.ending
+				c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.E2EE = e2ee })
+				body := chatRequest()
+				body["stream"] = true
+				raw, _ := json.Marshal(body)
+				req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(raw))
+				res, err := c.HTTPClient().Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, readErr := io.ReadAll(res.Body)
+				res.Body.Close()
+				receipt, err := c.VerifyResponse(context.Background(), "chat-1")
+				if tc.valid {
+					if readErr != nil || err != nil || receipt.ID != "chat-1" || f.signatureCalls.Load() != 1 {
+						t.Fatalf("E2EE=%v: read=%v, receipt=%+v, err=%v", e2ee, readErr, receipt, err)
+					}
+				} else {
+					requireCode(t, readErr, "api.invalid_response")
+					requireCode(t, err, "api.completion_not_found")
+					if f.signatureCalls.Load() != 0 {
+						t.Fatal("invalid stream fetched a signature")
+					}
+				}
+			}
+		})
 	}
 }
 

@@ -385,7 +385,9 @@ impl Respond for Fixture {
                     "Hello".into()
                 };
                 let id = format!("chat-{n}");
-                let response = if body["stream"] == true {
+                let response = if let Some(raw) = &self.response_body {
+                    raw.clone()
+                } else if body["stream"] == true {
                     format!(
                         "event: message\r\ndata: {}\r\n\r\ndata: [DONE]\n\n: tail\n\n",
                         json!({"id":id,"choices":[{"delta":{"content":content}}]})
@@ -845,6 +847,46 @@ async fn empty_reports_invalid_candidate_and_unbound_keys_block_chat() {
         assert_eq!(f.chat.load(Ordering::SeqCst), 0);
     }
 }
+#[tokio::test]
+async fn done_without_id_is_rejected_before_exposing_it() {
+    for endpoint in ["chat/completions", "responses"] {
+        let (server, _, options) = setup(Fixture::default()).await;
+        let payload = if endpoint == "responses" {
+            json!({"response": {"id": "late-id"}})
+        } else {
+            json!({"id": "late-id"})
+        };
+        Mock::given(wiremock::matchers::path(format!("/v1/{endpoint}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_bytes(format!("data: [DONE]\n\ndata: {payload}\n\n").into_bytes()),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let request = if endpoint == "responses" {
+            client
+                .response_request(response_request_body(true))
+                .unwrap()
+        } else {
+            let mut request = body();
+            request["stream"] = json!(true);
+            client.chat_request(request).unwrap()
+        };
+        let mut response = client.send(request).await.unwrap();
+        assert_eq!(
+            response.body.next().await.unwrap().unwrap_err().code(),
+            "api.invalid_response"
+        );
+        assert_eq!(
+            client.verify_response("late-id").await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+    }
+}
+
 #[tokio::test]
 async fn streaming_retains_tail_and_does_not_verify_partial_responses() {
     let (_server, _f, options) = setup(Fixture::default()).await;
@@ -1654,6 +1696,129 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
                 "api.completion_not_found"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn chat_stream_receipt() {
+    let start = "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n";
+    for (name, ending, valid) in [
+        (
+            "normal EOF",
+            "data: {\"id\":\"chat-1\",\"choices\":[]}\n\n",
+            true,
+        ),
+        (
+            "DONE with trailing bytes",
+            "data: [DONE]\n\ndata: not-json\n\n",
+            true,
+        ),
+        (
+            "conflicting response ID",
+            "data: {\"id\":\"other\",\"choices\":[]}\n\n",
+            false,
+        ),
+        (
+            "stream error",
+            "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n",
+            false,
+        ),
+    ] {
+        let wire = format!("{start}{ending}").into_bytes();
+        for e2ee in [false, true] {
+            let (_server, fixture, mut options) = setup(Fixture {
+                chat: AtomicUsize::new(1),
+                response_body: Some(wire.clone()),
+                ..Default::default()
+            })
+            .await;
+            options.e2ee = e2ee;
+            let client = InferenceClient::with_options(options).unwrap();
+            let mut request = body();
+            request["stream"] = json!(true);
+            let read = client
+                .send(client.chat_request(request).unwrap())
+                .await
+                .unwrap()
+                .bytes()
+                .await;
+            let receipt = client.verify_response("chat-1").await;
+            if valid {
+                read.unwrap();
+                assert_eq!(receipt.unwrap().id, "chat-1");
+                assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
+            } else {
+                assert_eq!(read.unwrap_err().code(), "api.invalid_response", "{name}");
+                assert_eq!(
+                    receipt.unwrap_err().code(),
+                    "api.completion_not_found",
+                    "{name}"
+                );
+                assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn responses_stream_receipt() {
+    let start = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"in_progress\"}}\n\n";
+    for (name, ending, valid) in [
+        ("completed at EOF", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"completed\"}}\n\n", true),
+        ("output limit", "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n", true),
+        ("failed response", "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"failed\"}}}\n\n", true),
+        ("DONE with trailing bytes", "data: [DONE]\n\ndata: not-json\n\n", true),
+        ("conflicting response ID", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"other\",\"status\":\"completed\"}}\n\n", false),
+        ("stream error", "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n", false),
+    ] {
+        let raw = format!("{start}{ending}").into_bytes();
+        let (_server, f, options) = setup(Fixture {
+            response_body: Some(raw.clone()),
+            ..Default::default()
+        })
+        .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client
+            .send(
+                client
+                    .response_request(response_request_body(true))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .bytes()
+            .await;
+        if valid {
+            assert_eq!(result.unwrap(), raw, "{name}");
+            let receipt = client.verify_response("resp_fixture").await.unwrap();
+            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+            assert!(matches!(receipt.attestation, VerifiedCompletionAttestation::Gateway(_)));
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 1, "{name}");
+        } else {
+            assert_eq!(result.unwrap_err().code(), "api.invalid_response", "{name}");
+            assert_eq!(
+                client
+                    .verify_response("resp_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}"
+            );
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 0, "{name}");
+        }
+        for unrelated_id in ["msg_1", "event_only", "other"] {
+            assert_eq!(
+                client
+                    .verify_response(unrelated_id)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}: {unrelated_id}"
+            );
+        }
+        assert_eq!(f.chat.load(Ordering::SeqCst), 1, "{name}");
     }
 }
 

@@ -69,6 +69,9 @@ this ordering automatically.
 
 See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
 
+Consume the stream before calling `VerifyResponse`. After a valid response ID, Chat and Responses
+streams can end with `[DONE]` or normal EOF. Messages require `message_stop`.
+
 ## System One decisions
 
 | Method | Result |

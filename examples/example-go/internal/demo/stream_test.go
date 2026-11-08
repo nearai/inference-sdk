@@ -28,22 +28,28 @@ func TestIncrementalOutput(t *testing.T) {
 				t.Fatalf("text was not emitted before DONE at split %d: %v", split, values)
 			}
 		}
-		raw := []byte(event + "data: [DONE]" + separator + separator)
+		raw := []byte(event + "data: [DONE]" + separator + separator + "data: \xff" + separator + separator)
 		if id, err := CompletionID(raw, true); err != nil || id != "chat-1" {
 			t.Fatalf("ID: %q, %v", id, err)
 		}
-		if _, err := CompletionID([]byte(event), true); err == nil {
-			t.Fatal("truncated stream accepted")
+		if id, err := CompletionID([]byte(event), true); err != nil || id != "chat-1" {
+			t.Fatalf("receipt ID at EOF: %q, %v", id, err)
 		}
 	}
 }
 
 func TestInvalidStream(t *testing.T) {
+	if _, err := CompletionID([]byte("data: {\"id\":\"chat-1\",\"extra\":\"\xff\"}"), true); err == nil {
+		t.Fatal("accepted invalid UTF-8 at EOF")
+	}
 	if _, err := Events([]byte("data: {\"type\":\"error\"}\n\n")); err == nil {
 		t.Fatal("error event accepted")
 	}
-	if _, err := CompletionID([]byte("data: {\"id\":\"one\"}\n\ndata: {\"id\":\"two\"}\n\ndata: [DONE]\n\n"), true); err == nil {
-		t.Fatal("conflicting IDs accepted")
+	for _, event := range []string{`{"id":"two"}`, `{"id":""}`, `{"id":17}`} {
+		wire := "data: {\"id\":\"one\"}\n\ndata: " + event + "\n\n"
+		if _, err := CompletionID([]byte(wire), true); err == nil {
+			t.Errorf("accepted invalid or conflicting ID in %s", event)
+		}
 	}
 }
 

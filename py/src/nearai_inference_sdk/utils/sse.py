@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import Any, Never
 
 
 @dataclass(frozen=True)
@@ -81,18 +83,27 @@ def get_sse_event(record: str) -> str | None:
     return event
 
 
-def get_sse_data_records(text: str) -> list[str]:
-    """Read complete response data payloads, joining each event's data lines."""
+def get_sse_record_data(record: str) -> str:
+    """Join the data fields of one SSE record."""
+    return '\n'.join(
+        data
+        for line in split_sse_lines(record)
+        if (data := get_sse_data(line.content)) is not None
+    )
 
-    complete = take_complete_sse_records(text)
-    values = [record.value for record in complete.records]
-    if complete.pending:
-        values.append(complete.pending)
-    return [
-        '\n'.join(
-            data
-            for line in split_sse_lines(value)
-            if (data := get_sse_data(line.content)) is not None
-        )
-        for value in values
-    ]
+
+def get_sse_data_records(text: str) -> list[str]:
+    """Read event payloads from a complete response body."""
+    parsed = take_complete_sse_records(text)
+    values = [get_sse_record_data(record.value) for record in parsed.records]
+    if parsed.pending:
+        values.append(get_sse_record_data(parsed.pending))
+    return values
+
+
+def _reject_json_constant(value: str) -> Never:
+    raise ValueError(f'Invalid JSON number {value}')
+
+
+def parse_sse_json(data: str) -> Any:
+    return json.loads(data, parse_constant=_reject_json_constant)

@@ -41,8 +41,8 @@ import {
   VerificationError,
 } from '../utils/errors';
 import {
-  getSseDataRecords,
   getSseEvent,
+  getSseRecordData,
   takeCompleteSseRecords,
 } from '../utils/sse';
 import { verifyGatewayAttestation } from './attestation-gateway';
@@ -139,18 +139,14 @@ type SendSecureCompletionParams = {
   readonly init?: RequestInit;
 };
 
-type SentSecureCompletion<VerificationResult> = {
-  response: Response;
+type CapturedSecureCompletion<VerificationResult> = {
+  readonly response: Response;
   readonly protocol: CompletionProtocol;
   readonly session: InferenceSession<VerificationResult>;
-  readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
+  readonly decryptJsonResponse?: PreparedE2eeChatRequest['decryptResponse'];
+  readonly requestBody: Promise<Uint8Array>;
+  readonly responseBody: Promise<Uint8Array>;
 };
-
-type CapturedSecureCompletion<VerificationResult> =
-  SentSecureCompletion<VerificationResult> & {
-    readonly requestBody: Promise<Uint8Array>;
-    readonly responseBody: Promise<Uint8Array>;
-  };
 
 type CapturedResponseEntityBody = {
   readonly response: Response;
@@ -382,25 +378,33 @@ export abstract class VerifiedInferenceClientBase<
     const requestBody = await completion.requestBody;
     const responseBody = completion.responseBody;
 
-    if (completion.response.ok) {
-      // Register before exposing the response, including its first SSE event.
-      completion.response = registerCompletionResponse({
-        response: completion.response,
-        protocol: completion.protocol,
-        register: (completionId) =>
-          this.registerResponse(
-            {
-              id: completionId,
-              requestBody,
-              responseBody,
-              session: completion.session,
-              gatewayOnly: completion.protocol !== 'chat',
-            },
-            generation,
-          ),
-      });
-    }
-    return this.toClientResponse(completion);
+    if (!completion.response.ok) return completion.response;
+    const register = (id: string) =>
+      this.registerResponse(
+        {
+          id,
+          requestBody,
+          responseBody,
+          session: completion.session,
+          gatewayOnly: completion.protocol !== 'chat',
+        },
+        generation,
+      );
+    const decryptJson = completion.decryptJsonResponse;
+    let jsonId: string | undefined;
+    const response = registerCompletionResponse({
+      response: completion.response,
+      protocol: completion.protocol,
+      register: decryptJson
+        ? (id) => {
+            jsonId = id;
+          }
+        : register,
+    });
+    if (!decryptJson) return response;
+    const decrypted = await decryptJson(response);
+    if (jsonId !== undefined) register(jsonId);
+    return decrypted;
   };
 
   protected async sendSystemOneRequest(_request: Request): Promise<Response> {
@@ -530,17 +534,33 @@ export abstract class VerifiedInferenceClientBase<
               messages: parsed.protocol === 'messages',
             }),
           };
-    const decryptResponse =
+    let decryptResponse =
       'decryptResponse' in prepared ? prepared.decryptResponse : undefined;
 
     const requestBody = captureRequestEntityBody(prepared.request);
-    const response = await this.sendCompletionRequest({
+    let response = await this.sendCompletionRequest({
       request: prepared.request,
       transport: session.transport,
     });
+    let wire: Uint8Array[] | undefined;
+    if (decryptResponse && response.ok && isServerSentEventResponse(response)) {
+      const chunks: Uint8Array[] = [];
+      const body = response.body?.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            chunks.push(chunk.slice());
+            controller.enqueue(chunk);
+          },
+        }),
+      );
+      response = await decryptResponse(new Response(body, response));
+      wire = chunks;
+      decryptResponse = undefined;
+    }
     const capturedResponse = captureResponseEntityBody(
       response,
       parsed.protocol,
+      wire,
     );
     return {
       response: capturedResponse.response,
@@ -548,15 +568,10 @@ export abstract class VerifiedInferenceClientBase<
       session,
       requestBody,
       responseBody: capturedResponse.responseBody,
-      ...(decryptResponse === undefined ? {} : { decryptResponse }),
+      ...(decryptResponse === undefined
+        ? {}
+        : { decryptJsonResponse: decryptResponse }),
     };
-  }
-
-  private async toClientResponse({
-    response,
-    decryptResponse,
-  }: SentSecureCompletion<VerificationResult>): Promise<Response> {
-    return decryptResponse === undefined ? response : decryptResponse(response);
   }
 
   private async verifyCapturedResponse({
@@ -1129,7 +1144,7 @@ function registerCompletionResponse({
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
   const streaming = isServerSentEventResponse(response);
-  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decoder = new TextDecoder('utf-8', { fatal: !streaming });
   let pending = '';
   let registered = false;
   const body = response.body.pipeThrough(
@@ -1138,9 +1153,16 @@ function registerCompletionResponse({
         if (!registered) {
           pending += decoder.decode(chunk, { stream: true });
           if (streaming) {
-            const complete = takeCompleteSseRecords(pending);
+            // The optional LF after a blank CR cannot change the event or its ID.
+            const complete = takeCompleteSseRecords(pending, true);
             pending = complete.pending;
             for (const record of complete.records) {
+              if (
+                protocol !== 'messages' &&
+                getSseRecordData(record.value) === '[DONE]'
+              ) {
+                throw invalidCompletionId();
+              }
               let id: string;
               try {
                 id = getSseCompletionId(record.value, protocol);
@@ -1191,6 +1213,7 @@ function captureRequestEntityBody(request: Request): Promise<Uint8Array> {
 function captureResponseEntityBody(
   response: Response,
   protocol: CompletionProtocol,
+  wire?: Uint8Array[],
 ): CapturedResponseEntityBody {
   if (response.body === null) {
     return {
@@ -1210,18 +1233,15 @@ function captureResponseEntityBody(
   void responseBody.catch(() => undefined);
 
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  const chunks = wire ?? [];
   let settled = false;
   const resolve = (): void => {
     if (settled) return;
     try {
       const body = concatChunks(chunks);
-      if (
-        response.ok &&
-        protocol === 'messages' &&
-        isServerSentEventResponse(response)
-      ) {
-        validateMessageStream(body);
+      if (response.ok && isServerSentEventResponse(response)) {
+        if (protocol === 'messages') validateMessageStream(body);
+        else validateOpenAiStream(body, protocol);
       }
       settled = true;
       resolveBody(body);
@@ -1235,23 +1255,37 @@ function captureResponseEntityBody(
     rejectBody(cause);
   };
 
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
+  let output: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let reading = false;
+  const read = async (): Promise<void> => {
+    if (reading) return;
+    reading = true;
+    try {
+      do {
         const next = await reader.read();
         if (next.done) {
           resolve();
-          controller.close();
+          output?.close();
           return;
         }
-        chunks.push(next.value.slice());
-        controller.enqueue(next.value);
-      } catch (cause) {
-        reject(cause);
-        controller.error(cause);
-      }
+        if (!wire) chunks.push(next.value.slice());
+        output?.enqueue(next.value);
+      } while (output === undefined && !settled);
+    } catch (cause) {
+      reject(cause);
+      output?.error(cause);
+    } finally {
+      reading = false;
+    }
+  };
+
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      output = controller;
     },
+    pull: read,
     async cancel(reason) {
+      output = undefined;
       if (
         hasSseCompletionSentinel({
           chunks,
@@ -1259,7 +1293,7 @@ function captureResponseEntityBody(
           protocol,
         })
       ) {
-        void drainResponseEntityBody({ reader, chunks, resolve, reject });
+        void read();
       } else {
         reject(reason);
         await reader.cancel(reason);
@@ -1292,38 +1326,30 @@ function getSseCompletionId(
   text: string,
   protocol: CompletionProtocol,
 ): string {
-  for (const data of getSseDataRecords(text)) {
-    if (data === '' || data === '[DONE]') {
-      continue;
-    }
-    let value: unknown;
-    try {
-      value = JSON.parse(data);
-    } catch (cause) {
-      throw invalidCompletionId(cause);
-    }
-    if (protocol === 'responses') {
-      value =
-        value !== null && typeof value === 'object' && 'response' in value
-          ? value.response
-          : undefined;
-    }
-    if (protocol === 'messages') {
-      value =
-        value !== null &&
-        typeof value === 'object' &&
-        'type' in value &&
-        value.type === 'message_start' &&
-        'message' in value
-          ? value.message
-          : undefined;
-    }
-    const parsed = v.safeParse(CompletionResponseIdSchema, value);
-    if (parsed.success) {
-      return parsed.output.id;
-    }
+  const data = getSseRecordData(text);
+  let value: unknown;
+  try {
+    value = JSON.parse(data);
+  } catch (cause) {
+    throw invalidCompletionId(cause);
   }
-  throw invalidCompletionId();
+  if (protocol === 'responses') {
+    value =
+      value !== null && typeof value === 'object' && 'response' in value
+        ? value.response
+        : undefined;
+  }
+  if (protocol === 'messages') {
+    value =
+      value !== null &&
+      typeof value === 'object' &&
+      'type' in value &&
+      value.type === 'message_start' &&
+      'message' in value
+        ? value.message
+        : undefined;
+  }
+  return parseCompletionId(value);
 }
 
 type HasSseCompletionSentinelParams = {
@@ -1341,22 +1367,84 @@ function hasSseCompletionSentinel({
     return false;
   }
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(
-      concatChunks(chunks),
-    );
+    const body = concatChunks(chunks);
     if (protocol === 'messages') {
-      validateMessageStream(concatChunks(chunks));
+      validateMessageStream(body);
       return true;
     }
-    return getSseDataRecords(text).some((data) => data === '[DONE]');
+    return takeCompleteSseRecords(
+      new TextDecoder().decode(body),
+      true,
+    ).records.some(({ value }) => getSseRecordData(value) === '[DONE]');
   } catch {
     return false;
   }
 }
 
+function validateOpenAiStream(
+  body: Uint8Array,
+  protocol: 'chat' | 'responses',
+): void {
+  // SSE delimiters are ASCII. A single-byte view keeps offsets into the signed body.
+  const framing = new TextDecoder('latin1').decode(body);
+  const { records, pending } = takeCompleteSseRecords(framing, true);
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let offset = 0;
+  let id: string | undefined;
+  for (const { value, separator } of [
+    ...records,
+    { value: pending, separator: '' },
+  ]) {
+    const end = offset + value.length + separator.length;
+    let record: string;
+    try {
+      record = decoder.decode(body.subarray(offset, end), {
+        stream: separator !== '',
+      });
+    } catch (cause) {
+      throw invalidCompletionId(cause);
+    }
+    offset = end;
+    const data = getSseRecordData(record);
+    if (getSseEvent(record) === 'error') throw invalidCompletionId();
+    if (data === '[DONE]') break;
+    if (data === '') continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(data);
+    } catch (cause) {
+      throw invalidCompletionId(cause);
+    }
+    if (
+      event === null ||
+      typeof event !== 'object' ||
+      Array.isArray(event) ||
+      'error' in event ||
+      ('type' in event && event.type === 'error')
+    )
+      throw invalidCompletionId();
+    // Responses nests the receipt ID. Top-level output item IDs are unrelated.
+    if (protocol === 'responses') {
+      if (!('response' in event)) continue;
+      event = event.response;
+    } else if (!('id' in event)) {
+      continue;
+    }
+    const candidate = parseCompletionId(event);
+    if (id !== undefined && id !== candidate) throw invalidCompletionId();
+    id = candidate;
+  }
+  if (id === undefined) throw invalidCompletionId();
+}
+
 /** EOF or a tool block alone cannot complete a signed Messages stream. */
 function validateMessageStream(body: Uint8Array): void {
-  const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  } catch (cause) {
+    throw invalidCompletionId(cause);
+  }
   const { records, pending } = takeCompleteSseRecords(text, true);
   let id: string | undefined;
   let stopped = false;
@@ -1364,57 +1452,29 @@ function validateMessageStream(body: Uint8Array): void {
   for (const record of records) {
     const eventName = getSseEvent(record.value);
     if (eventName === 'error') throw invalidCompletionId();
-    for (const data of getSseDataRecords(record.value)) {
-      if (data === '') continue;
-      let event: { type?: unknown };
-      try {
-        event = JSON.parse(data);
-      } catch {
-        throw invalidCompletionId();
-      }
-      if (
-        typeof event?.type !== 'string' ||
-        event.type === '' ||
-        event.type === 'error' ||
-        stopped ||
-        (eventName !== undefined && eventName !== event?.type)
-      )
-        throw invalidCompletionId();
-      if (event?.type === 'message_start') {
-        if (id !== undefined) throw invalidCompletionId();
-        id = getSseCompletionId(record.value, 'messages');
-      }
-      if (event?.type === 'message_stop') stopped = true;
+    const data = getSseRecordData(record.value);
+    if (data === '') continue;
+    let event: { type?: unknown };
+    try {
+      event = JSON.parse(data);
+    } catch {
+      throw invalidCompletionId();
     }
+    if (
+      typeof event?.type !== 'string' ||
+      event.type === '' ||
+      event.type === 'error' ||
+      stopped ||
+      (eventName !== undefined && eventName !== event?.type)
+    )
+      throw invalidCompletionId();
+    if (event?.type === 'message_start') {
+      if (id !== undefined) throw invalidCompletionId();
+      id = getSseCompletionId(record.value, 'messages');
+    }
+    if (event?.type === 'message_stop') stopped = true;
   }
   if (id === undefined || !stopped) throw invalidCompletionId();
-}
-
-type DrainResponseEntityBodyParams = {
-  readonly reader: ReadableStreamDefaultReader<Uint8Array>;
-  readonly chunks: Uint8Array[];
-  readonly resolve: () => void;
-  readonly reject: (cause: unknown) => void;
-};
-
-async function drainResponseEntityBody({
-  reader,
-  chunks,
-  resolve,
-  reject,
-}: DrainResponseEntityBodyParams): Promise<void> {
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) {
-        resolve();
-        return;
-      }
-      chunks.push(next.value.slice());
-    }
-  } catch (cause) {
-    reject(cause);
-  }
 }
 
 function parseCompletionId(value: unknown): string {

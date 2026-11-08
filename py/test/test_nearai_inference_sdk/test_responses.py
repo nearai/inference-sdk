@@ -231,9 +231,8 @@ async def test_responses_retry_receipt_only(monkeypatch, httpx2):
         assert len(gateway.completion_requests) == 1
 
 
-@pytest.mark.parametrize('streaming', [False, True])
-async def test_responses_missing_id(monkeypatch, streaming):
-    gateway = ResponsesGateway(streaming=streaming)
+async def test_responses_json_requires_an_id(monkeypatch):
+    gateway = ResponsesGateway()
     gateway.missing_id = True
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
@@ -244,6 +243,73 @@ async def test_responses_missing_id(monkeypatch, streaming):
         )
         with pytest.raises(ApiError, match='api.invalid_response'):
             await response.aread()
+
+
+@pytest.mark.parametrize(
+    'ending, valid',
+    [
+        pytest.param(
+            b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed"}}\n\n',
+            True,
+            id='completed-at-EOF',
+        ),
+        pytest.param(
+            b'event: response.incomplete\ndata: {"type":"response.incomplete","response":{"id":"resp_fixture","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n\n',
+            True,
+            id='output-limit',
+        ),
+        pytest.param(
+            b'event: response.failed\ndata: {"type":"response.failed","response":{"id":"resp_fixture","status":"failed","error":{"code":"server_error","message":"failed"}}}\n\n',
+            True,
+            id='failed-response',
+        ),
+        pytest.param(
+            b'data: [DONE]\n\ndata: not-json\n\n', True, id='DONE-with-trailing-bytes'
+        ),
+        pytest.param(
+            b'event: response.completed\ndata: {"type":"response.completed","response":{"id":"other","status":"completed"}}\n\n',
+            False,
+            id='conflicting-response-ID',
+        ),
+        pytest.param(
+            b'event: error\ndata: {"type":"error","error":{"message":"failed"}}\n\n',
+            False,
+            id='stream-error',
+        ),
+    ],
+)
+async def test_responses_stream_identity_contract(monkeypatch, ending, valid):
+    gateway = ResponsesGateway(streaming=True)
+    gateway.raw = (
+        b'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_fixture","status":"in_progress"}}\n\n'
+        + ending
+    )
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        response = await client.send(
+            httpx.Request(
+                'POST', BASE_URL + 'responses', json={'model': MODEL, 'input': 'Hi'}
+            )
+        )
+        if valid:
+            assert await response.aread() == gateway.raw
+            receipt = await client.verify_response('resp_fixture')
+            assert receipt.signature_kind == 'gateway'
+            assert receipt.signature.signed_text == (
+                f'{hashlib.sha256(gateway.completion_requests[0].content).hexdigest()}:'
+                f'{hashlib.sha256(gateway.raw).hexdigest()}'
+            )
+            assert gateway.signature_requests == 1
+        else:
+            with pytest.raises(ApiError, match='api.invalid_response'):
+                await response.aread()
+            with pytest.raises(ApiError):
+                await client.verify_response('resp_fixture')
+            assert gateway.signature_requests == 0
+        for unrelated_id in ('msg_1', 'event_only', 'other'):
+            with pytest.raises(ApiError, match='api.completion_not_found'):
+                await client.verify_response(unrelated_id)
+    assert len(gateway.completion_requests) == 1
 
 
 async def test_responses_http_error(monkeypatch):

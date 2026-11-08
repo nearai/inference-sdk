@@ -17,7 +17,7 @@ import {
   verifyModelAttestation,
   verifyModelResponse,
 } from '@nearai/inference-sdk/node';
-import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
+import { readChatOutput } from '../utils/chat-output.ts';
 
 // This example composes the SDK's standalone APIs: verify deployments, encrypt
 // and send Chat requests, decrypt responses, then verify their signatures.
@@ -260,50 +260,18 @@ async function sendCompletion({
   // Consume both branches before verifying and displaying the output.
   const encryptedResponse = response.clone();
   const decryptedResponse = await prepared.decryptResponse(response);
-  const [responseBytes, plaintextBody] = await Promise.all([
+  const [responseBytes, output] = await Promise.all([
     encryptedResponse.arrayBuffer(),
-    readDecryptedCompletion({ response: decryptedResponse, stream }),
+    readChatOutput(decryptedResponse, stream),
   ]);
 
   return {
-    id: readCompletionId({ responseText: plaintextBody, stream }),
+    id: output.id,
     label: stream ? 'Streaming completion' : 'Completion',
     requestBody,
     responseBody: new Uint8Array(responseBytes),
-    text: stream ? undefined : chatOutput(plaintextBody, false).text,
+    text: output.text,
   };
-}
-
-async function readDecryptedCompletion({
-  response,
-  stream,
-}: ReadDecryptedCompletionParams): Promise<string> {
-  if (!stream) {
-    const responseText = await response.text();
-    return responseText;
-  }
-  if (response.body === null) {
-    throw new Error('Streaming Chat response has no body');
-  }
-  const reader = response.body
-    .pipeThrough(new TextDecoderStream('utf-8', { ignoreBOM: true }))
-    .getReader();
-  let responseText = '';
-  const output = new ChatStreamOutput();
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      // Retain content for ID lookup while displaying each delta immediately.
-      responseText += chunk.value;
-      process.stdout.write(output.push(chunk.value));
-    }
-  } finally {
-    process.stdout.write(output.push('', true));
-    process.stdout.write('\n');
-    reader.releaseLock();
-  }
-  return responseText;
 }
 
 function createGatewayPinnedTlsFetch(
@@ -353,13 +321,6 @@ async function verifyCompletionResponse({
   if (completion.text !== undefined) console.log(completion.text);
 }
 
-function readCompletionId({
-  responseText,
-  stream,
-}: ReadCompletionIdParams): string {
-  return chatOutput(responseText, stream).id;
-}
-
 type Completion = {
   readonly id: string;
   readonly label: string;
@@ -376,16 +337,6 @@ type CompletionExampleParams = {
 };
 
 type SendCompletionParams = CompletionExampleParams & {
-  readonly stream: boolean;
-};
-
-type ReadCompletionIdParams = {
-  readonly responseText: string;
-  readonly stream: boolean;
-};
-
-type ReadDecryptedCompletionParams = {
-  readonly response: Response;
   readonly stream: boolean;
 };
 

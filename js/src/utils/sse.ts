@@ -82,15 +82,18 @@ export function getSseEvent(record: string): string | undefined {
   return event;
 }
 
-/** Read event payloads from a complete response body, joining its data lines. */
+/** Join the data fields of one SSE record. */
+export function getSseRecordData(record: string): string {
+  return splitSseLines(record)
+    .map((line) => getSseData(line.content))
+    .filter((data) => data !== undefined)
+    .join('\n');
+}
+
+/** Read event payloads from a complete response body. */
 export function getSseDataRecords(text: string): string[] {
   const { records, pending } = takeCompleteSseRecords(text);
-  const values = records.map((record) => record.value);
-  if (pending.length > 0) values.push(pending);
-  return values.map((value) =>
-    splitSseLines(value)
-      .map((line) => getSseData(line.content))
-      .filter((data) => data !== undefined)
-      .join('\n'),
-  );
+  const values = records.map(({ value }) => getSseRecordData(value));
+  if (pending) values.push(getSseRecordData(pending));
+  return values;
 }

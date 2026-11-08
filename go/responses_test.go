@@ -215,6 +215,47 @@ func TestResponsesMissingIDsAndHTTPErrors(t *testing.T) {
 	_, e = c.VerifyResponse(context.Background(), "resp_fixture")
 	requireCode(t, e, "api.completion_not_found")
 }
+func TestResponsesStreamContract(t *testing.T) {
+	const start = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"in_progress\"}}\n\n"
+	for _, tc := range []struct {
+		name, ending string
+		valid        bool
+	}{
+		{"completed at EOF", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"completed\"}}\n\n", true},
+		{"output limit", "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n", true},
+		{"failed response", "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"failed\"}}}\n\n", true},
+		{"DONE with trailing bytes", "data: [DONE]\n\ndata: not-json\n\n", true},
+		{"conflicting response ID", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"other\",\"status\":\"completed\"}}\n\n", false},
+		{"stream error", "event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"failed\"}}\n\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, fixture := responsesClient(t, true, nil)
+			fixture.raw = []byte(start + tc.ending)
+			body, err := sendResponse(t, client, true)
+			if tc.valid {
+				if err != nil || !bytes.Equal(body, fixture.raw) {
+					t.Fatalf("wire response changed: %s, %v", body, err)
+				}
+				receipt, err := client.VerifyResponse(context.Background(), "resp_fixture")
+				if err != nil || receipt.ID != "resp_fixture" || receipt.SignatureKind != "gateway" {
+					t.Fatalf("receipt: %+v, %v", receipt, err)
+				}
+			} else {
+				requireCode(t, err, "api.invalid_response")
+				_, err = client.VerifyResponse(context.Background(), "resp_fixture")
+				requireCode(t, err, "api.completion_not_found")
+				if fixture.cloud.signatureCalls.Load() != 0 {
+					t.Fatal("invalid stream fetched a receipt")
+				}
+			}
+			if fixture.cloud.chats.Load() != 1 {
+				t.Fatal("stream replayed inference")
+			}
+			_, err = client.VerifyResponse(context.Background(), "msg_1")
+			requireCode(t, err, "api.completion_not_found")
+		})
+	}
+}
 func TestResponsesRejectUnsupportedBeforeIO(t *testing.T) {
 	c, f := responsesClient(t, false, func(o *InferenceOptions) { o.E2EE = true })
 	_, e := sendResponse(t, c, false)

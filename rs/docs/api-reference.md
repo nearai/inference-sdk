@@ -30,6 +30,8 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 receipt registration. Non-2xx responses pass through `send`; `chat_completions`, `create_response`, and `create_message`
 turn them into `ApiError::HttpStatus`.
 
+After a valid response ID, Chat and Responses streams can end with `[DONE]` or normal EOF.
+
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
 `Gateway`, `Model`, or `Direct` (the matching report group). `signature_kind()`
 returns `CompletionSignatureKind`.

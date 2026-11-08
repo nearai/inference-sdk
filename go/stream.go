@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // sseReader preserves exact record separators, including lone CR and split CRLF.
@@ -14,8 +15,10 @@ import (
 type sseReader struct {
 	source    io.ReadCloser
 	reader    *bufio.Reader
-	transform func([]byte) ([]byte, error)
-	terminal  func([]byte) bool
+	observe   func([]byte, string, string, bool) error
+	decrypt   func([]byte) ([]byte, error)
+	terminal  func() bool
+	started   bool
 	finish    func() error
 	pending   []byte
 	ended     bool
@@ -80,6 +83,31 @@ func completeSSERecord(record []byte) bool {
 	return strings.HasSuffix(text, "\n\n")
 }
 
+func (s *sseReader) readEvent() ([]byte, bool, error) {
+	record, err := s.record()
+	if err != nil {
+		return nil, false, err
+	}
+	if !utf8.Valid(record) {
+		return nil, false, failure("api.invalid_response", nil)
+	}
+	parsed := record
+	if !s.started {
+		parsed = bytes.TrimPrefix(record, []byte("\ufeff"))
+		s.started = true
+	}
+	data, event, hasEvent := sseFields(parsed)
+	if s.observe != nil {
+		if err := s.observe(parsed, data, event, hasEvent); err != nil {
+			return nil, false, err
+		}
+	}
+	if s.decrypt != nil {
+		record, err = s.decrypt(parsed)
+	}
+	return record, data == "[DONE]", err
+}
+
 func (s *sseReader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -88,7 +116,7 @@ func (s *sseReader) Read(p []byte) (int, error) {
 		if s.ended {
 			return 0, io.EOF
 		}
-		record, e := s.record()
+		record, done, e := s.readEvent()
 		if e != nil {
 			s.ended = true
 			if e == io.EOF && s.finish != nil {
@@ -99,32 +127,17 @@ func (s *sseReader) Read(p []byte) (int, error) {
 			}
 			return 0, e
 		}
-		data, _ := sseData(record)
-		if s.transform != nil {
-			record, e = s.transform(record)
-			if e != nil {
-				s.ended = true
-				return 0, e
-			}
-		}
-		if s.terminal != nil && s.terminal(record) {
+		if s.terminal != nil && s.terminal() {
 			// Messages clients may stop reading at message_stop. Validate all
 			// remaining records and OHTTP frames before exposing that event.
 			for {
-				tail, err := s.record()
+				tail, _, err := s.readEvent()
 				if err == io.EOF {
 					break
 				}
 				if err != nil {
 					s.ended = true
 					return 0, err
-				}
-				if s.transform != nil {
-					tail, err = s.transform(tail)
-					if err != nil {
-						s.ended = true
-						return 0, err
-					}
 				}
 				record = append(record, tail...)
 			}
@@ -134,15 +147,19 @@ func (s *sseReader) Read(p []byte) (int, error) {
 					return 0, err
 				}
 			}
-		} else if data == "[DONE]" {
-			// Authenticate trailing OHTTP frames before exposing completion.
-			if _, e = io.Copy(io.Discard, s.reader); e == nil && s.finish != nil {
+		} else if done {
+			// Keep trailing bytes without interpreting more events, and
+			// authenticate the complete response before exposing completion.
+			var tail []byte
+			tail, e = io.ReadAll(s.reader)
+			if e == nil && s.finish != nil {
 				e = s.finish()
 			}
 			s.ended = true
 			if e != nil {
 				return 0, e
 			}
+			record = append(record, tail...)
 		}
 		s.pending = record
 	}
@@ -218,7 +235,7 @@ func (p *PreparedE2EEChatRequest) transformSSE(record []byte) ([]byte, error) {
 
 // DecryptSSE streams protocol fields while retaining SSE controls. It owns source.
 func (p *PreparedE2EEChatRequest) DecryptSSE(source io.ReadCloser) io.ReadCloser {
-	return &sseReader{source: source, reader: bufio.NewReader(source), transform: p.transformSSE}
+	return &sseReader{source: source, reader: bufio.NewReader(source), decrypt: p.transformSSE}
 }
 
 type captureReader struct {

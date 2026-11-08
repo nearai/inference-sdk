@@ -187,14 +187,18 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       ).rejects.toMatchObject({ failure: { code: 'e2ee.decryption_failed' } });
     });
 
-    test.each([
-      { name: 'LF', lineEnding: '\n', separator: '\n\n' },
-      { name: 'CRLF', lineEnding: '\r\n', separator: '\r\n\r\n' },
-      { name: 'CR', lineEnding: '\r', separator: '\r\r' },
-      { name: 'mixed', lineEnding: '\r', separator: '\n\n' },
-    ])(
-      'decrypts multiline SSE with $name endings split across individual bytes and preserves control records',
-      async ({ lineEnding, separator }) => {
+    test.each(
+      [
+        { name: 'LF', lineEnding: '\n', separator: '\n\n' },
+        { name: 'CRLF', lineEnding: '\r\n', separator: '\r\n\r\n' },
+        { name: 'CR', lineEnding: '\r', separator: '\r\r' },
+        { name: 'mixed', lineEnding: '\r', separator: '\n\n' },
+      ].flatMap((endings) =>
+        [false, true].map((fragmented) => ({ ...endings, fragmented })),
+      ),
+    )(
+      'decrypts multiline SSE with $name endings and preserves controls and post-DONE bytes (fragmented=$fragmented)',
+      async ({ lineEnding, separator, fragmented }) => {
         const { modelKey } = createModelKeys(signingAlgo);
         const prepared = await prepareE2eeChatRequest({
           request: chatRequest({
@@ -219,18 +223,25 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           ],
         };
         const prefix = `: keepalive ${utf8Sample}${separator}`;
-        const controls = `event: message${lineEnding}id: part-1${lineEnding}`;
+        const controls = `event: error${lineEnding}event: message${lineEnding}id: part-1${lineEnding}`;
         const suffix =
-          'event: error\ndata: {"message":"unchanged"}\n\ndata: [DONE]\n\n';
+          'event: error\ndata: {"message":"unchanged"}\n\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n';
         const data = [
           `data: {"id":${JSON.stringify(chunk.id)},`,
           `data: "choices":${JSON.stringify(chunk.choices)}}`,
         ].join(lineEnding);
-        const input = `${prefix}${controls}${data}${separator}${suffix}`;
+        const input = Uint8Array.from([
+          ...new TextEncoder().encode(
+            `\uFEFF${prefix}${controls}${data}${separator}${suffix}`,
+          ),
+          0xff,
+          0xfe,
+        ]);
         const source = new ReadableStream<Uint8Array>({
           start(controller) {
-            for (const byte of new TextEncoder().encode(input)) {
-              controller.enqueue(Uint8Array.of(byte));
+            const chunkSize = fragmented ? 1 : input.length;
+            for (let offset = 0; offset < input.length; offset += chunkSize) {
+              controller.enqueue(input.slice(offset, offset + chunkSize));
             }
             controller.close();
           },
@@ -255,8 +266,14 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           ...chunk,
           choices: [{ delta: { content: utf8Sample } }],
         };
-        expect(await response.text()).toBe(
-          `${prefix}${controls}data: ${JSON.stringify(decryptedChunk)}${separator}${suffix}`,
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+          Uint8Array.from([
+            ...new TextEncoder().encode(
+              `${prefix}${controls}data: ${JSON.stringify(decryptedChunk)}${separator}${suffix}`,
+            ),
+            0xff,
+            0xfe,
+          ]),
         );
       },
     );
@@ -292,6 +309,69 @@ describe.each(['ed25519', 'ecdsa'] as const)(
         failure: { code: 'e2ee.decryption_failed' },
       });
     });
+  },
+);
+
+test.each([
+  { name: 'caller cancellation', content: '', code: undefined },
+  {
+    name: 'invalid UTF-8',
+    content: Uint8Array.of(0xff),
+    code: 'api.invalid_response',
+  },
+  {
+    name: 'invalid JSON',
+    content: 'data: {not-json}\n\n',
+    code: 'api.invalid_response',
+  },
+  {
+    name: 'invalid ciphertext',
+    content: 'data: {"choices":[{"delta":{"content":"00"}}]}\n\n',
+    code: 'e2ee.decryption_failed',
+  },
+])(
+  'releases the encrypted SSE source after $name',
+  async ({ content, code }) => {
+    const { modelKey } = createModelKeys();
+    const prepared = await prepareE2eeChatRequest({
+      request: chatRequest(),
+      modelKey,
+    });
+    let closed!: () => void;
+    const sourceClosed = new Promise<void>((resolve) => {
+      closed = resolve;
+    });
+    const cancel = jest.fn(() => {
+      closed();
+    });
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (content.length > 0)
+          controller.enqueue(
+            typeof content === 'string'
+              ? new TextEncoder().encode(content)
+              : content,
+          );
+        // Stay open: completion must cancel the underlying network body.
+      },
+      cancel,
+    });
+    const response = await prepared.decryptResponse(
+      new Response(source, {
+        headers: { 'content-type': 'text/event-stream' },
+      }),
+    );
+    if (code === undefined) {
+      const reason = new Error('caller stopped reading');
+      await response.body?.cancel(reason);
+      expect(cancel).toHaveBeenCalledWith(reason);
+    } else {
+      await expect(response.text()).rejects.toMatchObject({
+        failure: { code },
+      });
+    }
+    await sourceClosed;
+    expect(cancel).toHaveBeenCalledTimes(1);
   },
 );
 

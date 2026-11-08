@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	nearai "github.com/nearai/inference-sdk/go"
 	"github.com/openai/openai-go/v3"
@@ -101,7 +102,13 @@ type EventDecoder struct {
 }
 
 func (d *EventDecoder) Push(chunk []byte, eof bool) ([]map[string]any, error) {
+	if d.Done {
+		return nil, nil
+	}
 	d.pending = append(d.pending, chunk...)
+	if eof {
+		d.pending = append(d.pending, '\n', '\n')
+	}
 	if !d.started {
 		if len(d.pending) < 3 && !eof {
 			return nil, nil
@@ -125,24 +132,37 @@ func (d *EventDecoder) Push(chunk []byte, eof bool) ([]map[string]any, error) {
 			end++
 		}
 		if index == line {
+			if !utf8.Valid(d.pending[start:end]) {
+				return nil, fmt.Errorf("invalid UTF-8 in stream event")
+			}
 			record := strings.ReplaceAll(strings.ReplaceAll(string(d.pending[start:end]), "\r\n", "\n"), "\r", "\n")
 			var values []string
+			eventName := ""
 			for _, line := range strings.Split(record, "\n") {
 				if line == "data" {
 					values = append(values, "")
 				} else if strings.HasPrefix(line, "data:") {
 					values = append(values, strings.TrimPrefix(line[5:], " "))
+				} else if line == "event" {
+					eventName = ""
+				} else if strings.HasPrefix(line, "event:") {
+					eventName = strings.TrimPrefix(line[6:], " ")
 				}
+			}
+			if eventName == "error" {
+				return nil, fmt.Errorf("stream returned an error")
 			}
 			data := strings.Join(values, "\n")
 			if data == "[DONE]" {
 				d.Done = true
+				d.pending = nil
+				return events, nil
 			} else if data != "" {
 				var event map[string]any
 				if err := json.Unmarshal([]byte(data), &event); err != nil {
 					return nil, err
 				}
-				if event["error"] != nil || event["type"] == "error" {
+				if _, failed := event["error"]; failed || event["type"] == "error" {
 					return nil, fmt.Errorf("stream returned an error")
 				}
 				events = append(events, event)
@@ -211,11 +231,7 @@ func CompletionID(raw []byte, stream bool) (string, error) {
 	var values []map[string]any
 	if stream {
 		var err error
-		decoder := new(EventDecoder)
-		values, err = decoder.Push(raw, true)
-		if err == nil && !decoder.Done {
-			err = fmt.Errorf("stream ended without [DONE]")
-		}
+		values, err = Events(raw)
 		if err != nil {
 			return "", err
 		}
@@ -228,12 +244,18 @@ func CompletionID(raw []byte, stream bool) (string, error) {
 	}
 	id := ""
 	for _, value := range values {
-		if next, ok := value["id"].(string); ok && next != "" {
-			if id != "" && id != next {
-				return "", fmt.Errorf("conflicting completion IDs")
-			}
-			id = next
+		field, exists := value["id"]
+		if !exists {
+			continue
 		}
+		next, ok := field.(string)
+		if !ok || next == "" {
+			return "", fmt.Errorf("invalid completion ID")
+		}
+		if id != "" && id != next {
+			return "", fmt.Errorf("conflicting completion IDs")
+		}
+		id = next
 	}
 	if id == "" {
 		return "", fmt.Errorf("missing completion ID")
