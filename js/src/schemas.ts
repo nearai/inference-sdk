@@ -269,6 +269,7 @@ export const CloudApiModelAttestationSchema = objectSchema({
 
 const DirectApiModelAttestationEntries = {
   ...CloudApiModelAttestationEntries,
+  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
   model_name: v.pipe(v.string(), v.minLength(1)),
   info: objectSchema({
     tcb_info: v.union([CloudApiTcbInfoSchema, CloudApiTcbInfoJsonSchema]),
@@ -282,7 +283,6 @@ export const DirectApiModelAttestationSchema = objectSchema(
 
 export const DirectApiAttestationReportSchema = objectSchema({
   ...DirectApiModelAttestationEntries,
-  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
   all_attestations: v.pipe(
     v.array(DirectApiModelAttestationSchema),
     v.minLength(1),

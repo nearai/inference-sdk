@@ -158,11 +158,8 @@ integration tests are described in the [live E2E guide](../e2e/README.md).
 
 Direct clients are experimental. Set `NEARAI_BASE_URL` and `NEARAI_API_KEY` for the model endpoint.
 
-Direct examples verify every returned model report and use standard HTTPS without
-attested TLS pinning. Integrated
-clients use E2EE and require response signatures from the selected model signer.
-Standalone direct examples send plaintext over HTTPS and verify exact response
-bytes against the matching attestation group.
+Direct examples verify every returned report and pin HTTPS requests to verified TLS
+fingerprints. Integrated examples enable E2EE. Bare examples send plaintext over HTTPS.
 
 See the [live E2E guide](../e2e/README.md) to run the integration tests with your
 endpoint credentials and selected models.

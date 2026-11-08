@@ -37,12 +37,14 @@ export type DirectAttestationHttpResponse = {
 export class DirectApiClient {
   private readonly baseUrl: string;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
+  private readonly fetchApi: typeof globalThis.fetch;
 
   constructor(options: DirectAttestationClientOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(
       requireDirectApiBaseUrl(options.baseUrl),
     );
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
+    this.fetchApi = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
   async fetchCompletionSignature({
@@ -125,10 +127,10 @@ export class DirectApiClient {
         resource: 'model_attestation',
       }),
     );
-    for (const [index, attestation] of [
-      modelAttestations.servingAttestation,
-      ...modelAttestations.attestations,
-    ].entries()) {
+    for (const [
+      index,
+      attestation,
+    ] of modelAttestations.attestations.entries()) {
       requireMatchingApiNonce({
         reportedNonce: attestation.nonce,
         requestedNonce: nonce,
@@ -136,12 +138,10 @@ export class DirectApiClient {
       });
       const includesSpkiFingerprint = attestation.spkiFingerprint !== undefined;
       if (includesSpkiFingerprint !== includeSpkiFingerprint) {
-        const label =
-          index === 0 ? 'attestation' : `all_attestations[${index - 1}]`;
         throw new ApiError({
           code: 'api.invalid_response',
           details: {
-            path: `${label}.tls_cert_fingerprint`,
+            path: `all_attestations[${index}].tls_cert_fingerprint`,
             expected: includeSpkiFingerprint ? 'present' : 'missing',
             actual: includesSpkiFingerprint ? 'present' : 'missing',
           },
@@ -168,7 +168,7 @@ export class DirectApiClient {
 
   /** Runtime-specific clients can override this to pin signature requests. */
   protected async requestApi(request: Request): Promise<Response> {
-    return fetch(request);
+    return this.fetchApi(request);
   }
 
   private createRequest(url: URL, authenticate = true): Request {
@@ -199,8 +199,7 @@ export function requireDirectApiBaseUrl(baseUrl: string | undefined): string {
 /**
  * Fetch direct provider evidence without requesting TLS fingerprint binding.
  *
- * @experimental Not recommended for production. Use `AttestationClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class DirectAttestationClient extends DirectApiClient {
   async fetchModelAttestations({
@@ -210,9 +209,6 @@ export class DirectAttestationClient extends DirectApiClient {
     return this.fetchModelAttestationsWithOptions({
       signingAlgo,
       signingAddress,
-      // TODO: Re-enable direct TLS binding once all_attestations covers every serving CVM.
-      // An incomplete set can reject a later connection to another CVM's TLS key.
-      // https://github.com/nearai/cloud-api/issues/1087
       includeSpkiFingerprint: false,
     });
   }

@@ -4,7 +4,7 @@ Use `InferenceClient` for Chat Completions with deployment verification and opti
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
-To connect to a model endpoint, use the experimental [Direct client](#use-a-direct-model-endpoint).
+For a model endpoint, use the experimental [Direct client](#use-a-direct-model-endpoint).
 
 `InferenceClient` first verifies Gateway evidence without authentication headers.
 On a model-session cache miss, it then uses configured authentication for model
@@ -567,14 +567,9 @@ With raw `client.fetch()`, consume the returned response body before verificatio
 
 ## Use a direct model endpoint
 
-Direct clients are experimental.
-
-`DirectInferenceClient` verifies the model endpoint without a Gateway preflight
-or model-metadata lookup.
-It fetches and verifies every returned model attestation before
-sending Chat.
-E2EE is opt-in, as with the Gateway client. The example enables it explicitly.
-The signing algorithm defaults to Ed25519. Both cache defaults are 60 minutes.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. Set `e2ee: true` to enable encryption. Direct clients are
+experimental. The Node client pins requests to the verified model TLS fingerprints.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -589,13 +584,6 @@ const client = new DirectInferenceClient({
 Use `client.chat.completions.create()`, `client.fetch`, and
 `client.verifyResponse(id)` as above. Direct endpoints may require different
 credentials from the Gateway and use separate fetch and verification APIs.
-
-The client selects a verified model key for routing and E2EE; response signatures
-must match that selected signer.
-
-Direct uses standard HTTPS. The inference request can reach a different instance
-from the one verified during preflight. With E2EE disabled, that instance receives
-the plaintext prompt.
 
 ### Verify direct evidence manually
 
@@ -618,10 +606,8 @@ Then fetch its signature with `client.fetchCompletionSignature()` and pass the
 signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
 It returns all verified attestations sharing the response's signer.
 
-For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
-measurements, and available GPU evidence. `verifyDirectModelAttestations()`
-checks every entry. Reports fetched by `DirectAttestationClient` produce
-`tlsBinding.kind: 'none'`.
+`verifyDirectModelAttestation()` verifies one report;
+`verifyDirectModelAttestations()` verifies the returned set.
 
 The runnable [direct/chat-completions.ts](../../examples/example-js/direct/chat-completions.ts),
 [direct/chat-completions-with-openai-sdk.ts](../../examples/example-js/direct/chat-completions-with-openai-sdk.ts),

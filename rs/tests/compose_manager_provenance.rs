@@ -370,90 +370,82 @@ async fn empty_policy_and_missing_or_unlisted_manager_fail_before_network() {
 }
 
 #[tokio::test]
-async fn direct_decoder_never_promotes_nested_manager_evidence() {
+async fn direct_preserves_per_report_manager_evidence() {
+    use nearai_inference_sdk::{DirectAttestationClient, DirectAttestationFetchOptions};
     use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
-    let server = MockServer::start().await;
-    Mock::given(method("GET")).respond_with(|request:&Request| {
-        let nonce=request.url.query_pairs().find(|(key,_)|key=="nonce").unwrap().1.into_owned();
-        let fixture:Value=serde_json::from_str(FIXTURE).unwrap();
-        let mut report=json!({"model_name":"test","request_nonce":nonce,"signing_algo":"ed25519","signing_address":"aa".repeat(32),"intel_quote":"bb","event_log":[],"info":{"tcb_info":{"app_compose":"{}"}}});
-        let mut nested=report.clone();nested["compose_manager_attestation"]=json!({"actions":fixture["actions"],"actions_hash":fixture["actions_hash"],"nonce":nonce,"quote":"cc","event_log":[]});report["all_attestations"]=json!([nested]);
-        ResponseTemplate::new(200).set_body_json(report)
-    }).mount(&server).await;
-    let client = nearai_inference_sdk::DirectAttestationClient::new(&server.uri(), None).unwrap();
-    let result = client.fetch_model_attestations(None, None).await.unwrap();
-    assert!(result
-        .serving_attestation
-        .attestation
-        .compose_manager_attestation
-        .is_none());
-    assert!(result.attestations[0]
-        .attestation
-        .compose_manager_attestation
-        .is_none());
-}
-
-#[tokio::test]
-async fn direct_discards_malformed_nested_manager_evidence_before_decoding() {
-    use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
-    for nested_manager in [
-        json!({"actions": [{"action": "future", "timestamp": "now", "version": 2}]}),
-        json!("future format"),
-        json!({}),
-    ] {
-        for envelope in ["absent", "valid", "invalid"] {
-            let server = MockServer::start().await;
-            let nested_manager = nested_manager.clone();
-            Mock::given(method("GET"))
-                .respond_with(move |request: &Request| {
-                    let nonce = request.url.query_pairs().find(|(key, _)| key == "nonce").unwrap().1.into_owned();
-                    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
-                    let mut report = json!({"model_name":"test","request_nonce":nonce,"signing_algo":"ed25519","signing_address":"aa".repeat(32),"intel_quote":"bb","event_log":[],"info":{"tcb_info":{"app_compose":"{}"}}});
-                    let mut nested = report.clone();
-                    nested["compose_manager_attestation"] = nested_manager.clone();
-                    let mut other = nested.clone();
-                    other["signing_address"] = json!("dd".repeat(32));
-                    report["all_attestations"] = json!([nested, other]);
-                    if envelope == "valid" {
-                        report["compose_manager_attestation"] = json!({"actions":fixture["actions"],"actions_hash":fixture["actions_hash"],"nonce":nonce,"quote":"cc","event_log":[]});
-                    } else if envelope == "invalid" {
-                        report["compose_manager_attestation"] = nested_manager.clone();
-                    }
-                    ResponseTemplate::new(200).set_body_json(report)
-                })
-                .mount(&server)
-                .await;
-            let client =
-                nearai_inference_sdk::DirectAttestationClient::new(&server.uri(), None).unwrap();
-            let result = client.fetch_model_attestations(None, None).await;
-            if envelope == "invalid" {
-                assert!(matches!(
-                    result,
-                    Err(nearai_inference_sdk::ApiError::InvalidResponse { .. })
-                ));
-                continue;
-            }
-            let result = result.unwrap();
-            assert_eq!(result.attestations.len(), 2);
-            assert!(result.attestations[1]
+    for mode in ["reports", "envelope", "invalid sibling"] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(move |request: &Request| {
+                let nonce = request
+                    .url
+                    .query_pairs()
+                    .find(|(key, _)| key == "nonce")
+                    .unwrap()
+                    .1
+                    .into_owned();
+                let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+                let mut report = json!({
+                    "model_name": "test", "request_nonce": nonce, "signing_algo": "ed25519",
+                    "signing_address": "aa".repeat(32), "intel_quote": "bb", "event_log": [],
+                    "info": {"tcb_info": {"app_compose": "{}"}}
+                });
+                let mut first = report.clone();
+                let mut second = report.clone();
+                second["intel_quote"] = json!("ee");
+                let mut manager = json!({
+                    "actions": fixture["actions"], "actions_hash": fixture["actions_hash"],
+                    "nonce": nonce, "quote": "cc", "event_log": []
+                });
+                if mode == "envelope" {
+                    report["compose_manager_attestation"] = manager;
+                } else {
+                    first["compose_manager_attestation"] = manager.clone();
+                    manager["quote"] = json!("dd");
+                    second["compose_manager_attestation"] = if mode == "invalid sibling" {
+                        json!("invalid")
+                    } else {
+                        manager
+                    };
+                }
+                report["all_attestations"] = json!([first, second]);
+                ResponseTemplate::new(200).set_body_json(report)
+            })
+            .mount(&server)
+            .await;
+        let client = DirectAttestationClient::new(&server.uri(), None).unwrap();
+        let result = client
+            .fetch_model_attestations_with_options(DirectAttestationFetchOptions {
+                include_spki_fingerprint: false,
+                ..Default::default()
+            })
+            .await;
+        if mode == "invalid sibling" {
+            assert!(matches!(
+                result,
+                Err(nearai_inference_sdk::ApiError::InvalidResponse { .. })
+            ));
+            continue;
+        }
+        let result = result.unwrap();
+        assert_eq!(result.attestations.len(), 2);
+        assert_eq!(result.serving_attestation, result.attestations[0]);
+        assert_eq!(
+            result.attestations[0]
                 .attestation
                 .compose_manager_attestation
-                .is_none());
-            let manager = &result
-                .serving_attestation
-                .attestation
-                .compose_manager_attestation;
-            assert_eq!(
-                manager,
-                &result.attestations[0]
-                    .attestation
-                    .compose_manager_attestation
-            );
-            if envelope == "valid" {
-                assert_eq!(manager.as_ref().unwrap().actions, manager_report().actions);
-            } else {
-                assert!(manager.is_none());
-            }
+                .as_ref()
+                .unwrap()
+                .intel_quote,
+            "cc"
+        );
+        let sibling = &result.attestations[1]
+            .attestation
+            .compose_manager_attestation;
+        if mode == "reports" {
+            assert_eq!(sibling.as_ref().unwrap().intel_quote, "dd");
+        } else {
+            assert!(sibling.is_none());
         }
     }
 }

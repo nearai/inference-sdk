@@ -26,7 +26,7 @@ export type CreateDirectSessionTransportParams = {
   readonly tlsBinding: DirectTlsBinding;
 };
 
-/** Shared direct-endpoint preflight; Chat, E2EE and response caching reuse the Gateway transport core. */
+/** Direct-endpoint preflight over the shared Chat, E2EE and response-cache implementation. */
 export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<
   VerifiedDirectCompletionResult,
   DirectAttestationVerificationResult
@@ -66,15 +66,14 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       fetched.ohttpAttestation,
       servingSigner,
     );
-    // Every attestation is verified before choosing an encryption key. Entries
-    // sharing a key may still have different deployment measurements.
-    // OHTTP restricts Chat to the serving signer. Its public key
-    // may come from any verified report sharing that exact signing identity.
+    const requiresServingSigner =
+      this.ohttpEnabled ||
+      verifiedModelAttestations.tlsBinding.kind === 'attested';
     const modelAttestation = verifiedModelAttestations.attestations.find(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         candidate.signingPublicKey !== undefined &&
-        (!this.ohttpEnabled ||
+        (!requiresServingSigner ||
           (candidate.signer.signingAlgo === servingSigner.signingAlgo &&
             hexToBuffer(candidate.signer.signingAddress).equals(
               hexToBuffer(servingSigner.signingAddress),
@@ -129,8 +128,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
 /**
  * Browser-compatible direct model client without TLS fingerprint binding.
  *
- * @experimental Not recommended for production. Use `InferenceClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class DirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;
