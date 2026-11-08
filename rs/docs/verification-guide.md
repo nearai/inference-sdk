@@ -394,7 +394,8 @@ For `ProviderTee`, verify the exact request and response bytes against the model
 selected for the request. Use `find_model_attestations_for_signature` for all matching
 reports. For `Gateway`, verify the same bytes against the Gateway signer.
 
-## Evidence currently available
+Proving the path from the model through the Gateway requires evidence linking both
+signers to the same response.
 
 ## Policy and trust roots
 

@@ -214,7 +214,6 @@ async def verify_chat(
     )
     assert gateway.tls_binding.kind == 'attested'
 
-    # Pin model evidence, Chat, and signatures to the verified Gateway.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
