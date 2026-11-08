@@ -14,18 +14,14 @@ async fn main() -> Result<()> {
             ..Default::default()
         })
         .await?;
-    let images = GatewayImages;
     let verified_gateway = verify_gateway_attestation(
         &fetched.attestation,
         &fetched.client_binding,
         None,
-        AttestationVerifiers {
-            deployment: Some(&images),
-            ..Default::default()
-        },
+        AttestationVerifiers::default(),
     )
     .await?;
-    println!("Gateway deployment and image provenance: verified.");
+    println!("Gateway attestation verified.");
     let pin = match &verified_gateway.tls_binding {
         GatewayTlsBinding::Attested { spki_fingerprint } => spki_fingerprint,
         _ => return Err("Gateway did not supply attested TLS binding".into()),
@@ -44,15 +40,12 @@ async fn main() -> Result<()> {
                 report,
                 &fetched_model_attestations.client_binding,
                 None,
-                ModelAttestationVerifiers {
-                    deployment: Some(&ModelImages),
-                    ..Default::default()
-                },
+                ModelAttestationVerifiers::default(),
             )
             .await?,
         );
     }
-    println!("Model deployments: verified {}.", model_attestations.len());
+    println!("Verified {} model attestations.", model_attestations.len());
     let selected_model_attestation = model_attestations
         .iter()
         .find(|attestation| {

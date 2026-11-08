@@ -369,8 +369,7 @@ func imagePolicy(
 Assign the returned callback to `options.DeploymentPolicy`. Supply nonempty
 policies keyed by image repository, specifying the trusted GitHub repository,
 workflow, and source constraints. Use `Commit` to pin reviewed source. See the
-[image provenance API](./api-reference.md#image-provenance-api) and the
-[runnable examples](../../examples/example-go/README.md) for policy configuration.
+[image provenance API](./api-reference.md#image-provenance-api) for policy configuration.
 The `imagePolicy` helper applies only to `options.DeploymentPolicy`, which runs
 for model deployments. Gateway verification uses a callback without a model
 argument. Use a separate helper for `options.GatewayVerification.DeploymentVerifier`:

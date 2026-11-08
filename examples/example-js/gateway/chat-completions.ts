@@ -1,10 +1,4 @@
-import type { SigningAlgo } from '@nearai/inference-sdk/node';
-import {
-  type ImageProvenancePolicy,
-  InferenceClient,
-  verifyComposeManagerDeploymentImageProvenance,
-  verifyDeploymentImageProvenance,
-} from '@nearai/inference-sdk/node';
+import { InferenceClient, type SigningAlgo } from '@nearai/inference-sdk/node';
 import { transportOptions } from '../utils/transport-options.ts';
 
 const API_KEY = process.env.NEARAI_API_KEY;
@@ -13,35 +7,6 @@ const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 // Selects the algorithm for attestation, E2EE, and response signatures.
 const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || undefined;
-
-// Required Gateway images and build workflows. Add a reviewed `commit`
-// to each policy if your application also requires commit pinning.
-const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
-  'nearaidev/cloud-api': {
-    repository: 'nearai/cloud-api',
-    workflow: '.github/workflows/build.yml',
-  },
-  'nearaidev/cvm-ingress': {
-    repository: 'nearai/cvm-ingress',
-    workflow: '.github/workflows/build-push.yml',
-  },
-  'nearaidev/dstack-vpc': {
-    repository: 'nearai/dstack-vpc',
-    workflow: '.github/workflows/build.yml',
-  },
-  'nearaidev/dstack-vpc-client': {
-    repository: 'nearai/dstack-vpc-client',
-    workflow: '.github/workflows/build.yml',
-  },
-};
-
-const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
-  'nearaidev/vllm-proxy-rs': {
-    repository: 'nearai/inference-proxy',
-    workflow: '.github/workflows/build.yml',
-  },
-};
 
 async function main(): Promise<void> {
   if (!API_KEY) throw new Error('NEARAI_API_KEY is required');
@@ -54,35 +19,8 @@ async function main(): Promise<void> {
     baseUrl: BASE_URL,
     ...transportOptions(SIGNING_ALGO),
     e2ee: true,
-    modelVerification: {
-      verifiers: {
-        deployment: (deployment) =>
-          verifyComposeManagerDeploymentImageProvenance({
-            deployment,
-            imagePolicies: MODEL_IMAGE_POLICIES,
-            githubToken: GITHUB_TOKEN,
-            composeManagerImagePolicy: {
-              imageRepository: 'nearaidev/compose-manager',
-              repository: 'nearai/compose-manager',
-              workflow: '.github/workflows/build.yml',
-            },
-          }),
-      },
-    },
-    gatewayVerification: {
-      verifiers: {
-        deployment: ({ appCompose }) =>
-          verifyDeploymentImageProvenance({
-            appCompose,
-            imagePolicies: GATEWAY_IMAGE_POLICIES,
-            githubToken: GITHUB_TOKEN,
-          }),
-      },
-    },
   });
 
-  // Attestations and required Gateway/model image builds must pass before Chat.
-  // Model image checks authenticate recorded deployment intent, not runtime state.
   // Optional: verify ahead of the first message, for example on model selection.
   await inferenceClient.verify(MODEL);
 

@@ -793,10 +793,7 @@ trusted GitHub repository and workflow. Every reference to a listed image must
 have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
 verified. For `InferenceClient`, pass the same callback as
-`gatewayVerification.verifiers.deployment`; see the runnable
-[client example](../../examples/example-js/gateway/chat-completions.ts) and
-[bare example](../../examples/example-js/gateway/chat-completions-bare.ts), which require build provenance
-for four Gateway images.
+`gatewayVerification.verifiers.deployment`.
 
 The checks cover signatures, certificates, transparency-log evidence, artifact
 digests, and signed SLSA source. Each source commit must match the certificate's

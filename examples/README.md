@@ -18,7 +18,6 @@ All four languages use the same environment variables:
 | `NEARAI_OHTTP` | `true` enables OHTTP for integrated Chat, Responses, and Messages clients; requires Ed25519 |
 | `NEARAI_EXPECT_SIGNATURE_KIND` | System One: `gateway` (default) or `provider_tee`; the latter requires verified model evidence |
 | `NEARAI_IMAGE_PATH` | Optional PNG file path for the native System One image/Box example |
-| `GITHUB_TOKEN` | Optional GitHub token for image provenance requests in native and standalone Gateway Chat examples |
 
 Choose a model available in the selected endpoint's catalog. Chat client examples
 and the standalone Gateway Chat examples explicitly enable field-level E2EE;
@@ -154,38 +153,6 @@ Keep reusable example code in each language's helper directory:
 Run these commands from the corresponding language's example directory. Python
 example tests are also collected by the SDK's pytest configuration. Credentialed
 integration tests are described in the [live E2E guide](../e2e/README.md).
-
-## Image provenance
-
-The native and standalone Gateway Chat examples in every language require these
-Gateway image builds:
-
-| Image | GitHub repository | Build workflow |
-| --- | --- | --- |
-| `nearaidev/cloud-api` | `nearai/cloud-api` | `.github/workflows/build.yml` |
-| `nearaidev/cvm-ingress` | `nearai/cvm-ingress` | `.github/workflows/build-push.yml` |
-| `nearaidev/dstack-vpc` | `nearai/dstack-vpc` | `.github/workflows/build.yml` |
-| `nearaidev/dstack-vpc-client` | `nearai/dstack-vpc-client` | `.github/workflows/build.yml` |
-
-They also verify the following model image builds using authenticated
-Compose Manager deployment-control evidence:
-
-| Image | GitHub repository | Build workflow |
-| --- | --- | --- |
-| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
-| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
-
-These are example admission policies. Add reviewed commit pins for stricter
-policy. Gateway references must contain literal digests; `image:tag@sha256:...`
-is accepted, while tags alone and unresolved variables are not. Each listed
-image is required. Model checks authenticate recorded deployment intent; they
-do not establish which containers or weights are currently running.
-
-See the model image guides for [JavaScript](../js/docs/verification-guide.md#model-images-deployed-by-compose-manager),
-[Python](../py/docs/verification-guide.md#model-images-deployed-by-compose-manager),
-[Rust](../rs/docs/verification-guide.md), and [Go](../go/docs/verification-guide.md).
-The standalone Gateway examples retain ciphertext separately from decrypted
-output for receipt verification. Integrated clients capture those bytes internally.
 
 ## Direct endpoints
 

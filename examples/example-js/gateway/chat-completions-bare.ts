@@ -1,7 +1,6 @@
 import type {
   E2eeModelKey,
   GatewayTlsBinding,
-  ImageProvenancePolicy,
   SigningAlgo,
   VerifiedGatewayAttestation,
   VerifiedModelAttestation,
@@ -11,8 +10,6 @@ import {
   createPinnedTlsFetch,
   findModelAttestationsForSignature,
   prepareE2eeChatRequest,
-  verifyComposeManagerDeploymentImageProvenance,
-  verifyDeploymentImageProvenance,
   verifyGatewayAttestation,
   verifyGatewayResponse,
   verifyModelAttestation,
@@ -20,7 +17,7 @@ import {
 } from '@nearai/inference-sdk/node';
 import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
 
-// This example composes the SDK's standalone APIs: verify deployments, encrypt
+// This example composes the SDK's standalone APIs: verify attestations, encrypt
 // and send Chat requests, decrypt responses, then verify their signatures.
 const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL = `${(
@@ -29,35 +26,6 @@ const BASE_URL = `${(
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || undefined;
-
-// Require GitHub build provenance for these Gateway images. Add a reviewed
-// `commit` to pin a specific build.
-const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
-  'nearaidev/cloud-api': {
-    repository: 'nearai/cloud-api',
-    workflow: '.github/workflows/build.yml',
-  },
-  'nearaidev/cvm-ingress': {
-    repository: 'nearai/cvm-ingress',
-    workflow: '.github/workflows/build-push.yml',
-  },
-  'nearaidev/dstack-vpc': {
-    repository: 'nearai/dstack-vpc',
-    workflow: '.github/workflows/build.yml',
-  },
-  'nearaidev/dstack-vpc-client': {
-    repository: 'nearai/dstack-vpc-client',
-    workflow: '.github/workflows/build.yml',
-  },
-};
-
-const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
-  'nearaidev/vllm-proxy-rs': {
-    repository: 'nearai/inference-proxy',
-    workflow: '.github/workflows/build.yml',
-  },
-};
 
 await main();
 
@@ -127,21 +95,11 @@ async function fetchAndVerifyGateway(
   const fetched = await client.fetchGatewayAttestation({
     signingAlgo: SIGNING_ALGO,
   });
-  // Verify the quote, nonce, measurements, and signer/TLS binding. The deployment
-  // callback checks image provenance after appCompose has been authenticated.
   const verified = await verifyGatewayAttestation({
     attestation: fetched.attestation,
     clientBinding: fetched.clientBinding,
-    verifiers: {
-      deployment: ({ appCompose }) =>
-        verifyDeploymentImageProvenance({
-          appCompose,
-          imagePolicies: GATEWAY_IMAGE_POLICIES,
-          githubToken: GITHUB_TOKEN,
-        }),
-    },
   });
-  console.log('Gateway deployment and image provenance: verified.');
+  console.log('Gateway attestation verified.');
   return verified;
 }
 
@@ -165,24 +123,10 @@ async function fetchAndVerifyModelAttestations(
       verifyModelAttestation({
         attestation,
         clientBinding: fetched.clientBinding,
-        // Authenticate the recorded deployment file and required image builds.
-        verifiers: {
-          deployment: (deployment) =>
-            verifyComposeManagerDeploymentImageProvenance({
-              deployment,
-              imagePolicies: MODEL_IMAGE_POLICIES,
-              githubToken: GITHUB_TOKEN,
-              composeManagerImagePolicy: {
-                imageRepository: 'nearaidev/compose-manager',
-                repository: 'nearai/compose-manager',
-                workflow: '.github/workflows/build.yml',
-              },
-            }),
-        },
       }),
     ),
   );
-  console.log(`Model deployments: verified ${verified.length}.`);
+  console.log(`Verified ${verified.length} model attestations.`);
   return verified;
 }
 

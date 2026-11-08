@@ -3,11 +3,11 @@
 Use Go 1.26.10+; the SDK embeds the DCAP verifier.
 Set `NEARAI_API_KEY` and run from this directory. The
 [shared example guide](../README.md) describes configuration, verification order,
-image policies, and the matching JavaScript, Python, and Rust examples.
+and the matching JavaScript, Python, and Rust examples.
 
 | Command | Demonstrates |
 | --- | --- |
-| `go run ./gateway/chat-completions` | Native Chat JSON/SSE, E2EE, Gateway/model image provenance, and receipts |
+| `go run ./gateway/chat-completions` | Native Chat JSON/SSE, E2EE, and receipts |
 | `go run ./gateway/chat-completions-bare` | Standalone Gateway/model verification, pinned TLS, E2EE, and exact ciphertext receipts |
 | `go run ./gateway/chat-completions-with-openai-sdk` | Official OpenAI Chat JSON/SSE through the verified transport, with E2EE |
 | `go run ./gateway/responses` | Native Responses JSON/SSE and Gateway receipts |
@@ -31,12 +31,6 @@ arrives; the example consumes through EOF and verifies the receipt afterward.
 Verification failures exit with an error. Official clients reuse
 `inference.HTTPClient()` and disable automatic inference retries. Responses and
 Messages keep field-level E2EE disabled; OHTTP requires Ed25519.
-
-Native and standalone Gateway Chat apply both Gateway and Compose Manager model
-image policies. Add commit pins in `Config.GatewayImages` and
-`Config.ModelImages` for stricter admission. `GITHUB_TOKEN` may be used
-for GitHub provenance requests. See the shared guide for
-[direct endpoint verification](../README.md#direct-endpoints).
 
 ```sh
 go vet ./...

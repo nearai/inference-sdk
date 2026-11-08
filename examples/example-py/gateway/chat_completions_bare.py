@@ -6,19 +6,12 @@ from dataclasses import dataclass
 import httpx
 from nearai_inference_sdk import (
     AttestationClient,
-    AttestationVerifiers,
-    ComposeManagerImagePolicy,
     E2eeModelKey,
-    ImageProvenancePolicy,
-    MeasuredDeployment,
-    ModelAttestationVerifiers,
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
     create_pinned_tls_client,
     find_model_attestations_for_signature,
     prepare_e2ee_chat_request,
-    verify_compose_manager_deployment_image_provenance,
-    verify_deployment_image_provenance,
     verify_gateway_attestation,
     verify_gateway_response,
     verify_model_attestation,
@@ -32,43 +25,6 @@ BASE_URL = (
 )
 MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
 SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
-GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN') or None
-
-GATEWAY_IMAGE_POLICIES = {
-    'nearaidev/cloud-api': ImageProvenancePolicy(
-        repository='nearai/cloud-api', workflow='.github/workflows/build.yml'
-    ),
-    'nearaidev/cvm-ingress': ImageProvenancePolicy(
-        repository='nearai/cvm-ingress', workflow='.github/workflows/build-push.yml'
-    ),
-    'nearaidev/dstack-vpc': ImageProvenancePolicy(
-        repository='nearai/dstack-vpc', workflow='.github/workflows/build.yml'
-    ),
-    'nearaidev/dstack-vpc-client': ImageProvenancePolicy(
-        repository='nearai/dstack-vpc-client', workflow='.github/workflows/build.yml'
-    ),
-}
-
-
-MODEL_IMAGE_POLICIES = {
-    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
-        repository='nearai/inference-proxy', workflow='.github/workflows/build.yml'
-    ),
-}
-
-
-async def verify_model_images(deployment: MeasuredDeployment) -> None:
-    # Verify recorded deployment intent, not the currently running containers.
-    await verify_compose_manager_deployment_image_provenance(
-        deployment,
-        MODEL_IMAGE_POLICIES,
-        compose_manager_image_policy=ComposeManagerImagePolicy(
-            image_repository='nearaidev/compose-manager',
-            repository='nearai/compose-manager',
-            workflow='.github/workflows/build.yml',
-        ),
-        github_token=GITHUB_TOKEN,
-    )
 
 
 @dataclass
@@ -77,14 +33,6 @@ class Completion:
     request_body: bytes
     response_body: bytes
     text: str | None
-
-
-async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
-    await verify_deployment_image_provenance(
-        deployment.app_compose,
-        GATEWAY_IMAGE_POLICIES,
-        github_token=GITHUB_TOKEN,
-    )
 
 
 async def fetch_and_verify_gateway(
@@ -96,9 +44,8 @@ async def fetch_and_verify_gateway(
     verified = await verify_gateway_attestation(
         fetched.attestation,
         fetched.client_binding,
-        verifiers=AttestationVerifiers(deployment=verify_gateway_images),
     )
-    print('Gateway deployment and image provenance: verified.')
+    print('Gateway attestation verified.')
     return verified
 
 
@@ -116,10 +63,9 @@ async def fetch_and_verify_model_attestations(
         verified = await verify_model_attestation(
             attestation,
             fetched.client_binding,
-            verifiers=ModelAttestationVerifiers(deployment=verify_model_images),
         )
         model_attestations.append(verified)
-    print(f'Model deployments: verified {len(model_attestations)}.')
+    print(f'Verified {len(model_attestations)} model attestations.')
     return model_attestations
 
 
@@ -231,7 +177,6 @@ async def main() -> None:
     attestation_client = AttestationClient(api_key, base_url=BASE_URL)
     gateway = await fetch_and_verify_gateway(attestation_client)
 
-    # Pin model evidence, Chat, and signature requests to the verified Gateway.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:

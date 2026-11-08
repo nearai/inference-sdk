@@ -17,9 +17,9 @@ import (
 )
 
 type Config struct {
-	Key, BaseURL, Model, GitHubToken string
-	Algo                             nearai.SigningAlgo
-	OHTTP                            bool
+	Key, BaseURL, Model string
+	Algo                nearai.SigningAlgo
+	OHTTP               bool
 }
 
 func Configuration(direct bool) (Config, error) {
@@ -28,12 +28,11 @@ func Configuration(direct bool) (Config, error) {
 
 func ConfigurationForModel(direct bool, defaultModel string) (Config, error) {
 	c := Config{
-		Key:         os.Getenv("NEARAI_API_KEY"),
-		GitHubToken: os.Getenv("GITHUB_TOKEN"),
-		BaseURL:     os.Getenv("NEARAI_BASE_URL"),
-		Model:       os.Getenv("NEARAI_MODEL"),
-		Algo:        nearai.SigningAlgo(os.Getenv("NEARAI_SIGNING_ALGO")),
-		OHTTP:       os.Getenv("NEARAI_OHTTP") == "true",
+		Key:     os.Getenv("NEARAI_API_KEY"),
+		BaseURL: os.Getenv("NEARAI_BASE_URL"),
+		Model:   os.Getenv("NEARAI_MODEL"),
+		Algo:    nearai.SigningAlgo(os.Getenv("NEARAI_SIGNING_ALGO")),
+		OHTTP:   os.Getenv("NEARAI_OHTTP") == "true",
 	}
 	if c.Key == "" {
 		c.Key = os.Getenv("NEAR_AI_API_KEY")
@@ -60,20 +59,6 @@ func ConfigurationForModel(direct bool, defaultModel string) (Config, error) {
 	return c, nil
 }
 
-// GatewayImages checks the same four Gateway build policies as the JS/Python examples.
-// It does not approve model images/weights. Add commit pins for stricter policies.
-func (c Config) GatewayImages(ctx context.Context, deployment nearai.MeasuredDeployment) error {
-	policies := map[string]nearai.ImageProvenancePolicy{}
-	for name, workflow := range map[string]string{
-		"cloud-api":         "build.yml",
-		"cvm-ingress":       "build-push.yml",
-		"dstack-vpc":        "build.yml",
-		"dstack-vpc-client": "build.yml",
-	} {
-		policies["nearaidev/"+name] = nearai.ImageProvenancePolicy{Repository: "nearai/" + name, Workflow: ".github/workflows/" + workflow}
-	}
-	return nearai.VerifyDeploymentImageProvenance(ctx, deployment.AppCompose, policies, nearai.ProvenanceOptions{GitHubToken: c.GitHubToken})
-}
 func body(model string, stream bool) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"model":                 model,
@@ -270,18 +255,13 @@ func DisplayChat(raw []byte, stream bool) error {
 	return nil
 }
 
-// RunIntegrated uses the verified transport for both JSON and SSE. Gateway mode
-// applies image provenance policy; direct mode remains experimental without TLS binding.
+// RunIntegrated uses the verified transport for both JSON and SSE.
 func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 	opts := nearai.InferenceOptions{
 		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
 		SigningAlgo:   c.Algo,
 		OHTTP:         c.OHTTP,
 		E2EE:          true,
-	}
-	if !direct {
-		opts.GatewayVerification.DeploymentVerifier = c.GatewayImages
-		opts.ModelVerification.DeploymentVerifier = c.ModelImages
 	}
 	var client *nearai.InferenceClient
 	var err error
@@ -352,11 +332,11 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		if err != nil {
 			return err
 		}
-		gateway, err = nearai.VerifyGatewayAttestation(ctx, fetched.Attestation, fetched.ClientBinding, nearai.VerificationOptions{DeploymentVerifier: c.GatewayImages})
+		gateway, err = nearai.VerifyGatewayAttestation(ctx, fetched.Attestation, fetched.ClientBinding, nearai.VerificationOptions{})
 		if err != nil {
 			return err
 		}
-		fmt.Println("Gateway deployment and image provenance: verified.")
+		fmt.Println("Gateway attestation verified.")
 		if gateway.SPKIFingerprint == "" {
 			return fmt.Errorf("Gateway did not supply attested TLS binding")
 		}
@@ -388,13 +368,13 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			return fmt.Errorf("Gateway returned no model attestations")
 		}
 		for _, report := range fetched.Attestations {
-			verified, err := nearai.VerifyModelAttestation(ctx, report, fetched.ClientBinding, nearai.VerificationOptions{DeploymentVerifier: c.ModelImages})
+			verified, err := nearai.VerifyModelAttestation(ctx, report, fetched.ClientBinding, nearai.VerificationOptions{})
 			if err != nil {
 				return err
 			}
 			modelAttestations = append(modelAttestations, verified)
 		}
-		fmt.Printf("Model deployments: verified %d.\n", len(modelAttestations))
+		fmt.Printf("Verified %d model attestations.\n", len(modelAttestations))
 	}
 	var selectedModelAttestation *nearai.VerifiedAttestation
 	for i := range modelAttestations {
@@ -581,14 +561,4 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 		fmt.Printf("Verified %s streaming response.\n", verified.SignatureKind)
 	}
 	return nil
-}
-
-// ModelImages authenticates recorded deployment intent, not running containers.
-func (c Config) ModelImages(ctx context.Context, deployment nearai.MeasuredDeployment) error {
-	return nearai.VerifyComposeManagerDeploymentImageProvenance(ctx, deployment,
-		map[string]nearai.ImageProvenancePolicy{"nearaidev/vllm-proxy-rs": {Repository: "nearai/inference-proxy", Workflow: ".github/workflows/build.yml"}},
-		nearai.ComposeManagerDeploymentImageProvenanceOptions{
-			ProvenanceOptions:         nearai.ProvenanceOptions{GitHubToken: c.GitHubToken},
-			ComposeManagerImagePolicy: nearai.ComposeManagerImagePolicy{ImageRepository: "nearaidev/compose-manager", Build: nearai.ImageProvenancePolicy{Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml"}},
-		})
 }
