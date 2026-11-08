@@ -1,12 +1,9 @@
-import { InferenceClient, type SigningAlgo } from '@nearai/inference-sdk/node';
+import { InferenceClient } from '@nearai/inference-sdk/node';
 import { transportOptions } from '../utils/transport-options.ts';
 
 const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
-// Selects the algorithm for attestation, E2EE, and response signatures.
-const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
-  'ed25519') as SigningAlgo;
 
 async function main(): Promise<void> {
   if (!API_KEY) throw new Error('NEARAI_API_KEY is required');
@@ -17,7 +14,7 @@ async function main(): Promise<void> {
   const inferenceClient = new InferenceClient({
     apiKey: API_KEY,
     baseUrl: BASE_URL,
-    ...transportOptions(SIGNING_ALGO),
+    ...transportOptions(),
     e2ee: true,
   });
 

@@ -157,7 +157,7 @@ export class DirectInferenceClient extends DirectInferenceClientBase {
 
 /**
  * Verify the exact completion bytes and return the verified attestations sharing
- * its signer. A shared signing key does not identify an individual CVM.
+ * its signer.
  */
 export function verifyDirectModelResponse({
   requestBody,

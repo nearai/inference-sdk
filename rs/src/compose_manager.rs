@@ -52,7 +52,6 @@ pub struct ComposeManagerAttestation {
 }
 
 /// Actions authenticated under the same measured configuration as a model report.
-/// Matching configuration does not establish a unique CVM identity or action success.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedComposeManagerAttestation {
     pub actions: Vec<ComposeManagerAction>,

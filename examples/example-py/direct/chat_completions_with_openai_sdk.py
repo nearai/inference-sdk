@@ -6,11 +6,13 @@ import os
 from nearai_inference_sdk import DirectInferenceClient
 from openai import AsyncOpenAI
 
+API_KEY = os.environ.get('NEARAI_API_KEY')
 BASE_URL = os.environ.get(
     'NEARAI_BASE_URL', 'https://glm-5-3-flash.completions.near.ai/v1/'
 )
 MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
 SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
+OHTTP = os.environ.get('NEARAI_OHTTP') == 'true'
 
 
 async def run_non_streaming_example(
@@ -48,19 +50,18 @@ async def run_streaming_example(
 
 
 async def main() -> None:
-    api_key = os.environ.get('NEARAI_API_KEY')
     # Configure authentication here; the external OpenAI key is ignored.
     # Enable E2EE explicitly. The client retains bytes for verify_response.
     async with DirectInferenceClient(
         BASE_URL,
-        api_key=api_key,
+        api_key=API_KEY,
         signing_algo=SIGNING_ALGO,
         e2ee=True,
-        ohttp=os.environ.get('NEARAI_OHTTP') == 'true',
+        ohttp=OHTTP,
     ) as direct_client:
         openai_client = AsyncOpenAI(
             max_retries=0,
-            api_key=api_key or 'unused',
+            api_key=API_KEY or 'unused',
             base_url=BASE_URL,
             http_client=direct_client.http_client,
         )

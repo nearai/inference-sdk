@@ -26,11 +26,8 @@ model, signature algorithm, and optional OHTTP. Set `NEARAI_MODEL` for System On
 for verified self-hosted decision models.
 Set `NEARAI_IMAGE_PATH` for the shared [PNG image/Box example](../README.md#system-one-images).
 
-JSON answers are printed after receipt verification. SSE text is printed as it
-arrives; the example consumes through EOF and verifies the receipt afterward.
-Verification failures exit with an error. Official clients reuse
-`inference.HTTPClient()` and disable automatic inference retries. Responses and
-Messages keep field-level E2EE disabled; OHTTP requires Ed25519.
+JSON answers are printed after verification. SSE text is printed as it arrives,
+with response verification after EOF.
 
 ```sh
 go vet ./...
@@ -39,6 +36,3 @@ go test -tags=e2e -run '^TestLive' -v .
 ```
 
 The last command requires the shared [live configuration](../../e2e/README.md).
-Offline tests exercise official SDK parsing against signed Chat, Responses, and
-Messages fixtures. The module uses a local SDK replacement; use a released module
-version when copying it outside this repository.

@@ -133,7 +133,6 @@ func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding,
 }
 
 // VerifyDirectModelAttestation authenticates an individual direct model report.
-// Its fingerprint is quote-bound but is not a claim about the observed TLS peer.
 func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error) {
 	return verifyAttestation(ctx, a, b, o, false)
 }

@@ -1,23 +1,21 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { InferenceClient, type SigningAlgo } from '@nearai/inference-sdk/node';
+import { InferenceClient } from '@nearai/inference-sdk/node';
 import { transportOptions } from '../utils/transport-options.ts';
 
+const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
 const MODEL = process.env.NEARAI_MODEL ?? 'anthropic/claude-haiku-4-5';
-const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
-  'ed25519') as SigningAlgo;
 const signal = AbortSignal.timeout(120_000);
 
 async function main(): Promise<void> {
-  const apiKey = process.env.NEARAI_API_KEY;
-  if (!apiKey) throw new Error('NEARAI_API_KEY is required');
+  if (!API_KEY) throw new Error('NEARAI_API_KEY is required');
   const inferenceClient = new InferenceClient({
-    apiKey,
+    apiKey: API_KEY,
     baseUrl: BASE_URL,
-    ...transportOptions(SIGNING_ALGO),
+    ...transportOptions(),
   });
   const api = new Anthropic({
-    apiKey,
+    apiKey: API_KEY,
     baseURL: inferenceClient.getBaseUrl().replace(/v1\/$/, ''),
     fetch: inferenceClient.fetch,
     maxRetries: 0,

@@ -3,9 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Build with familiar APIs. Verify the infrastructure and the response.</strong><br>
   Attestation, response signatures, and optional encryption for NEAR AI Cloud.<br>
-  Available in TypeScript, Python, Rust, and Go.
+  Use Chat Completions, Responses, Messages, or System One from TypeScript, Python, Rust, and Go.
 </p>
 
 <p align="center">
@@ -23,18 +22,6 @@
   <a href="https://github.com/nearai/inference-sdk/releases">Releases</a>
 </p>
 
-## Why NEAR AI Inference SDK?
-
-- **Verify before you send.** Check the Gateway's attestation and supported model
-  deployments before inference, with reusable verification caches.
-- **Verify what comes back.** Check response signatures against the exact request
-  and response bytes retained by the client, including streamed responses.
-- **Add encryption where you need it.** Enable field-level end-to-end encryption
-  (E2EE) for supported Chat models, or OHTTP for the HTTP exchange with the Gateway.
-- **Keep familiar APIs.** Use Chat Completions, Responses, Anthropic Messages, and
-  System One across all four languages, with official SDK integrations where
-  available.
-
 ## SDKs and installation
 
 | Language | Install | Get started |
@@ -50,23 +37,13 @@ See each language guide for runtime requirements and configuration.
 
 1. **Check the deployment.** The Gateway client verifies Gateway evidence and
    model evidence when supported. Required verification failures stop the request.
-2. **Send the request.** The client retains the exact request and response bytes
-   needed for signature verification. E2EE and OHTTP are optional and disabled by
-   default; their scope depends on the API.
+2. **Send the request.** Enable E2EE to encrypt Chat content for the model, or OHTTP to
+   encrypt supported requests to the Gateway.
 3. **Verify the response.** Use the SDK's response verification before using the
    answer. For streaming, consume the entire stream first.
 
-A `provider_tee` signature binds those bytes to an attested model signer; a
-`gateway` signature binds them to an attested Gateway signer. Gateway signatures
-do not prove model TEE execution. See the [verification guides](#documentation)
-for encryption scope, deployment policies, and trust boundaries.
-
-Use **Gateway clients for production integrations**. Direct model clients are
-experimental; see the limitations for
-[TypeScript](./js/docs/verification-guide.md#use-a-direct-model-endpoint),
-[Python](./py/docs/verification-guide.md#direct-model-endpoints),
-[Rust](./rs/docs/verification-guide.md#experimental-direct-endpoints), and
-[Go](./go/docs/verification-guide.md#experimental-direct-endpoints).
+A `provider_tee` receipt is signed by an attested model signer. A `gateway`
+receipt is signed by an attested Gateway signer.
 
 ## Documentation
 
@@ -77,6 +54,8 @@ experimental; see the limitations for
 | **Rust** | [Encryption, streaming & policies](./rs/docs/verification-guide.md) | [Types & methods](./rs/docs/api-reference.md) |
 | **Go** | [Encryption, streaming & policies](./go/docs/verification-guide.md) | [Types & methods](./go/docs/api-reference.md) |
 
+- [Runnable examples](./examples/README.md) — native clients, official SDKs, and standalone verification.
+- [SDK tests](./TESTING.md) — test locations and commands.
 - [Live E2E tests](./e2e/README.md) — real-service coverage and CI setup.
 - [Release process](./RELEASING.md) — package publishing and maintainer checks.
 - [Issues](https://github.com/nearai/inference-sdk/issues) — bug reports and feature requests.

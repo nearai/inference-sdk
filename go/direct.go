@@ -35,8 +35,8 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 	return out, nil
 }
 
-// VerifyDirectModelResponse returns all verified reports with the response's
-// signer. Shared signing keys cannot identify the individual serving instance.
+// VerifyDirectModelResponse verifies the response signature and returns all
+// verified reports sharing its signer.
 func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedDirectCompletionResult, error) {
 	var matches []VerifiedAttestation
 	if sig.Kind != "provider_tee" {

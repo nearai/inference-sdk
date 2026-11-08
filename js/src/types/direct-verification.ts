@@ -21,11 +21,11 @@ export type VerifyDirectModelAttestationParams = {
 export type VerifiedDirectModelAttestation = VerifiedModelAttestation & {
   /** Original direct report, including endpoint metadata. */
   readonly report: DirectModelAttestation;
-  /** Metadata, not a model-name claim authenticated by the quote. */
+  /** Endpoint-reported model name. */
   readonly modelName: string;
   /** Instance metadata, when supplied by the endpoint. */
   readonly instanceId?: string;
-  /** Quote-authenticated SPKI fingerprint; not necessarily the observed TLS peer. */
+  /** Quote-authenticated TLS public-key fingerprint. */
   readonly spkiFingerprint?: string;
 };
 
