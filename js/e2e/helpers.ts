@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isApiError as isGenericApiError } from '../dist/index.js';
+import type { SigningIdentity } from '../dist/node.js';
 import { isApiError } from '../dist/node.js';
+
+export function sameSigner(
+  left: SigningIdentity,
+  right: SigningIdentity,
+): boolean {
+  return (
+    left.signingAlgo === right.signingAlgo &&
+    left.signingAddress.toLowerCase().replace(/^0x/, '') ===
+      right.signingAddress.toLowerCase().replace(/^0x/, '')
+  );
+}
 
 export function requiredEnv(name: string): string {
   const value = process.env[name];

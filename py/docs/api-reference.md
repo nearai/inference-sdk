@@ -388,18 +388,8 @@ Use `AttestationClient()` to fetch attestation without credentials. Gateway and
 direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`,
 including values supplied in `headers`. Other custom headers are preserved.
 
-Model reports through the Gateway use the client's configured API key or authentication
-headers. Listed models can be queried without credentials; unlisted models require a
-key for an organization granted access. With standalone evidence clients, verify the
-Gateway before fetching an authenticated model report. Integrated clients perform
-this ordering automatically.
-
-`AttestationClient` construction and methods, plus
-the model-selection helpers, raise `ApiError` for invalid helper
-input as well as Gateway and selection failures. The `verify_*` functions
-raise `VerificationError` instead. Handle each operation at its own boundary;
-the client and selection helpers never require an `ApiError` versus
-`VerificationError` dispatch after catching an error.
+Fetch and selection errors raise `ApiError`. Attestation, signature and TLS pin
+verification failures raise `VerificationError`.
 
 ### Completion-signature methods
 

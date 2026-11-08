@@ -464,6 +464,7 @@ export async function readCloudApiJson({
 
 /**
  * Return every verified report matching a provider_tee signature's signer.
+ * Use `verifyModelResponse` to verify the response signature.
  */
 export function findModelAttestationsForSignature({
   attestations,

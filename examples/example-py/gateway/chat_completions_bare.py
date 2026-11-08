@@ -25,6 +25,8 @@ from nearai_inference_sdk import (
     verify_model_response,
 )
 
+from utils.chat_output import RecordingStream, read_stream
+
 BASE_URL = (
     os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/').rstrip('/') + '/'
 )
@@ -75,22 +77,6 @@ class Completion:
     request_body: bytes
     response_body: bytes
     text: str | None
-
-
-class RecordingStream(httpx.AsyncByteStream):
-    """Keep the decoded HTTP body before the E2EE decryptor consumes it."""
-
-    def __init__(self, response: httpx.Response) -> None:
-        self.response = response
-        self.chunks: list[bytes] = []
-
-    async def __aiter__(self):
-        async for chunk in self.response.aiter_bytes():
-            self.chunks.append(chunk)
-            yield chunk
-
-    async def aclose(self) -> None:
-        await self.response.aclose()
 
 
 async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
@@ -205,14 +191,6 @@ async def send_completion(
     )
 
 
-async def run_non_streaming_example(client, api_key, model_key) -> Completion:
-    return await send_completion(client, api_key, model_key, stream=False)
-
-
-async def run_streaming_example(client, api_key, model_key) -> Completion:
-    return await send_completion(client, api_key, model_key, stream=True)
-
-
 async def verify_completion_response(
     client: AttestationClient,
     completion: Completion,
@@ -248,62 +226,27 @@ async def verify_completion_response(
         print(completion.text)
 
 
-async def read_stream(response: httpx.Response) -> list[dict]:
-    values, data = [], []
-    completion_id = None
-    done = False
-    first_line = True
-    async for line in response.aiter_lines():
-        if first_line:
-            line = line.removeprefix('\ufeff')
-            first_line = False
-        if line == 'data':
-            data.append('')
-        elif line.startswith('data:'):
-            data.append(line[5:].removeprefix(' '))
-        elif not line:
-            payload = '\n'.join(data)
-            data = []
-            if payload == '[DONE]':
-                done = True
-            elif payload:
-                value = json.loads(payload)
-                if value.get('error') or value.get('type') == 'error':
-                    raise RuntimeError('Stream returned an error')
-                if value.get('id'):
-                    if completion_id is not None and value['id'] != completion_id:
-                        raise RuntimeError('Stream returned conflicting completion IDs')
-                    completion_id = value['id']
-                values.append(value)
-                for choice in value.get('choices', [])[:1]:
-                    print(
-                        choice.get('delta', {}).get('content') or '', end='', flush=True
-                    )
-    print()
-    if not done:
-        raise RuntimeError('Stream ended without [DONE]')
-    return values
-
-
 async def main() -> None:
     api_key = os.environ['NEARAI_API_KEY']
     attestation_client = AttestationClient(api_key, base_url=BASE_URL)
     gateway = await fetch_and_verify_gateway(attestation_client)
-    model_attestations = await fetch_and_verify_model_attestations(attestation_client)
-    selected_model_attestation = find_model_attestation_for_encryption(
-        model_attestations
-    )
-    model_key = E2eeModelKey(
-        signing_algo=SIGNING_ALGO,
-        public_key=selected_model_attestation.signing_public_key,
-    )
 
-    # Pin Chat TLS to the authenticated Gateway SPKI.
+    # Pin model evidence, Chat, and signature requests to the verified Gateway.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
-        completion = await run_non_streaming_example(
-            pinned_tls_client, api_key, model_key
+        model_attestations = await fetch_and_verify_model_attestations(
+            attestation_client
+        )
+        selected_model_attestation = find_model_attestation_for_encryption(
+            model_attestations
+        )
+        model_key = E2eeModelKey(
+            signing_algo=SIGNING_ALGO,
+            public_key=selected_model_attestation.signing_public_key,
+        )
+        completion = await send_completion(
+            pinned_tls_client, api_key, model_key, stream=False
         )
         await verify_completion_response(
             attestation_client,
@@ -313,7 +256,9 @@ async def main() -> None:
             selected_model_attestation,
         )
 
-        completion = await run_streaming_example(pinned_tls_client, api_key, model_key)
+        completion = await send_completion(
+            pinned_tls_client, api_key, model_key, stream=True
+        )
         await verify_completion_response(
             attestation_client,
             completion,

@@ -99,6 +99,7 @@ for (const { id: model } of models) {
             ]);
             assert.equal(receipt.id, id);
             assert.equal(receipt.signatureKind, 'gateway');
+            assert.equal(receipt.signature.signer.signingAlgo, signingAlgo);
           } finally {
             clearTimeout(timer);
           }

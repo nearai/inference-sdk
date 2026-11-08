@@ -12,7 +12,12 @@ import {
   verifyGatewayAttestation,
   verifyGatewayResponse,
 } from '../dist/node.js';
-import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
+import {
+  requiredEnv,
+  retryReceipt,
+  sameSigner,
+  selectedModels,
+} from './helpers.ts';
 
 const BASE_URL = `${requiredEnv('NEARAI_BASE_URL').replace(/\/+$/, '')}/`;
 const API_KEY = requiredEnv('NEARAI_API_KEY');
@@ -226,13 +231,14 @@ for (const kind of ['gateway', 'provider_tee'] as const) {
       assert.equal(verified.signatureKind, kind);
       assert.equal(verified.signature.signer.signingAlgo, signingAlgo);
       if (verified.signatureKind === 'provider_tee') {
-        assert.ok(verified.attestations.length > 0);
-        for (const attestation of verified.attestations) {
-          assert.equal(
-            attestation.signer.signingAddress,
-            selected?.signer.signingAddress,
-          );
-        }
+        assert.ok(selected);
+        assert.ok(sameSigner(verified.signature.signer, selected.signer));
+        assert.deepEqual(
+          verified.attestations,
+          preflight.models.filter((report) =>
+            sameSigner(report.signer, selected.signer),
+          ),
+        );
       }
       assert.equal(
         inferenceRequests,

@@ -504,7 +504,7 @@ describe('AttestationClient', () => {
   });
 
   describe('model attestations', () => {
-    test('preserves every model candidate', async () => {
+    test('preserves model report order and duplicates while sending explicit signer filters', async () => {
       const selectedSigningAddress = `0x${'44'.repeat(20)}`;
       const otherSigningAddress = `0x${'55'.repeat(20)}`;
       const signature = modelSignature(selectedSigningAddress);
@@ -520,6 +520,10 @@ describe('AttestationClient', () => {
               signing_address: selectedSigningAddress,
               report_data: '44'.repeat(64),
             }),
+            cloudAttestation(clientNonce, {
+              signing_address: otherSigningAddress,
+              report_data: '55'.repeat(64),
+            }),
           ]),
         );
       });
@@ -530,7 +534,12 @@ describe('AttestationClient', () => {
           signingAlgo: signature.signer.signingAlgo,
           signingAddress: signature.signer.signingAddress,
         });
-      expect(attestations).toHaveLength(2);
+      expect(attestations.map(({ signer }) => signer.signingAddress)).toEqual([
+        otherSigningAddress,
+        selectedSigningAddress,
+        otherSigningAddress,
+      ]);
+      expect(attestations[0]).toEqual(attestations[2]);
       expect(
         attestations.every(
           (candidate) => candidate.nonce === clientBinding.nonce,
@@ -798,29 +807,6 @@ describe('AttestationClient', () => {
       });
 
       expect(fetched.attestations).toEqual([]);
-    });
-
-    test('returns all model attestations when Cloud API returns multiple candidates', async () => {
-      const api = cloudFor((request) => {
-        const clientNonce = requestNonce(request);
-        return jsonResponse(
-          modelReport(clientNonce, [
-            cloudAttestation(clientNonce),
-            cloudAttestation(clientNonce),
-          ]),
-        );
-      });
-
-      const fetched = await api.client.fetchModelAttestations({
-        model: 'canonical-model',
-      });
-
-      expect(fetched.attestations).toHaveLength(2);
-      expect(
-        fetched.attestations.every(
-          (attestation) => attestation.nonce === fetched.clientBinding.nonce,
-        ),
-      ).toBe(true);
     });
 
     test.each([

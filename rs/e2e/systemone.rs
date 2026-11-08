@@ -22,19 +22,8 @@ async fn verified_systemone_decisions() -> Result<(), Box<dyn Error>> {
 
             let result = client.systemone_create(&request).await?;
 
-            let mut receipt = client.verify_response(&result.decision_id).await;
-            for delay in [500, 1_000, 2_000, 4_000] {
-                if !receipt.as_ref().is_err_and(|e| {
-                    e.retryable() || e.code() == "api.completion_signature_unavailable"
-                }) {
-                    break;
-                }
-
-                tokio::time::sleep(Duration::from_millis(delay)).await;
-                receipt = client.verify_response(&result.decision_id).await;
-            }
-
-            let receipt = receipt?;
+            let receipt =
+                super::integrated::verify_receipt_with_retry(&client, &result.decision_id).await?;
 
             assert_eq!(receipt.id, result.decision_id);
             assert!(!result.data.model.is_empty());

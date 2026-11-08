@@ -291,7 +291,10 @@ def find_model_attestations_for_signature(
     attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
     signature: CompletionSignatureReference,
 ) -> tuple[VerifiedModelAttestation, ...]:
-    """Return all verified reports matching the provider signature's signer."""
+    """Return all verified reports matching a provider signature's signing identity.
+
+    Use ``verify_model_response`` to verify the response signature.
+    """
 
     if signature.kind != 'provider_tee':
         raise _invalid_input(

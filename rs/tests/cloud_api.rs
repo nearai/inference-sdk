@@ -349,12 +349,19 @@ fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
             signing_algo,
             signing_address: "cd".repeat(bytes),
         });
-        let candidates = [other, first, second.clone(), second];
+        let other_algo = verified_model_attestation_for_signer(SigningIdentity {
+            signing_algo: match signing_algo {
+                SigningAlgo::Ed25519 => SigningAlgo::Ecdsa,
+                SigningAlgo::Ecdsa => SigningAlgo::Ed25519,
+            },
+            signing_address: "ab".repeat(if bytes == 32 { 20 } else { 32 }),
+        });
+        let candidates = [other, first, other_algo, second.clone(), second];
         let matching_attestations =
             find_model_attestations_for_signature(&candidates, &signature).unwrap();
         assert_eq!(
             matching_attestations,
-            vec![&candidates[1], &candidates[2], &candidates[3]]
+            vec![&candidates[1], &candidates[3], &candidates[4]]
         );
         assert_eq!(
             find_model_attestation_for_signature(&candidates, &signature).unwrap(),

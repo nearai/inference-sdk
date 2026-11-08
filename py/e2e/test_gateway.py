@@ -7,7 +7,7 @@ import pytest
 from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
-from e2e.helpers import required_env, retry_receipt, selected_models
+from e2e.helpers import required_env, retry_receipt, same_signer, selected_models
 from nearai_inference_sdk import (
     AttestationClient,
     AttestationVerificationResult,
@@ -38,41 +38,40 @@ from nearai_inference_sdk import (
     ids=['unencrypted', 'ed25519-e2ee', 'ecdsa-e2ee', 'ohttp-e2ee'],
 )
 @pytest.mark.parametrize('official', [False, True])
-@pytest.mark.parametrize('model_index', [0, 1])
 async def test_inference_client_verifies_json_and_streams(
-    e2ee: bool, signing_algo: SigningAlgo, ohttp: bool, official: bool, model_index: int
+    e2ee: bool, signing_algo: SigningAlgo, ohttp: bool, official: bool
 ) -> None:
-    model = selected_models('chat', 'near')[model_index]
-    async with (
-        asyncio.timeout(180),
-        InferenceClient(
-            required_env('NEARAI_API_KEY'),
-            base_url=required_env('NEARAI_BASE_URL'),
-            signing_algo=signing_algo,
-            e2ee=e2ee,
-            ohttp=ohttp,
-            model_verification=ModelVerificationOptions(
-                policy=ModelAttestationPolicy(gpu_evidence='required'),
-            ),
-        ) as inference_client,
-        AsyncOpenAI(
-            api_key=required_env('NEARAI_API_KEY'),
-            base_url=required_env('NEARAI_BASE_URL'),
-            http_client=inference_client.http_client,
-            max_retries=0,
-        ) as external,
-    ):
-        # Explicit preflight shares its verified session with both Chat calls.
-        preflight = await inference_client.verify(model)
-        for stream in (False, True):
-            await verify_client_chat(
-                inference_client,
-                external.chat if official else inference_client.chat,
-                model,
-                signing_algo,
-                stream,
-                preflight=preflight,
-            )
+    for model in selected_models('chat', 'near'):
+        async with (
+            asyncio.timeout(180),
+            InferenceClient(
+                required_env('NEARAI_API_KEY'),
+                base_url=required_env('NEARAI_BASE_URL'),
+                signing_algo=signing_algo,
+                e2ee=e2ee,
+                ohttp=ohttp,
+                model_verification=ModelVerificationOptions(
+                    policy=ModelAttestationPolicy(gpu_evidence='required'),
+                ),
+            ) as inference_client,
+            AsyncOpenAI(
+                api_key=required_env('NEARAI_API_KEY'),
+                base_url=required_env('NEARAI_BASE_URL'),
+                http_client=inference_client.http_client,
+                max_retries=0,
+            ) as external,
+        ):
+            # Explicit preflight shares its verified session with both Chat calls.
+            preflight = await inference_client.verify(model)
+            for stream in (False, True):
+                await verify_client_chat(
+                    inference_client,
+                    external.chat if official else inference_client.chat,
+                    model,
+                    signing_algo,
+                    stream,
+                    preflight=preflight,
+                )
 
 
 @pytest.mark.asyncio
@@ -157,18 +156,19 @@ async def verify_client_chat(
     assert verified.id == completion_id
     assert verified.signature.signer.signing_algo == signing_algo
     if verified.signature_kind == 'provider_tee':
-        expected = find_model_attestations_for_signature(
-            preflight.models, verified.signature
-        )
         selected = next(
             report
             for report in preflight.models
             if report.signer.signing_algo == signing_algo
             and report.signing_public_key is not None
         )
+        expected = tuple(
+            report
+            for report in preflight.models
+            if same_signer(report.signer, selected.signer)
+        )
+        assert same_signer(verified.signature.signer, selected.signer)
         assert verified.attestations == expected
-        assert verified.attestation is selected
-        assert verified.attestation in verified.attestations
     else:
         assert verified.attestation is preflight.gateway
         assert not hasattr(verified, 'attestations')
@@ -202,10 +202,10 @@ async def verify_chat(
 ) -> None:
     base_url = required_env('NEARAI_BASE_URL').rstrip('/') + '/'
     api_key = required_env('NEARAI_API_KEY')
-    client = AttestationClient(api_key, base_url=base_url)
+    attestation_client = AttestationClient(api_key, base_url=base_url)
 
     # Only NEAR model evidence uses this SDK's model verification path.
-    fetched_gateway = await client.fetch_gateway_attestation(
+    fetched_gateway = await attestation_client.fetch_gateway_attestation(
         signing_algo=signing_algo,
     )
     gateway = await verify_gateway_attestation(
@@ -214,67 +214,99 @@ async def verify_chat(
     )
     assert gateway.tls_binding.kind == 'attested'
 
-    models = []
-    if provider == 'near':
-        fetched_models = await client.fetch_model_attestations(
-            model,
-            signing_algo=signing_algo,
-        )
-        assert fetched_models.attestations, 'Expected NEAR model evidence'
-        for attestation in fetched_models.attestations:
-            verified = await verify_model_attestation(
-                attestation,
-                fetched_models.client_binding,
-                policy=ModelAttestationPolicy(gpu_evidence='required'),
-            )
-            models.append(verified)
-
-    request_body = json.dumps(
-        {
-            'model': model,
-            'messages': [{'role': 'user', 'content': 'Reply with the single word OK.'}],
-            # Reasoning tokens share this budget; leave room for a visible answer.
-            'max_completion_tokens': 1024,
-            'stream': stream,
-        },
-        separators=(',', ':'),
-    ).encode()
-    headers = {
-        'Authorization': f'Bearer {api_key}',
-        'Content-Type': 'application/json',
-        'Accept-Encoding': 'identity',
-        'x-no-aliasing': 'true',
-    }
-    # Bind Chat's TLS peer to the Gateway whose attestation passed verification.
+    # Pin model evidence, Chat, and signatures to the verified Gateway.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
+        model_attestations = []
+        if provider == 'near':
+            fetched_model_attestations = (
+                await attestation_client.fetch_model_attestations(
+                    model,
+                    signing_algo=signing_algo,
+                )
+            )
+            assert fetched_model_attestations.attestations, (
+                'Expected NEAR model evidence'
+            )
+            for attestation in fetched_model_attestations.attestations:
+                model_attestation = await verify_model_attestation(
+                    attestation,
+                    fetched_model_attestations.client_binding,
+                    policy=ModelAttestationPolicy(gpu_evidence='required'),
+                )
+                model_attestations.append(model_attestation)
+
+        selected_attestation = next(
+            (
+                report
+                for report in model_attestations
+                if report.signer.signing_algo == signing_algo
+                and report.signing_public_key
+            ),
+            None,
+        )
+        if provider == 'near':
+            assert selected_attestation is not None
+
+        request_body = json.dumps(
+            {
+                'model': model,
+                'messages': [
+                    {'role': 'user', 'content': 'Reply with the single word OK.'}
+                ],
+                # Reasoning tokens share this budget; leave room for a visible answer.
+                'max_completion_tokens': 1024,
+                'stream': stream,
+            },
+            separators=(',', ':'),
+        ).encode()
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'Accept-Encoding': 'identity',
+            'x-no-aliasing': 'true',
+        }
+        if selected_attestation is not None:
+            headers['X-Model-Pub-Key'] = selected_attestation.signing_public_key
         response = await pinned_tls_client.post(
             base_url + 'chat/completions', content=request_body, headers=headers
         )
         assert response.status_code == 200, f'Chat returned HTTP {response.status_code}'
         response_body = response.content
 
-    completion_id = read_completion_id(response_body, stream)
-    signature = await retry_receipt(
-        lambda: client.fetch_completion_signature(
-            completion_id, signing_algo=signing_algo
+        completion_id = read_completion_id(response_body, stream)
+        signature = await retry_receipt(
+            lambda: attestation_client.fetch_completion_signature(
+                completion_id, signing_algo=signing_algo
+            )
         )
-    )
-    assert signature.signer.signing_algo == signing_algo
-    if provider != 'near':
-        assert signature.kind == 'gateway'
-    # Keep original wire bytes. Even appended whitespace must invalidate them.
-    altered = response_body + b' '
-    if signature.kind == 'provider_tee':
-        matching = find_model_attestations_for_signature(models, signature)
-        verify_model_response(request_body, response_body, signature, matching[0])
-        with pytest.raises(VerificationError):
-            verify_model_response(request_body, altered, signature, matching[0])
-    else:
-        verify_gateway_response(request_body, response_body, signature, gateway)
-        with pytest.raises(VerificationError):
-            verify_gateway_response(request_body, altered, signature, gateway)
+        assert signature.signer.signing_algo == signing_algo
+        if provider != 'near':
+            assert signature.kind == 'gateway'
+        # Keep original wire bytes. Even appended whitespace must invalidate them.
+        altered = response_body + b' '
+        if signature.kind == 'provider_tee':
+            assert selected_attestation is not None
+            verify_model_response(
+                request_body, response_body, signature, selected_attestation
+            )
+            matching_attestations = find_model_attestations_for_signature(
+                model_attestations, signature
+            )
+            assert matching_attestations == tuple(
+                report
+                for report in model_attestations
+                if same_signer(report.signer, selected_attestation.signer)
+            )
+            with pytest.raises(VerificationError):
+                verify_model_response(
+                    request_body, altered, signature, selected_attestation
+                )
+        else:
+            verify_gateway_response(request_body, response_body, signature, gateway)
+            with pytest.raises(VerificationError):
+                verify_gateway_response(request_body, altered, signature, gateway)
 
 
 def read_completion_id(response_body: bytes, stream: bool) -> str:
