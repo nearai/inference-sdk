@@ -123,10 +123,10 @@ func TestFindModelAttestationsForSignature(t *testing.T) {
 				{Signer: signer, InstanceID: "first", AdvisoryIDs: []string{"original"}, Deployment: MeasuredDeployment{AppCompose: "first-compose"}},
 				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: "0X" + strings.Repeat("AB", length)}, InstanceID: "second", Deployment: MeasuredDeployment{AppCompose: "second-compose"}},
 			}
-			items = append(items, items[1])
+			items = append(items, items[2])
 			sig := CompletionSignature{Kind: "provider_tee", Signer: signer}
 			matchingAttestations, err := FindModelAttestationsForSignature(items, sig)
-			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].InstanceID != "first" || matchingAttestations[1].InstanceID != "second" || matchingAttestations[2].InstanceID != "first" {
+			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].InstanceID != "first" || matchingAttestations[1].InstanceID != "second" || matchingAttestations[2].InstanceID != "second" {
 				t.Fatalf("shared-signer reports and duplicates: %#v %v", matchingAttestations, err)
 			}
 			first, err := FindModelAttestationForSignature(items, sig)

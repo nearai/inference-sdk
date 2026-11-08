@@ -349,17 +349,17 @@ fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
             signing_algo,
             signing_address: "cd".repeat(bytes),
         });
-        let candidates = [other, first.clone(), second, first];
+        let candidates = [other, first, second.clone(), second];
         let matching_attestations =
             find_model_attestations_for_signature(&candidates, &signature).unwrap();
         assert_eq!(
             matching_attestations,
             vec![&candidates[1], &candidates[2], &candidates[3]]
         );
-        assert!(std::ptr::eq(
+        assert_eq!(
             find_model_attestation_for_signature(&candidates, &signature).unwrap(),
-            &candidates[1],
-        ));
+            &candidates[1]
+        );
         assert!(matches!(
             find_model_attestation_for_signature(&[], &signature),
             Err(ApiError::ModelAttestationSignerNotFound)

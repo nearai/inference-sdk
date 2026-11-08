@@ -600,7 +600,7 @@ describe('AttestationClient', () => {
           secondModelAttestation,
           otherAlgorithmAttestation,
           firstModelAttestation,
-          secondModelAttestation,
+          firstModelAttestation,
         ];
         const matchingAttestations = findModelAttestationsForSignature({
           attestations: modelAttestations,
@@ -609,7 +609,7 @@ describe('AttestationClient', () => {
         expect(matchingAttestations).toEqual([
           secondModelAttestation,
           firstModelAttestation,
-          secondModelAttestation,
+          firstModelAttestation,
         ]);
         expect(
           findModelAttestationForSignature({

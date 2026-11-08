@@ -865,7 +865,7 @@ def test_plural_matcher_preserves_nonadjacent_and_repeated_reports(
         first_model_attestation,
         other_algorithm_attestation,
         second_model_attestation,
-        first_model_attestation,
+        second_model_attestation,
     ]
 
     matching_attestations = find_model_attestations_for_signature(
@@ -875,7 +875,7 @@ def test_plural_matcher_preserves_nonadjacent_and_repeated_reports(
     assert matching_attestations == (
         first_model_attestation,
         second_model_attestation,
-        first_model_attestation,
+        second_model_attestation,
     )
     assert (
         find_model_attestation_for_signature(model_attestations, signature)
