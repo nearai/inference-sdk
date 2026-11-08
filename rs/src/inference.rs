@@ -112,6 +112,10 @@ pub struct AttestationVerificationResult {
 #[derive(Clone, Debug)]
 pub enum VerifiedCompletionAttestation {
     Gateway(VerifiedGatewayAttestation),
+    /// Report used to select the request's model public key, retained for compatibility.
+    #[deprecated(
+        note = "Use VerifiedCompletionResult::attestations for all verified reports sharing the selected model signer."
+    )]
     Model(VerifiedModelAttestation),
     Direct(Vec<crate::direct::VerifiedDirectModelAttestation>),
 }
@@ -119,7 +123,14 @@ pub enum VerifiedCompletionAttestation {
 pub struct VerifiedCompletionResult {
     pub id: String,
     pub signature: CompletionSignature,
+    /// Gateway or Direct evidence, or the deprecated single-model representative.
+    /// For model receipts from a Gateway client, use [`Self::attestations`].
+    /// Gateway-signed receipts and Direct clients continue to use this field.
     pub attestation: VerifiedCompletionAttestation,
+    /// Every verified Gateway model report sharing this response's signer.
+    /// Empty for Gateway-signed receipts and Direct clients, whose reports remain
+    /// in `VerifiedCompletionAttestation::Direct`.
+    pub attestations: Vec<VerifiedModelAttestation>,
 }
 impl VerifiedCompletionResult {
     pub fn signature_kind(&self) -> CompletionSignatureKind {
@@ -366,10 +377,10 @@ impl InferenceClient {
         owned.insert("accept", HeaderValue::from_static("application/json"));
         owned.insert("accept-encoding", HeaderValue::from_static("identity"));
         let session = self.session(model).await?;
-        if let Some(model) = session.model_key() {
+        if let Some(model_key) = session.model_key() {
             owned.insert(
                 "x-model-pub-key",
-                HeaderValue::from_str(&model.public_key)
+                HeaderValue::from_str(&model_key.public_key)
                     .map_err(|_| input("model_key", "invalid header"))?,
             );
         }
@@ -556,13 +567,13 @@ impl InferenceClient {
         headers.remove("trailer");
         *request.headers_mut() = headers;
         let key = if options.e2ee {
-            let model = session.model_key().ok_or_else(|| {
+            let model_key = session.model_key().ok_or_else(|| {
                 protocol(
                     "policy.model_attestation_required",
                     "E2EE requires model evidence",
                 )
             })?;
-            let prepared = prepare_e2ee_chat_request(request, &model)?;
+            let prepared = prepare_e2ee_chat_request(request, &model_key)?;
             request = prepared.request;
             Some(prepared.key)
         } else {
@@ -570,10 +581,10 @@ impl InferenceClient {
             request
                 .headers_mut()
                 .insert(NO_ALIASING_HEADER, HeaderValue::from_static("true"));
-            if let Some(model) = session.model_key().filter(|_| !messages) {
+            if let Some(model_key) = session.model_key().filter(|_| !messages) {
                 request.headers_mut().insert(
                     "x-model-pub-key",
-                    HeaderValue::from_str(&model.public_key)
+                    HeaderValue::from_str(&model_key.public_key)
                         .map_err(|_| input("model_key", "invalid header"))?,
                 );
             }
@@ -760,6 +771,7 @@ impl InferenceClient {
                             }
                             .into());
                         }
+                        let mut attestations = Vec::new();
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {
                                 let gateway = session.gateway.as_ref().ok_or(
@@ -772,13 +784,18 @@ impl InferenceClient {
                                 VerifiedCompletionAttestation::Gateway(gateway.clone())
                             }
                             CompletionSignatureKind::ProviderTee => {
-                                let model = session.selected.as_ref().ok_or(
+                                let selected_model_attestation = session.selected.as_ref().ok_or(
                                     VerificationError::SignatureKindMismatch {
                                         expected: CompletionSignatureKind::Gateway,
                                         actual: signature.kind,
                                     },
                                 )?;
-                                verify_model_response(&request, &response, &signature, model)?;
+                                verify_model_response(
+                                    &request,
+                                    &response,
+                                    &signature,
+                                    selected_model_attestation,
+                                )?;
                                 if let Some(direct) = &session.direct {
                                     let matching = direct
                                         .attestations
@@ -786,14 +803,26 @@ impl InferenceClient {
                                         .filter(|a| {
                                             crate::direct::same_signer(
                                                 &a.attestation.evidence.signer,
-                                                &model.evidence.signer,
+                                                &selected_model_attestation.evidence.signer,
                                             )
                                         })
                                         .cloned()
                                         .collect();
                                     VerifiedCompletionAttestation::Direct(matching)
                                 } else {
-                                    VerifiedCompletionAttestation::Model(model.clone())
+                                    attestations = crate::find_model_attestations_for_signature(
+                                        &session.models,
+                                        &signature,
+                                    )?
+                                    .into_iter()
+                                    .cloned()
+                                    .collect();
+                                    // Preserve the deprecated representative for existing callers.
+                                    #[allow(deprecated)]
+                                    let representative = VerifiedCompletionAttestation::Model(
+                                        selected_model_attestation.clone(),
+                                    );
+                                    representative
                                 }
                             }
                         };
@@ -801,6 +830,7 @@ impl InferenceClient {
                             id,
                             signature,
                             attestation,
+                            attestations,
                         })
                     }
                     .boxed()
@@ -937,7 +967,7 @@ async fn create_session(
         };
         Ok((result, ohttp))
     };
-    let models = async {
+    let model_attestations = async {
         let metadata = api.fetch_model_metadata(model).await?;
         let o = &options.model_verification;
         if metadata.provider_type != "vllm" || !metadata.attestation_supported {
@@ -991,14 +1021,15 @@ async fn create_session(
     };
     // Authenticate the Gateway before sending configured credentials to it.
     let (gateway, ohttp) = gateway.await?;
-    let models = models.await?;
-    let selected = models
+    let model_attestations = model_attestations.await?;
+    let selected_model_attestation = model_attestations
         .iter()
-        .find(|m| {
-            m.evidence.signer.signing_algo == options.signing_algo && m.signing_public_key.is_some()
+        .find(|model_attestation| {
+            model_attestation.evidence.signer.signing_algo == options.signing_algo
+                && model_attestation.signing_public_key.is_some()
         })
         .cloned();
-    if !models.is_empty() && selected.is_none() {
+    if !model_attestations.is_empty() && selected_model_attestation.is_none() {
         return Err(protocol(
             "e2ee.model_public_key_required",
             "no matching verified model public key",
@@ -1007,8 +1038,8 @@ async fn create_session(
     }
     Ok(Arc::new(Session {
         gateway: Some(gateway),
-        models,
-        selected,
+        models: model_attestations,
+        selected: selected_model_attestation,
         direct: None,
         verified_at: verified_at(),
         client,
@@ -1062,6 +1093,7 @@ mod cache_tests {
                 },
             },
             attestation: VerifiedCompletionAttestation::Direct(Vec::new()),
+            attestations: Vec::new(),
         }
     }
 

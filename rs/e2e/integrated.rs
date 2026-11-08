@@ -132,13 +132,38 @@ async fn verify_chat(
             assert!(!verified.models.is_empty(), "Expected NEAR model evidence");
             for report in &verified.models {
                 assert_eq!(report.gpu_evidence, GpuEvidenceStatus::Verified);
-                assert!(report.signing_public_key.is_some());
             }
         } else {
             assert!(
                 verified.models.is_empty(),
                 "Expected Gateway-only verification"
             );
+        }
+        if receipt.signature_kind() == CompletionSignatureKind::ProviderTee {
+            let selected = verified
+                .models
+                .iter()
+                .find(|report| {
+                    report.evidence.signer.signing_algo == signing_algo
+                        && report.signing_public_key.is_some()
+                })
+                .expect("Expected a verified model key");
+            assert!(super::same_signer(
+                &receipt.signature.signer,
+                &selected.evidence.signer
+            ));
+            let expected: Vec<_> = verified
+                .models
+                .iter()
+                .filter(|report| {
+                    super::same_signer(&report.evidence.signer, &selected.evidence.signer)
+                })
+                .cloned()
+                .collect();
+            assert_eq!(receipt.attestations, expected);
+            assert_eq!(cached_receipt.attestations, expected);
+        } else {
+            assert!(receipt.attestations.is_empty());
         }
         println!(
             "integrated {signing_algo}, e2ee={e2ee}, ohttp={ohttp}, stream={stream}: verified {:?} receipt",

@@ -129,8 +129,7 @@ request; incomplete or failed streams are not registered for verification.
 The [direct OpenAI example](../examples/example-go/direct/chat-completions-with-openai-sdk/main.go) uses
 `NewDirectInferenceClient` with the same OpenAI HTTP adapter for encrypted JSON
 and streaming Chat. Direct endpoints are experimental: they omit Gateway
-verification and do not bind direct TLS identity to attestation. Normal HTTPS
-validation remains enabled. Use Gateway clients for production.
+verification and use standard HTTPS without attested TLS pinning.
 
 The Gateway adapter accepts POSTs to its configured `chat/completions` and
 `responses` and `messages` endpoints. See [Responses](./docs/verification-guide.md#responses-api)
@@ -151,7 +150,7 @@ are preserved; the SDK encrypts only the documented protocol fields.
 | Ed25519 and ECDSA | `SigningAlgo` | Ed25519 |
 | Field E2EE | `E2EE`, `PrepareE2EEChatRequest` | Off; set `E2EE: true` to enable |
 | Chunked OHTTP / BHTTP | `OHTTP`, `NewOHTTPTransport`, `VerifyOHTTPKeyConfig` | Off; requires Ed25519 |
-| Deployment preflight/cache | `Verify`, `AttestationTTL` | One hour; shared in-flight verification |
+| Deployment preflight/cache | `Verify`, `AttestationTTL` | One hour |
 | Retained response records | `ResponseTTL` | One hour from full body consumption |
 | Deployment admission policy | `DeploymentPolicy`, `VerificationOptions` | Caller supplied |
 | GitHub/Sigstore image provenance | `FetchImageProvenance`, `VerifyImageProvenance`, `VerifyDeploymentImageProvenance` | Caller supplied |

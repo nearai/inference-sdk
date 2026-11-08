@@ -58,7 +58,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(verify.call_args.args[1], body)
 
                     completion = await gateway.send_completion(
-                        client, 'test', SimpleNamespace(key=None), stream=streaming
+                        client, 'test', None, stream=streaming
                     )
                     self.assertEqual(completion.response_body, body)
 

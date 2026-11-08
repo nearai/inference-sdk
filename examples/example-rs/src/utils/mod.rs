@@ -3,7 +3,6 @@ use futures_util::{Stream, StreamExt};
 use nearai_inference_sdk::*;
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
     error::Error,
     io::{self, Write},
 };
@@ -25,34 +24,6 @@ pub fn request(base: &str, key: &str, stream: bool) -> Result<reqwest::Request> 
         .header("x-no-aliasing", "true")
         .json(&body(stream))
         .build()?)
-}
-// Required Gateway build provenance. Add commit pins for stricter policies.
-pub struct GatewayImages;
-#[async_trait::async_trait]
-impl DeploymentVerifier for GatewayImages {
-    async fn verify(
-        &self,
-        deployment: &MeasuredDeployment,
-    ) -> std::result::Result<(), VerificationError> {
-        let policies: BTreeMap<_, _> = [
-            ("cloud-api", "build.yml"),
-            ("cvm-ingress", "build-push.yml"),
-            ("dstack-vpc", "build.yml"),
-            ("dstack-vpc-client", "build.yml"),
-        ]
-        .into_iter()
-        .map(|(name, workflow)| {
-            (
-                format!("nearaidev/{name}"),
-                ImageProvenancePolicy::new(
-                    format!("nearai/{name}"),
-                    format!(".github/workflows/{workflow}"),
-                ),
-            )
-        })
-        .collect();
-        verify_deployment_image_provenance(&deployment.app_compose, &policies, None).await
-    }
 }
 // Called after EOF, so receipt verification covers the complete response.
 pub fn completion_id(bytes: &[u8], stream: bool) -> Result<String> {
@@ -241,38 +212,6 @@ pub fn algo() -> Result<SigningAlgo> {
 }
 pub fn ohttp() -> bool {
     std::env::var("NEARAI_OHTTP").is_ok_and(|v| v == "true")
-}
-
-pub struct ModelImages;
-#[async_trait::async_trait]
-impl DeploymentVerifier for ModelImages {
-    async fn verify(
-        &self,
-        deployment: &MeasuredDeployment,
-    ) -> std::result::Result<(), VerificationError> {
-        let policies = BTreeMap::from([(
-            "nearaidev/vllm-proxy-rs".into(),
-            ImageProvenancePolicy::new(
-                "nearai/inference-proxy".into(),
-                ".github/workflows/build.yml".into(),
-            ),
-        )]);
-        let manager = ComposeManagerImagePolicy {
-            image_repository: "nearaidev/compose-manager".into(),
-            build: ImageProvenancePolicy::new(
-                "nearai/compose-manager".into(),
-                ".github/workflows/build.yml".into(),
-            ),
-            signer_identity: None,
-        };
-        verify_compose_manager_deployment_image_provenance(
-            deployment,
-            &policies,
-            &manager,
-            Default::default(),
-        )
-        .await
-    }
 }
 
 #[cfg(test)]

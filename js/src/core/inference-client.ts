@@ -53,6 +53,7 @@ import {
   AttestationClient,
   CloudApiClient,
   createCloudApiRequestConfiguration,
+  findModelAttestationsForSignature,
   mergeCloudApiRequestHeaders,
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
@@ -217,7 +218,7 @@ class GatewaySessionEvidenceClient extends CloudApiClient {
   }
 }
 
-type VerifyModelsParams = {
+type VerifyModelAttestationsParams = {
   readonly model: string;
   readonly transport: GatewaySessionTransport;
   readonly signal: AbortSignal;
@@ -909,7 +910,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       fetchCompletionSignature: (params) =>
         client.fetchCompletionSignature(params),
     };
-    const modelAttestations = await this.verifyModels({
+    const modelAttestations = await this.verifyModelAttestations({
       model,
       transport,
       signal,
@@ -919,19 +920,22 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       controller.abort(cause);
       throw cause;
     });
-    const modelAttestation = modelAttestations.find(
+    const selectedModelAttestation = modelAttestations.find(
       (attestation) =>
         attestation.signer.signingAlgo === this.signingAlgo &&
         attestation.signingPublicKey !== undefined,
     );
-    if (modelAttestations.length > 0 && modelAttestation === undefined) {
+    if (
+      modelAttestations.length > 0 &&
+      selectedModelAttestation === undefined
+    ) {
       throw new VerificationError({ code: 'e2ee.model_public_key_required' });
     }
     const modelKey =
-      modelAttestation?.signingPublicKey !== undefined
+      selectedModelAttestation?.signingPublicKey !== undefined
         ? {
             signingAlgo: this.signingAlgo,
-            publicKey: modelAttestation.signingPublicKey,
+            publicKey: selectedModelAttestation.signingPublicKey,
           }
         : undefined;
     return {
@@ -947,7 +951,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       },
       verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         if (signature.kind === 'provider_tee') {
-          if (modelAttestation === undefined) {
+          if (selectedModelAttestation === undefined) {
             throw new VerificationError({
               code: 'signature.kind_mismatch',
               details: { expected: 'gateway', actual: signature.kind },
@@ -957,14 +961,19 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             requestBody,
             responseBody,
             signature,
-            attestation: modelAttestation,
+            attestation: selectedModelAttestation,
+          });
+          const matchingAttestations = findModelAttestationsForSignature({
+            attestations: modelAttestations,
+            signature,
           });
           return {
             id,
             completionId: id,
             signatureKind: 'provider_tee',
             signature,
-            attestation: modelAttestation,
+            attestations: matchingAttestations,
+            attestation: selectedModelAttestation,
           };
         }
         verifyGatewayResponse({
@@ -985,11 +994,11 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   }
 
   /** NEAR deployments use model evidence; Incognito sessions verify only the Gateway. */
-  private async verifyModels({
+  private async verifyModelAttestations({
     model,
     transport,
     signal,
-  }: VerifyModelsParams): Promise<VerifiedModelAttestation[]> {
+  }: VerifyModelAttestationsParams): Promise<VerifiedModelAttestation[]> {
     const metadata = await transport.fetchModelMetadata(model);
     signal.throwIfAborted();
     if (metadata.providerType !== 'vllm' || !metadata.attestationSupported) {
@@ -1007,22 +1016,22 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       return [];
     }
 
-    const fetchedModels = await transport.fetchModelAttestations({
+    const fetchedModelAttestations = await transport.fetchModelAttestations({
       model,
       signingAlgo: this.signingAlgo,
     });
     signal.throwIfAborted();
-    if (fetchedModels.attestations.length === 0) {
+    if (fetchedModelAttestations.attestations.length === 0) {
       throw new VerificationError({
         code: 'policy.model_attestation_required',
       });
     }
     const modelVerifiers = this.getModelVerifiers(model);
     const attestations = await Promise.all(
-      fetchedModels.attestations.map((attestation) =>
+      fetchedModelAttestations.attestations.map((attestation) =>
         verifyModelAttestation({
           attestation,
-          clientBinding: fetchedModels.clientBinding,
+          clientBinding: fetchedModelAttestations.clientBinding,
           policy: this.gatewayOptions.modelVerification?.policy,
           verifiers: modelVerifiers,
         }),

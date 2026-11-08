@@ -4,10 +4,7 @@ Use `InferenceClient` for Chat Completions with deployment verification and opti
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
-These clients connect through the NEAR AI Cloud Gateway. For a model's own
-`*.completions.near.ai` endpoint, the
-[direct clients](#use-a-direct-model-endpoint) are experimental and not
-recommended for production. Use Gateway clients for production integrations.
+To connect to a model endpoint, use the experimental [Direct client](#use-a-direct-model-endpoint).
 
 `InferenceClient` first verifies Gateway evidence without authentication headers.
 On a model-session cache miss, it then uses configured authentication for model
@@ -120,31 +117,17 @@ const completion = await client.chat.completions.create({
 });
 ```
 
-`verify(model)` sends no Chat request. It performs the same Gateway and model
-checks as Chat, including configured policies, and rejects if they fail.
-It returns the verified Gateway, every verified model report, and `verifiedAt`
-(Unix time in milliseconds). For Incognito models, only the Gateway is verified
-and `models` is empty. Results share the cache and in-flight verification with
-Chat, so opening a details view can call `verify(model)` without fetching and
-verifying evidence again while the result is cached. It also works
-when using the client's `fetch` with the OpenAI SDK. `DirectInferenceClient`
-returns the full verified direct-attestation set, endpoint TLS binding, and
-`verifiedAt` through the same method.
+`verify(model)` returns Gateway evidence, every verified model report, and `verifiedAt`
+(Unix milliseconds). Incognito models return Gateway evidence and an empty `models` list.
+For a direct endpoint, `DirectInferenceClient.verify(model)` returns the model reports and TLS binding.
 
 Each verified attestation includes its original input under `report`, including
 the quote, event log, and any NVIDIA payload. The sibling fields such as
 `signer`, `tcbStatus`, and `deployment` contain the verification conclusions.
 Endpoint metadata in `report` is not an additional authenticated claim.
 
-`attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
-requests for the same model share verification work and cached results across
-`verify(model)`, Chat, Responses, Messages, and System One.
-The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
-so the UI can show when the evidence was actually verified. A later Chat request
-reuses that result while it is cached. Increase the value to check deployments less
-frequently, or set `0` to verify before every request, even after `verify(model)`.
-Deployment changes are not checked while a cached result is reused.
-This setting controls caching, not attestation validity.
+Deployment verification is cached per model for one hour by default.
+Set `attestationCacheTimeToLiveMs` to `0` to verify before each request.
 
 This verifies the deployment, not a particular reply. Use `verifyResponse(completion.id)`
 after receiving the reply to verify its signature.
@@ -534,12 +517,7 @@ if (completionId !== undefined) {
 }
 ```
 
-Each ID identifies its own request bytes, response bytes, and verified deployment
-evidence. Concurrent requests can finish in any order. Repeated verification of
-the same ID shares the in-flight operation and its result. After a retryable
-API failure or `api.completion_signature_unavailable`, call `verifyResponse(id)`
-again to retry the signature lookup. Successful results and other non-retryable
-failures remain cached, and their original request and response bytes are released.
+After a retryable receipt lookup error, call `verifyResponse(id)` again.
 
 Unverified responses and retryable lookups retain complete bodies in memory.
 All response records, including cached verification results, expire
@@ -589,18 +567,7 @@ With raw `client.fetch()`, consume the returned response body before verificatio
 
 ## Use a direct model endpoint
 
-> **Experimental — not recommended for production.** This applies to both
-> `DirectInferenceClient` and `DirectAttestationClient` in the browser and Node
-> entry points. Use the Gateway `InferenceClient` or `AttestationClient` for production.
-
-Known endpoint limitations affect the direct flow:
-
-- `all_attestations` may contain only the instance handling the attestation
-  request. Preflight can therefore miss other CVMs, including a later serving
-  instance with a different TLS key, and cannot establish a complete set of
-  fleet TLS pins. Verifying all returned reports does not verify every backend CVM.
-- Completion signatures are stored per instance. `/signature/{id}` may return
-  `404` when Chat and signature lookup reach different instances.
+Direct clients are experimental.
 
 `DirectInferenceClient` verifies the model endpoint without a Gateway preflight
 or model-metadata lookup.
@@ -624,9 +591,11 @@ Use `client.chat.completions.create()`, `client.fetch`, and
 credentials from the Gateway and use separate fetch and verification APIs.
 
 The client selects a verified model key for routing and E2EE; response signatures
-must match that selected signer. Both entry points request
-`include_tls_fingerprint=false`. Direct TLS fingerprint binding and pinning are
-currently disabled; standard HTTPS certificate validation still applies.
+must match that selected signer.
+
+Direct uses standard HTTPS. The inference request can reach a different instance
+from the one verified during preflight. With E2EE disabled, that instance receives
+the plaintext prompt.
 
 ### Verify direct evidence manually
 
@@ -701,19 +670,19 @@ const pinnedTlsFetch = createPinnedTlsFetch(
   gateway.tlsBinding.spkiFingerprint,
 );
 
-const fetchedModels = await client.fetchModelAttestations({
+const fetchedModelAttestations = await client.fetchModelAttestations({
   model,
   signingAlgo: 'ed25519',
 });
-if (fetchedModels.attestations.length === 0) {
+if (fetchedModelAttestations.attestations.length === 0) {
   throw new Error('Gateway returned no model attestation');
 }
 
-const models = await Promise.all(
-  fetchedModels.attestations.map((attestation) =>
+const modelAttestations = await Promise.all(
+  fetchedModelAttestations.attestations.map((attestation) =>
     verifyModelAttestation({
       attestation,
-      clientBinding: fetchedModels.clientBinding,
+      clientBinding: fetchedModelAttestations.clientBinding,
     }),
   ),
 );
@@ -741,12 +710,14 @@ verification.
 ```ts
 import { prepareE2eeChatRequest } from '@nearai/inference-sdk/node';
 
-const modelAttestation = models.find(
-  (attestation) => attestation.signingPublicKey !== undefined,
+const selectedModelAttestation = modelAttestations.find(
+  (attestation) =>
+    attestation.signer.signingAlgo === 'ed25519' &&
+    attestation.signingPublicKey !== undefined,
 );
 if (
-  modelAttestation === undefined ||
-  modelAttestation.signingPublicKey === undefined
+  selectedModelAttestation === undefined ||
+  selectedModelAttestation.signingPublicKey === undefined
 ) {
   throw new Error('No verified model key is available');
 }
@@ -765,8 +736,8 @@ const request = new Request('https://cloud-api.near.ai/v1/chat/completions', {
 const prepared = await prepareE2eeChatRequest({
   request,
   modelKey: {
-    signingAlgo: modelAttestation.signer.signingAlgo,
-    publicKey: modelAttestation.signingPublicKey,
+    signingAlgo: selectedModelAttestation.signer.signingAlgo,
+    publicKey: selectedModelAttestation.signingPublicKey,
   },
 });
 const requestBytes = await prepared.request.clone().arrayBuffer();
@@ -779,7 +750,6 @@ const [responseBytes, plaintext] = await Promise.all([
   response.text(),
 ]);
 const responseBody = new Uint8Array(responseBytes);
-console.log(plaintext);
 ```
 
 Pass the captured `requestBody` and `responseBody` to the response-signature
@@ -825,10 +795,7 @@ trusted GitHub repository and workflow. Every reference to a listed image must
 have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
 verified. For `InferenceClient`, pass the same callback as
-`gatewayVerification.verifiers.deployment`; see the runnable
-[client example](../../examples/example-js/gateway/chat-completions.ts) and
-[bare example](../../examples/example-js/gateway/chat-completions-bare.ts), which require build provenance
-for four Gateway images.
+`gatewayVerification.verifiers.deployment`.
 
 The checks cover signatures, certificates, transparency-log evidence, artifact
 digests, and signed SLSA source. Each source commit must match the certificate's
@@ -887,10 +854,10 @@ const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
   },
 };
 
-for (const attestation of fetchedModels.attestations) {
+for (const attestation of fetchedModelAttestations.attestations) {
   await verifyModelAttestation({
     attestation,
-    clientBinding: fetchedModels.clientBinding,
+    clientBinding: fetchedModelAttestations.clientBinding,
     verifiers: {
       deployment: deployment =>
         verifyComposeManagerDeploymentImageProvenance({
@@ -953,13 +920,16 @@ successful verification:
 | `provider_tee` | The verified model attestation selected for the request | The model-serving TEE signer signed the exact request and response body bytes. |
 | `gateway` | The verified Gateway attestation | The Gateway signer signed the exact client-visible request and response body bytes. |
 
+The Gateway may normalize streaming responses and sign the resulting bytes, so
+use the returned signature kind even for an attested model.
+
 For an E2EE request, preserve the encrypted JSON body bytes—not the plaintext
 object after decryption. Do not parse and reserialize either body before
 verification.
 
 ```ts
 import {
-  findModelAttestationForSignature,
+  findModelAttestationsForSignature,
   verifyGatewayResponse,
   verifyModelResponse,
 } from '@nearai/inference-sdk/node';
@@ -970,16 +940,18 @@ const signature = await client.fetchCompletionSignature({
 });
 
 if (signature.kind === 'provider_tee') {
-  const attestation = findModelAttestationForSignature({
-    attestations: [modelAttestation],
-    signature,
-  });
+  // Preserve the routing/encryption key selected before sending the request.
   verifyModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestation,
+    attestation: selectedModelAttestation,
   });
+  const matchingAttestations = findModelAttestationsForSignature({
+    attestations: modelAttestations,
+    signature,
+  });
+  console.log(`Verified signature against ${matchingAttestations.length} matching reports.`);
 } else {
   verifyGatewayResponse({
     requestBody,
@@ -988,7 +960,10 @@ if (signature.kind === 'provider_tee') {
     attestation: gateway,
   });
 }
+console.log(plaintext);
 ```
+
+For model receipts, `result.attestations` contains every verified report sharing the selected signer.
 
 A Gateway signature does not establish which model generated the response.
 A model signature does not authenticate the Gateway deployment. Verify both

@@ -3,14 +3,16 @@ import { test } from 'node:test';
 import OpenAI from 'openai';
 import { InferenceClient as GenericInferenceClient } from '../dist/index.js';
 import type {
+  AttestationVerificationResult,
   InferenceChat,
   InferenceClientOptions,
   SigningAlgo,
+  VerifiedCompletionResult,
 } from '../dist/node.js';
 import {
   AttestationClient,
   createPinnedTlsFetch,
-  findModelAttestationForSignature,
+  findModelAttestationsForSignature,
   InferenceClient,
   VerificationError,
   verifyGatewayAttestation,
@@ -18,7 +20,12 @@ import {
   verifyModelAttestation,
   verifyModelResponse,
 } from '../dist/node.js';
-import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
+import {
+  requiredEnv,
+  retryReceipt,
+  sameSigner,
+  selectedModels,
+} from './helpers.ts';
 
 type LiveModel = {
   id: string;
@@ -92,6 +99,7 @@ for (const { id: model } of MODELS.filter(
           assert.equal(report.gpuEvidence, 'verified');
         await verifyClientCompletions({
           inferenceClient,
+          preflight,
           model,
           chat: official
             ? new OpenAI({
@@ -118,7 +126,7 @@ for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
         baseUrl: BASE_URL,
         e2ee: false,
       });
-      await inferenceClient.verify(model.id);
+      const preflight = await inferenceClient.verify(model.id);
       const chat = official
         ? new OpenAI({
             apiKey: API_KEY,
@@ -139,9 +147,11 @@ for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
           inferenceClient.verifyResponse(completion.id),
         );
         assert.equal(verified.signature.kind, 'gateway');
+        assertReceiptEvidence(verified, preflight);
       } else {
         await verifyClientCompletions({
           inferenceClient,
+          preflight,
           chat,
           model: model.id,
           expectedSignatureKind: 'gateway',
@@ -162,12 +172,14 @@ test('Generic entry verifies JSON and SSE without peer TLS binding', {
   });
   await verifyClientCompletions({
     inferenceClient,
+    preflight: await inferenceClient.verify(CHAT_REQUEST.model),
     chat: inferenceClient.chat,
   });
 });
 
 type VerifyClientCompletionsParams = {
   inferenceClient: Pick<InferenceClient, 'verifyResponse'>;
+  preflight: AttestationVerificationResult;
   chat: InferenceChat;
   signingAlgo?: SigningAlgo;
   model?: string;
@@ -176,6 +188,7 @@ type VerifyClientCompletionsParams = {
 
 async function verifyClientCompletions({
   inferenceClient,
+  preflight,
   chat,
   signingAlgo = 'ed25519',
   model = CHAT_REQUEST.model,
@@ -192,6 +205,7 @@ async function verifyClientCompletions({
     inferenceClient.verifyResponse(completion.id),
   );
   assert.equal(verified.signature.signer.signingAlgo, signingAlgo);
+  assertReceiptEvidence(verified, preflight);
   if (expectedSignatureKind) {
     assert.equal(verified.signature.kind, expectedSignatureKind);
   }
@@ -218,8 +232,31 @@ async function verifyClientCompletions({
     inferenceClient.verifyResponse(streamedId),
   );
   assert.equal(verifiedStream.signature.signer.signingAlgo, signingAlgo);
+  assertReceiptEvidence(verifiedStream, preflight);
   if (expectedSignatureKind) {
     assert.equal(verifiedStream.signature.kind, expectedSignatureKind);
+  }
+}
+
+function assertReceiptEvidence(
+  receipt: VerifiedCompletionResult,
+  preflight: AttestationVerificationResult,
+): void {
+  if (receipt.signatureKind === 'provider_tee') {
+    const selected = preflight.models.find(
+      (report) =>
+        report.signer.signingAlgo === receipt.signature.signer.signingAlgo &&
+        report.signingPublicKey !== undefined,
+    );
+    assert.ok(selected);
+    const expected = preflight.models.filter((report) =>
+      sameSigner(report.signer, selected.signer),
+    );
+    assert.ok(sameSigner(receipt.signature.signer, selected.signer));
+    assert.deepEqual(receipt.attestations, expected);
+  } else {
+    assert.equal(receipt.attestation, preflight.gateway);
+    assert.equal('attestations' in receipt, false);
   }
 }
 
@@ -228,11 +265,11 @@ for (const selectedModel of MODELS) {
     test(`Standalone APIs handle ${selectedModel.provider} Chat: ${selectedModel.id}, ${signingAlgo}`, {
       timeout: 180_000,
     }, async () => {
-      const client = new AttestationClient({
+      const attestationClient = new AttestationClient({
         apiKey: API_KEY,
         baseUrl: BASE_URL,
       });
-      const fetchedGateway = await client.fetchGatewayAttestation({
+      const fetchedGateway = await attestationClient.fetchGatewayAttestation({
         signingAlgo,
       });
       const gateway = await verifyGatewayAttestation({
@@ -247,25 +284,31 @@ for (const selectedModel of MODELS) {
         gateway.tlsBinding.spkiFingerprint,
       );
 
-      const models = [];
+      const modelAttestations = [];
       if (selectedModel.provider === 'near') {
-        const fetchedModels = await client.fetchModelAttestations({
-          model: selectedModel.id,
-          signingAlgo,
-        });
+        const fetchedModelAttestations =
+          await attestationClient.fetchModelAttestations({
+            model: selectedModel.id,
+            signingAlgo,
+          });
         assert.ok(
-          fetchedModels.attestations.length > 0,
+          fetchedModelAttestations.attestations.length > 0,
           'Expected NEAR model evidence',
         );
-        for (const attestation of fetchedModels.attestations) {
-          const model = await verifyModelAttestation({
+        for (const attestation of fetchedModelAttestations.attestations) {
+          const modelAttestation = await verifyModelAttestation({
             attestation,
-            clientBinding: fetchedModels.clientBinding,
+            clientBinding: fetchedModelAttestations.clientBinding,
             policy: { gpuEvidence: 'required' },
           });
-          models.push(model);
+          modelAttestations.push(modelAttestation);
         }
       }
+      const selectedAttestation = modelAttestations.find(
+        (report) =>
+          report.signer.signingAlgo === signingAlgo && report.signingPublicKey,
+      );
+      if (selectedModel.provider === 'near') assert.ok(selectedAttestation);
 
       // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
       // so its live case uses JSON only.
@@ -284,6 +327,9 @@ for (const selectedModel of MODELS) {
               'Content-Type': 'application/json',
               'Accept-Encoding': 'identity',
               'x-no-aliasing': 'true',
+              ...(selectedAttestation?.signingPublicKey && {
+                'X-Model-Pub-Key': selectedAttestation.signingPublicKey,
+              }),
             },
             body: requestBody,
           },
@@ -292,7 +338,10 @@ for (const selectedModel of MODELS) {
         const responseBody = new Uint8Array(await response.arrayBuffer());
         const id = readCompletionId({ responseBody, stream });
         const signature = await retryReceipt(() =>
-          client.fetchCompletionSignature({ completionId: id, signingAlgo }),
+          attestationClient.fetchCompletionSignature({
+            completionId: id,
+            signingAlgo,
+          }),
         );
         assert.equal(signature.signer.signingAlgo, signingAlgo);
         if (selectedModel.provider !== 'near') {
@@ -301,12 +350,24 @@ for (const selectedModel of MODELS) {
         // Changing even whitespace must invalidate the receipt's byte binding.
         const altered = new Uint8Array([...responseBody, 0x20]);
         if (signature.kind === 'provider_tee') {
-          const attestation = findModelAttestationForSignature({
-            attestations: models,
+          assert.ok(selectedAttestation);
+          const params = {
+            requestBody,
+            responseBody,
+            signature,
+            attestation: selectedAttestation,
+          };
+          verifyModelResponse(params);
+          const matchingAttestations = findModelAttestationsForSignature({
+            attestations: modelAttestations,
             signature,
           });
-          const params = { requestBody, responseBody, signature, attestation };
-          verifyModelResponse(params);
+          assert.deepEqual(
+            matchingAttestations,
+            modelAttestations.filter((report) =>
+              sameSigner(report.signer, selectedAttestation.signer),
+            ),
+          );
           assert.throws(
             () => verifyModelResponse({ ...params, responseBody: altered }),
             VerificationError,

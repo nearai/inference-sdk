@@ -1,7 +1,6 @@
 import type {
   E2eeModelKey,
   GatewayTlsBinding,
-  ImageProvenancePolicy,
   SigningAlgo,
   VerifiedGatewayAttestation,
   VerifiedModelAttestation,
@@ -9,9 +8,8 @@ import type {
 import {
   AttestationClient,
   createPinnedTlsFetch,
+  findModelAttestationsForSignature,
   prepareE2eeChatRequest,
-  verifyComposeManagerDeploymentImageProvenance,
-  verifyDeploymentImageProvenance,
   verifyGatewayAttestation,
   verifyGatewayResponse,
   verifyModelAttestation,
@@ -19,8 +17,9 @@ import {
 } from '@nearai/inference-sdk/node';
 import { readChatOutput } from '../utils/chat-output.ts';
 
-// This example composes the SDK's standalone APIs: verify deployments, encrypt
+// This example composes the SDK's standalone APIs: verify attestations, encrypt
 // and send Chat requests, decrypt responses, then verify their signatures.
+const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL = `${(
   process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/'
 ).replace(/\/+$/, '')}/`;
@@ -28,112 +27,63 @@ const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
 
-// Require GitHub build provenance for these Gateway images. Add a reviewed
-// `commit` to pin a specific build.
-const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
-  'nearaidev/cloud-api': {
-    repository: 'nearai/cloud-api',
-    workflow: '.github/workflows/build.yml',
-  },
-  'nearaidev/cvm-ingress': {
-    repository: 'nearai/cvm-ingress',
-    workflow: '.github/workflows/build-push.yml',
-  },
-  'nearaidev/dstack-vpc': {
-    repository: 'nearai/dstack-vpc',
-    workflow: '.github/workflows/build.yml',
-  },
-  'nearaidev/dstack-vpc-client': {
-    repository: 'nearai/dstack-vpc-client',
-    workflow: '.github/workflows/build.yml',
-  },
-};
-
-const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
-  'nearaidev/vllm-proxy-rs': {
-    repository: 'nearai/inference-proxy',
-    workflow: '.github/workflows/build.yml',
-  },
-};
-
 await main();
 
 async function main(): Promise<void> {
-  const apiKey = process.env.NEARAI_API_KEY;
-  if (!apiKey) {
+  if (!API_KEY) {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const client = new AttestationClient({ apiKey, baseUrl: BASE_URL });
+  const attestationClient = new AttestationClient({
+    apiKey: API_KEY,
+    baseUrl: BASE_URL,
+  });
 
   // Verify the Gateway and every returned model report before sending a prompt.
   // A failed check throws and stops this flow before either Chat request.
-  const gateway = await fetchAndVerifyGateway(client);
-  const models = await fetchAndVerifyModelAttestations(client);
+  const gateway = await fetchAndVerifyGateway(attestationClient);
+  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
+  const modelAttestations =
+    await fetchAndVerifyModelAttestations(attestationClient);
 
   // Encryption needs only the verified public key and its algorithm. Keep the
   // full model verification result separately for the response signature check.
-  const model = findModelAttestationForEncryption(models);
+  const selectedModelAttestation =
+    findModelAttestationForEncryption(modelAttestations);
   const modelKey: E2eeModelKey = {
-    signingAlgo: model.signer.signingAlgo,
-    publicKey: model.signingPublicKey,
+    signingAlgo: selectedModelAttestation.signer.signingAlgo,
+    publicKey: selectedModelAttestation.signingPublicKey,
   };
 
-  // TLS pinning is recommended in Node. In browsers, use regular fetch instead;
-  // browser APIs do not expose the TLS peer certificate needed for this check.
-  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
-
   // Non-streaming: decrypt the JSON response, verify its signature, then display it.
-  const nonStreamingCompletion = await runNonStreamingExample({
-    apiKey,
-    pinnedTlsFetch,
-    modelKey,
-  });
-  await verifyCompletionResponse({
-    client,
-    completion: nonStreamingCompletion,
-    gateway,
-    model,
-  });
-
-  // Streaming: display decrypted SSE as it arrives. Signature verification needs
-  // the complete response bytes, so it runs after the stream finishes.
-  const streamingCompletion = await runStreamingExample({
-    apiKey,
-    pinnedTlsFetch,
-    modelKey,
-  });
-  await verifyCompletionResponse({
-    client,
-    completion: streamingCompletion,
-    gateway,
-    model,
-  });
-}
-
-async function runNonStreamingExample({
-  apiKey,
-  pinnedTlsFetch,
-  modelKey,
-}: CompletionExampleParams): Promise<Completion> {
-  return sendCompletion({
-    apiKey,
+  const nonStreamingCompletion = await sendCompletion({
+    apiKey: API_KEY,
     stream: false,
     pinnedTlsFetch,
     modelKey,
   });
-}
+  await verifyCompletionResponse({
+    client: attestationClient,
+    completion: nonStreamingCompletion,
+    gateway,
+    modelAttestations,
+    selectedModelAttestation,
+  });
 
-async function runStreamingExample({
-  apiKey,
-  pinnedTlsFetch,
-  modelKey,
-}: CompletionExampleParams): Promise<Completion> {
-  return sendCompletion({
-    apiKey,
+  // Streaming: display decrypted SSE as it arrives. Signature verification needs
+  // the complete response bytes, so it runs after the stream finishes.
+  const streamingCompletion = await sendCompletion({
+    apiKey: API_KEY,
     stream: true,
     pinnedTlsFetch,
     modelKey,
+  });
+  await verifyCompletionResponse({
+    client: attestationClient,
+    completion: streamingCompletion,
+    gateway,
+    modelAttestations,
+    selectedModelAttestation,
   });
 }
 
@@ -145,20 +95,11 @@ async function fetchAndVerifyGateway(
   const fetched = await client.fetchGatewayAttestation({
     signingAlgo: SIGNING_ALGO,
   });
-  // Verify the quote, nonce, measurements, and signer/TLS binding. The deployment
-  // callback checks image provenance after appCompose has been authenticated.
   const verified = await verifyGatewayAttestation({
     attestation: fetched.attestation,
     clientBinding: fetched.clientBinding,
-    verifiers: {
-      deployment: ({ appCompose }) =>
-        verifyDeploymentImageProvenance({
-          appCompose,
-          imagePolicies: GATEWAY_IMAGE_POLICIES,
-        }),
-    },
   });
-  console.log('Gateway deployment and image provenance: verified.');
+  console.log('Gateway attestation verified.');
   return verified;
 }
 
@@ -182,23 +123,10 @@ async function fetchAndVerifyModelAttestations(
       verifyModelAttestation({
         attestation,
         clientBinding: fetched.clientBinding,
-        // Authenticate the recorded deployment file and required image builds.
-        verifiers: {
-          deployment: (deployment) =>
-            verifyComposeManagerDeploymentImageProvenance({
-              deployment,
-              imagePolicies: MODEL_IMAGE_POLICIES,
-              composeManagerImagePolicy: {
-                imageRepository: 'nearaidev/compose-manager',
-                repository: 'nearai/compose-manager',
-                workflow: '.github/workflows/build.yml',
-              },
-            }),
-        },
       }),
     ),
   );
-  console.log(`Model deployments: verified ${verified.length}.`);
+  console.log(`Verified ${verified.length} model attestations.`);
   return verified;
 }
 
@@ -289,7 +217,8 @@ async function verifyCompletionResponse({
   client,
   completion,
   gateway,
-  model,
+  modelAttestations,
+  selectedModelAttestation,
 }: VerifyCompletionResponseParams): Promise<void> {
   // Retrieve the signature after the full response has been received. The ID is
   // only used for lookup; verification binds the saved bytes to an attested signer.
@@ -304,9 +233,15 @@ async function verifyCompletionResponse({
       requestBody: completion.requestBody,
       responseBody: completion.responseBody,
       signature,
-      attestation: model,
+      attestation: selectedModelAttestation,
     });
-    console.log(`${completion.label}: verified model response signature.`);
+    const matchingAttestations = findModelAttestationsForSignature({
+      attestations: modelAttestations,
+      signature,
+    });
+    console.log(
+      `${completion.label}: verified model response signature (${matchingAttestations.length} matching reports).`,
+    );
   } else {
     // A Gateway signature authenticates the final bytes returned by the Gateway.
     // It does not prove model execution, even though model attestation passed above.
@@ -330,21 +265,19 @@ type Completion = {
   readonly text?: string;
 };
 
-type CompletionExampleParams = {
+type SendCompletionParams = {
+  readonly stream: boolean;
   readonly apiKey: string;
   readonly pinnedTlsFetch: typeof globalThis.fetch;
   readonly modelKey: E2eeModelKey;
-};
-
-type SendCompletionParams = CompletionExampleParams & {
-  readonly stream: boolean;
 };
 
 type VerifyCompletionResponseParams = {
   readonly client: AttestationClient;
   readonly completion: Completion;
   readonly gateway: VerifiedGatewayAttestation;
-  readonly model: VerifiedModelAttestation;
+  readonly modelAttestations: readonly VerifiedModelAttestation[];
+  readonly selectedModelAttestation: VerifiedModelAttestation;
 };
 
 type ModelAttestationWithPublicKey = VerifiedModelAttestation & {

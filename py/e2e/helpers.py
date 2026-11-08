@@ -1,11 +1,19 @@
-"""Shared configuration and receipt-propagation handling for live tests."""
+"""Shared live-test configuration, sample requests and receipt retries."""
 
 import asyncio
 import json
 import os
 from collections.abc import Awaitable, Callable
 
-from nearai_inference_sdk import ApiError
+from nearai_inference_sdk import ApiError, SigningIdentity, SystemOneRequest
+
+
+def same_signer(left: SigningIdentity, right: SigningIdentity) -> bool:
+    return (
+        left.signing_algo == right.signing_algo
+        and left.signing_address.lower().removeprefix('0x')
+        == right.signing_address.lower().removeprefix('0x')
+    )
 
 
 def required_env(name: str) -> str:
@@ -39,3 +47,26 @@ async def retry_receipt[T](lookup: Callable[[], Awaitable[T]]) -> T:
                 raise
         await asyncio.sleep(delay)
     return await lookup()
+
+
+def decision_request() -> SystemOneRequest:
+    return {
+        'model': selected_models('systemone', 'external')[0],
+        'state': {'message': 'I was charged twice for my subscription. Please help.'},
+        'questions': {
+            'billing': {'type': 'noul', 'instructions': 'Is this about billing?'},
+            'team': {
+                'type': 'choice',
+                'instructions': 'Which team should handle this?',
+                'criteria': {
+                    'billing': 'Payments and subscriptions',
+                    'support': 'Technical issues',
+                },
+            },
+            'urgency': {
+                'type': 'score',
+                'instructions': 'How urgent is this request?',
+                'criteria': ['Routine', 'Needs prompt attention', 'Critical'],
+            },
+        },
+    }

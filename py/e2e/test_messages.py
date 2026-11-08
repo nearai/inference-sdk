@@ -80,3 +80,4 @@ async def test_messages_json_and_sse(
                 )
             assert receipt.id == message_id
             assert receipt.signature_kind == 'gateway'
+            assert receipt.signature.signer.signing_algo == signing_algo

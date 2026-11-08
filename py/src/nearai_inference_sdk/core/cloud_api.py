@@ -61,7 +61,11 @@ SIGNATURE_RESPONSE_FIELDS = {
     'signature_kind',
 }
 
-__all__ = ['AttestationClient', 'find_model_attestation_for_signature']
+__all__ = [
+    'AttestationClient',
+    'find_model_attestation_for_signature',
+    'find_model_attestations_for_signature',
+]
 
 
 @dataclass(frozen=True)
@@ -283,11 +287,14 @@ class AttestationClient(_ApiClient):
         )
 
 
-def find_model_attestation_for_signature(
+def find_model_attestations_for_signature(
     attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
     signature: CompletionSignatureReference,
-) -> VerifiedModelAttestation:
-    """Select exactly one verified model deployment for a provider signature."""
+) -> tuple[VerifiedModelAttestation, ...]:
+    """Return all verified reports matching a provider signature's signing identity.
+
+    Use ``verify_model_response`` to verify the response signature.
+    """
 
     if signature.kind != 'provider_tee':
         raise _invalid_input(
@@ -315,12 +322,18 @@ def find_model_attestation_for_signature(
             matches.append(attestation)
     if not matches:
         raise api_failure('api.model_attestation_signer_not_found')
-    if len(matches) != 1:
-        raise api_failure(
-            'api.ambiguous_model_attestation_signer',
-            {'matchingCount': len(matches), 'totalCount': len(attestations)},
-        )
-    return matches[0]
+    return tuple(matches)
+
+
+def find_model_attestation_for_signature(
+    attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
+    signature: CompletionSignatureReference,
+) -> VerifiedModelAttestation:
+    """Return the first verified report matching a provider signature.
+
+    Deprecated: use ``find_model_attestations_for_signature`` for shared signers.
+    """
+    return find_model_attestations_for_signature(attestations, signature)[0]
 
 
 def _authorization_header(api_key: str) -> str:
