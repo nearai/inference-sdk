@@ -378,22 +378,13 @@ pub fn find_model_attestations_for_signature<'a>(
     Ok(matching)
 }
 
-/// Select a unique verified report for a signature's signer.
-/// Prefer [`find_model_attestations_for_signature`] for shared-key deployments.
-/// This compatibility helper rejects multiple matches rather than attributing
-/// a response to an arbitrary instance; it does not verify the signature.
+/// Return the first verified report matching the response signer.
+/// Use [`find_model_attestations_for_signature`] for all matching reports.
 pub fn find_model_attestation_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
 ) -> Result<&'a VerifiedModelAttestation, ApiError> {
-    let matching = find_model_attestations_for_signature(attestations, signature)?;
-    if matching.len() == 1 {
-        return Ok(matching[0]);
-    }
-    Err(ApiError::AmbiguousModelAttestationSigner {
-        matching_count: matching.len(),
-        total_count: attestations.len(),
-    })
+    Ok(find_model_attestations_for_signature(attestations, signature)?[0])
 }
 
 async fn get_cloud_api_response(

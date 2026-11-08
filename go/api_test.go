@@ -119,22 +119,21 @@ func TestFindModelAttestationsForSignature(t *testing.T) {
 			}
 			signer := SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ab", length)}
 			items := []VerifiedAttestation{
-				{Signer: signer, InstanceID: "first", AdvisoryIDs: []string{"original"}, Deployment: MeasuredDeployment{AppCompose: "first-compose"}},
 				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("cd", length)}, InstanceID: "other-key"},
+				{Signer: signer, InstanceID: "first", AdvisoryIDs: []string{"original"}, Deployment: MeasuredDeployment{AppCompose: "first-compose"}},
 				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: "0X" + strings.Repeat("AB", length)}, InstanceID: "second", Deployment: MeasuredDeployment{AppCompose: "second-compose"}},
 			}
-			items = append(items, items[0])
+			items = append(items, items[1])
 			sig := CompletionSignature{Kind: "provider_tee", Signer: signer}
 			matchingAttestations, err := FindModelAttestationsForSignature(items, sig)
 			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].InstanceID != "first" || matchingAttestations[1].InstanceID != "second" || matchingAttestations[2].InstanceID != "first" {
 				t.Fatalf("shared-signer reports and duplicates: %#v %v", matchingAttestations, err)
 			}
-			_, err = FindModelAttestationForSignature(items, sig)
-			requireCode(t, err, "api.model_attestation_not_found")
-			if err.(*Error).Details["matches"] != 3 {
-				t.Fatal("singular helper lost its unique-match contract")
+			first, err := FindModelAttestationForSignature(items, sig)
+			if err != nil || first.InstanceID != "first" {
+				t.Fatalf("first matching report: %#v %v", first, err)
 			}
-			one, err := FindModelAttestationsForSignature(items[:1], sig)
+			one, err := FindModelAttestationsForSignature(items[1:2], sig)
 			if err != nil || len(one) != 1 {
 				t.Fatalf("single match: %v", err)
 			}
@@ -150,7 +149,9 @@ func TestFindModelAttestationsForSignature(t *testing.T) {
 				{"wrong algorithm", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: otherAlgo, SigningAddress: signer.SigningAddress}}, "api.model_attestation_not_found"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					_, err := FindModelAttestationsForSignature(items, tc.sig)
+					_, err := FindModelAttestationForSignature(items, tc.sig)
+					requireCode(t, err, tc.code)
+					_, err = FindModelAttestationsForSignature(items, tc.sig)
 					requireCode(t, err, tc.code)
 				})
 			}

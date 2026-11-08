@@ -501,23 +501,13 @@ export function findModelAttestationsForSignature({
 }
 
 /**
- * Select exactly one report, rejecting shared-signer ambiguity.
+ * Return the first verified report matching the response signer.
  * @deprecated Use `findModelAttestationsForSignature` to retain the signer group.
  */
 export function findModelAttestationForSignature(
   params: FindModelAttestationForSignatureParams,
 ): VerifiedModelAttestation {
-  const matches = findModelAttestationsForSignature(params);
-  if (matches.length !== 1) {
-    throw new ApiError({
-      code: 'api.ambiguous_model_attestation_signer',
-      details: {
-        matchingCount: matches.length,
-        totalCount: params.attestations.length,
-      },
-    });
-  }
-  return matches[0];
+  return findModelAttestationsForSignature(params)[0];
 }
 
 function requireProviderSignature(

@@ -527,8 +527,8 @@ Manual workflow APIs:
   verified inputs and rejects missing matches. It does not verify attestations
   or response signatures. Call `VerifyModelResponse` separately; if a model key
   was selected before sending, pass the report used to select that key.
-- The deprecated `FindModelAttestationForSignature` retains its exactly-one-match
-  contract and rejects missing or ambiguous matches.
+- The deprecated `FindModelAttestationForSignature` returns the first matching
+  report in input order. An absent signer returns an error.
 
 ## Encryption
 

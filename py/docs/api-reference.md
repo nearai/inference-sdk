@@ -50,7 +50,7 @@ cleanup are synchronous.
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
 | `find_model_attestations_for_signature` | `(attestations, signature)` | `tuple[VerifiedModelAttestation, ...]` | Selects every preverified report matching a `provider_tee` signer. |
-| `find_model_attestation_for_signature` | `(attestations, signature)` | `VerifiedModelAttestation` | Deprecated unique-match helper; raises if multiple reports share the signer. |
+| `find_model_attestation_for_signature` | `(attestations, signature)` | `VerifiedModelAttestation` | Deprecated. Returns the first matching report. |
 | `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies target-model deployment evidence. |
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
@@ -437,8 +437,8 @@ reports. Matching the signer does not identify a unique serving instance.
 | `find_model_attestations_for_signature` | `attestations` | `tuple[VerifiedModelAttestation, ...] \| list[VerifiedModelAttestation]` | Yes | Results returned by verifying every item from `client.fetch_model_attestations()`. All matching reports are retained; no match raises `ApiError`. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature whose signer selects the result. |
 
-The deprecated singular `find_model_attestation_for_signature` accepts the same
-arguments and retains its strict unique-match contract. Both helpers select
+The deprecated `find_model_attestation_for_signature` returns the first matching
+report in input order. Both helpers select
 evidence without verifying the signature. If the request selected a routing or
 encryption key, response verification must still require that selected key.
 

@@ -330,18 +330,11 @@ def find_model_attestation_for_signature(
     attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
     signature: CompletionSignatureReference,
 ) -> VerifiedModelAttestation:
-    """Select exactly one verified report matching a provider signature.
+    """Return the first verified report matching a provider signature.
 
     Deprecated: use ``find_model_attestations_for_signature`` for shared signers.
-    This helper retains its strict unique-match contract.
     """
-    matches = find_model_attestations_for_signature(attestations, signature)
-    if len(matches) != 1:
-        raise api_failure(
-            'api.ambiguous_model_attestation_signer',
-            {'matchingCount': len(matches), 'totalCount': len(attestations)},
-        )
-    return matches[0]
+    return find_model_attestations_for_signature(attestations, signature)[0]
 
 
 def _authorization_header(api_key: str) -> str:

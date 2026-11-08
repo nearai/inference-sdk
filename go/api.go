@@ -515,16 +515,13 @@ func FindModelAttestationsForSignature(items []VerifiedAttestation, sig Completi
 	return matches, nil
 }
 
-// FindModelAttestationForSignature requires exactly one matching report.
+// FindModelAttestationForSignature returns the first report matching the response signer.
 //
 // Deprecated: use FindModelAttestationsForSignature to support shared signers.
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error) {
 	matches, err := FindModelAttestationsForSignature(items, sig)
 	if err != nil {
 		return VerifiedAttestation{}, err
-	}
-	if len(matches) != 1 {
-		return VerifiedAttestation{}, detail("api.model_attestation_not_found", "matches", len(matches))
 	}
 	return matches[0], nil
 }

@@ -830,49 +830,6 @@ async def test_fetch_completion_signature_requires_signature_kind(
     assert malformed.value.failure.code == 'api.invalid_response'
 
 
-@pytest.mark.parametrize(
-    ('attestations', 'expected_code'),
-    [
-        (
-            [
-                verified_model_attestation_for_signer(
-                    SigningIdentity(signing_algo='ecdsa', signing_address='44' * 20)
-                )
-            ],
-            'api.model_attestation_signer_not_found',
-        ),
-        (
-            [
-                verified_model_attestation_for_signer(
-                    SigningIdentity(
-                        signing_algo='ecdsa', signing_address=SIGNING_ADDRESS
-                    )
-                ),
-                verified_model_attestation_for_signer(
-                    SigningIdentity(
-                        signing_algo='ecdsa', signing_address=SIGNING_ADDRESS
-                    )
-                ),
-            ],
-            'api.ambiguous_model_attestation_signer',
-        ),
-    ],
-)
-def test_find_model_attestation_for_signature_requires_one_matching_signer(
-    attestations: list[VerifiedModelAttestation],
-    expected_code: str,
-) -> None:
-    signature = CompletionSignatureReference(
-        kind='provider_tee',
-        signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
-    )
-
-    with pytest.raises(ApiError) as raised:
-        find_model_attestation_for_signature(attestations, signature)
-
-    assert raised.value.failure.code == expected_code
-
-
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 def test_plural_matcher_preserves_nonadjacent_and_repeated_reports(
     signing_algo,
@@ -904,8 +861,8 @@ def test_plural_matcher_preserves_nonadjacent_and_repeated_reports(
         )
     )
     model_attestations = [
-        first_model_attestation,
         other_model_attestation,
+        first_model_attestation,
         other_algorithm_attestation,
         second_model_attestation,
         first_model_attestation,
@@ -920,16 +877,24 @@ def test_plural_matcher_preserves_nonadjacent_and_repeated_reports(
         second_model_attestation,
         first_model_attestation,
     )
-    assert matching_attestations[0] is first_model_attestation
-    assert matching_attestations[1] is second_model_attestation
-    assert matching_attestations[2] is first_model_attestation
-    with pytest.raises(ApiError) as ambiguous:
+    assert (
         find_model_attestation_for_signature(model_attestations, signature)
-    assert ambiguous.value.failure.code == 'api.ambiguous_model_attestation_signer'
-    for candidates in ([], [other_model_attestation], [other_algorithm_attestation]):
-        with pytest.raises(ApiError) as missing:
-            find_model_attestations_for_signature(candidates, signature)
-        assert missing.value.failure.code == 'api.model_attestation_signer_not_found'
+        is first_model_attestation
+    )
+    for find in (
+        find_model_attestation_for_signature,
+        find_model_attestations_for_signature,
+    ):
+        for candidates in (
+            [],
+            [other_model_attestation],
+            [other_algorithm_attestation],
+        ):
+            with pytest.raises(ApiError) as missing:
+                find(candidates, signature)
+            assert (
+                missing.value.failure.code == 'api.model_attestation_signer_not_found'
+            )
 
 
 @pytest.mark.parametrize(

@@ -47,7 +47,7 @@ the attestation socket to be reused.
 | `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and checks the serving attestation's observed TLS binding when SPKI evidence is supplied. |
 | `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => readonly VerifiedDirectModelAttestation[]` | Verifies exact completion bytes and returns the verified attestations sharing its model signer. |
 | `findModelAttestationsForSignature` | `(params: FindModelAttestationsForSignatureParams) => readonly VerifiedModelAttestation[]` | Returns all verified reports matching a `provider_tee` signer. |
-| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Deprecated unique-match helper; rejects multiple matches. |
+| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Deprecated. Returns the first matching report. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
 | `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
@@ -523,8 +523,7 @@ matches a `provider_tee` signature, preserving their order and individual eviden
 No match is an error. This is selection only; verify the signature with
 `verifyModelResponse`. Shared signers do not identify one serving instance.
 
-The deprecated singular `findModelAttestationForSignature` retains its strict
-unique-match contract and rejects multiple matches.
+The deprecated `findModelAttestationForSignature` returns the first matching report in input order.
 
 #### `FindModelAttestationsForSignatureParams`
 

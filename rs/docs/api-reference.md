@@ -220,7 +220,7 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
 | `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Returns every verified report matching a `ProviderTee` signer, or an error when none match. Shared signers do not identify an individual instance. It does not verify the response signature. |
-| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Compatibility helper requiring exactly one match. Prefer the plural helper for shared-key deployments; multiple matches still return an ambiguity error. |
+| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS

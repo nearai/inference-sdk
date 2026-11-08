@@ -596,8 +596,8 @@ describe('AttestationClient', () => {
           signer: firstModelAttestation.signer,
         };
         const modelAttestations = [
-          secondModelAttestation,
           otherModelAttestation,
+          secondModelAttestation,
           otherAlgorithmAttestation,
           firstModelAttestation,
           secondModelAttestation,
@@ -611,21 +611,12 @@ describe('AttestationClient', () => {
           firstModelAttestation,
           secondModelAttestation,
         ]);
-        expect(matchingAttestations[0]).toBe(secondModelAttestation);
-        expect(matchingAttestations[1]).toBe(firstModelAttestation);
-        expect(matchingAttestations[2]).toBe(secondModelAttestation);
-        expect(() =>
+        expect(
           findModelAttestationForSignature({
             attestations: modelAttestations,
             signature,
           }),
-        ).toThrow(
-          expect.objectContaining({
-            failure: expect.objectContaining({
-              code: 'api.ambiguous_model_attestation_signer',
-            }),
-          }),
-        );
+        ).toBe(secondModelAttestation);
         expect(() =>
           findModelAttestationsForSignature({ attestations: [], signature }),
         ).toThrow(
@@ -839,15 +830,6 @@ describe('AttestationClient', () => {
         signature: modelSignature(`0x${'44'.repeat(20)}`),
         failure: {
           code: 'api.model_attestation_signer_not_found',
-        },
-      },
-      {
-        label: 'multiple attestations for the same signer',
-        attestations: [verifiedModelAttestation(), verifiedModelAttestation()],
-        signature: modelSignature(),
-        failure: {
-          code: 'api.ambiguous_model_attestation_signer',
-          details: { matchingCount: 2, totalCount: 2 },
         },
       },
       {
