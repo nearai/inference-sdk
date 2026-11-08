@@ -158,13 +158,8 @@ through the existing live commands and workflow. They use the same
 native cases. The selector supplies the fixed external Jev model; there are no
 separate TypeSafe SDK environment variables or CI steps.
 
-Self-hosted cases use a `provider: "near"`, `endpoint: "systemone"` entry in the
-same `NEARAI_E2E_MODELS` selection. Without one they explicitly skip. Running
-these cases requires the routing contract from
-[cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285) and a suitable
-self-hosted deployment. They preverify the selected model and require a provider
-receipt matching its attested signing identity. An external model is never
-substituted. The fixed matrix includes only a hosted Jev deployment.
+The default matrix uses a hosted Jev model. To test a self-hosted deployment,
+configure a `systemone` model with provider `near` and check its `provider_tee` receipt.
 
 Like the existing live tests, these suites require explicit configuration and
 are excluded from ordinary unit-test runs. Missing required external-model

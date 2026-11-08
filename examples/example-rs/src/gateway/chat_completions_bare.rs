@@ -122,7 +122,6 @@ async fn main() -> Result<()> {
                     &signature,
                     selected_model_attestation,
                 )?;
-                // Shared keys identify a report group, not one serving instance.
                 let matching_attestations =
                     find_model_attestations_for_signature(&model_attestations, &signature)?;
                 println!(

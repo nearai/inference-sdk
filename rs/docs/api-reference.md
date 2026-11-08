@@ -6,7 +6,6 @@ This page lists the public Rust request and verification APIs exported by
 
 ## Integrated client
 
-`InferenceClient` is cheap to clone; clones share caches and in-flight verification.
 Construct it with `new(api_key: impl Into<Option<String>>)` or
 `with_options(InferenceClientOptions)`; both return `Result<InferenceClient, InferenceError>`.
 `new` accepts a `String`, `Some(String)`, or `None`.
@@ -22,7 +21,7 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 | `message_request(serde_json::Value)` | `reqwest::Request` | Build a Gateway Messages request for `send`, including streaming. |
 | `create_message(serde_json::Value)` | `serde_json::Value` | Create an Anthropic Message; verify its ID with `verify_response`. |
 | `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat, Gateway Responses, or Messages. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
-| `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. Cached terminal results release the original bytes and remain available until the original response TTL expires. |
+| `verify_response(id)` | `VerifiedCompletionResult` | Verify the response signature against the evidence selected for the request. |
 | `clear_response_cache().await` | `()` | Clear captured request/response bytes and cached receipt results across all clones; preserve attestation sessions. |
 
 `InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
@@ -30,21 +29,13 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 receipt registration. Non-2xx responses pass through `send`; `chat_completions`, `create_response`, and `create_message`
 turn them into `ApiError::HttpStatus`.
 
-`VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
-`Gateway`, `Model`, or `Direct` (the matching report group). For a Gateway
-`ProviderTee` receipt, `attestations` contains every verified report sharing the
-response signer. The `Model` variant is deprecated: use `attestations` for model
-evidence. It retains the report used to select the request's model public key and
-does not identify the serving instance. The `Gateway` and `Direct` variants remain
-supported. `attestations` is empty for
-Gateway-signed receipts and Direct clients, whose report group stays in `Direct`.
+For `ProviderTee` receipts, `attestations` contains all verified reports sharing the selected signer.
+The deprecated `Model` variant holds the report selected for the request key.
+For Gateway-signed receipts, use `VerifiedCompletionAttestation::Gateway`.
+Direct receipts hold their matching reports in `VerifiedCompletionAttestation::Direct`.
 `signature_kind()` returns `CompletionSignatureKind`.
 
-Call `clear_response_cache().await` when discarding a conversation. Cleared IDs
-become unavailable to `verify_response`. The client remains reusable. Ongoing
-response captures stay discarded when they finish. To end active work and release
-its buffers, also cancel the requests and finish any
-ongoing verification. Direct clients support the same cleanup method.
+Use `clear_response_cache().await` to discard retained responses.
 
 `create_message(Value)` returns JSON; `message_request(Value)` builds an Anthropic
 Messages request for `send()`, including SSE. Both require a Gateway client with
@@ -156,11 +147,6 @@ Complete stage 1 before chat. `CompletionSignatureKind` matters only in stage
 For one three-stage verification operation, pass the same explicit
 `SigningAlgo` to both attestation fetches and `fetch_completion_signature`.
 The Gateway's report and signature endpoints have different defaults.
-
-The current Gateway interface does not cryptographically bind both preflight
-attestations to one completion or link a model signature through a Gateway
-transformation. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
-tracks a complete provider-signature and Gateway-receipt chain.
 
 ## Gateway client
 

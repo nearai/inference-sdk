@@ -45,20 +45,12 @@ class AttestationVerificationResult:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedModelCompletionResult:
-    """Response verified against the request's selected signing identity.
-
-    ``attestations`` contains all matching preflight reports, without claiming
-    which instance served the response. Use ``attestations`` for model evidence.
-    The deprecated ``attestation`` field retains the report used to select the
-    request's model public key; it does not identify the serving instance.
-    """
+    """Model receipt with all verified reports sharing the selected signer."""
 
     id: str
     signature: CompletionSignature
     attestations: tuple[VerifiedModelAttestation, ...]
-    #: Deprecated: use ``attestations`` for all verified reports sharing the
-    #: selected signer. This is the report used to select the request's model
-    #: public key, not the identity of the serving instance.
+    #: Deprecated: the report selected for the request key. Use ``attestations``.
     attestation: VerifiedModelAttestation
     signature_kind: Literal['provider_tee'] = 'provider_tee'
 

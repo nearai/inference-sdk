@@ -110,10 +110,8 @@ for _, modelAttestation := range evidence.Models {
 }
 ```
 
-`Verify` shares Chat and System One's cache and in-flight work without sending
-an inference request. Cached evidence keeps its original verification timestamp. Every
-returned model report must pass; unsupported model providers use Gateway-only
-verification, which cannot satisfy E2EE or a model deployment policy.
+`Verify` returns Gateway evidence and every verified model report for a supported provider.
+Gateway-only models use Gateway verification. E2EE and model deployment policies require model evidence.
 
 ## Use the official OpenAI Go client
 
@@ -505,12 +503,10 @@ defer client.Close()
 
 The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
 Use `E2EE` to configure encryption; `DisableE2EE` is deprecated. Direct clients omit
-Gateway verification and do not bind TLS identity to attestation; normal HTTPS
-validation still applies. They are experimental and not recommended for
-production. Use Gateway clients for production integrations.
+Gateway verification and use standard HTTPS without attested TLS pinning.
 
 Direct response results include all matching deployments in `Attestations` and
-leave `Attestation` nil: a shared signing key cannot identify one serving instance.
+leave `Attestation` nil.
 
 ## Manual verification
 

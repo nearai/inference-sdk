@@ -111,7 +111,7 @@ inference. The catalog decision shares the attestation cache's lifetime.
 ### Attestation results
 
 `verify(model)` returns `AttestationVerificationResult` after all required checks
-pass. Cache hits return the original result without changing `verified_at`.
+pass.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -149,7 +149,7 @@ before calling `verify_response()`.
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestations` | `tuple[VerifiedModelAttestation, ...]` | Present for `provider_tee`: all preflight reports matching the request's selected signer, without attributing the response to a unique instance. |
-| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Gateway evidence for `gateway`. Deprecated for `provider_tee`: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key; does not identify the serving instance. |
+| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Gateway evidence for `gateway`. Deprecated for `provider_tee`: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key. |
 
 Response records expire at the configured TTL after body completion. Successful
 verification and cached terminal failures release the captured wire bytes and
@@ -301,9 +301,9 @@ also occur in `all_attestations`, compared by content.
 | | `tls_binding: DirectTlsBinding` | `none` or `attested`; only the serving report is compared with the observed peer. |
 | | `spki_fingerprints: tuple[str, ...]` | Distinct fingerprints authenticated by the verified reports, in response order. |
 | `DirectAttestationVerificationResult` | Inherited `VerifiedDirectModelAttestations` fields | Complete verified report set, not just the signer group selected for Chat. |
-| | `verified_at: int` | Unix time in milliseconds when verification completed; unchanged on cache hits. |
+| | `verified_at: int` | Unix time in milliseconds when verification completed. |
 | `VerifiedDirectCompletionResult` | `id`, `signature_kind`, `signature` | Completion ID and verified `provider_tee` signature. |
-| | `attestations` | Tuple of verified reports sharing its signer; this does not identify one CVM. |
+| | `attestations` | Tuple of verified reports sharing its signer. |
 
 `verify_direct_model_attestation` accepts one report, a `ModelClientBinding`, and
 the same policy/verifier options as `verify_model_attestation`.
@@ -421,14 +421,7 @@ an unavailable 2xx response. The error code is
 |  | `signing_algo` | `SigningAlgo \| None` | No | Optional API request filter for the required signing algorithm. |
 |  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. It must be hexadecimal: 20 or 32 bytes without `signing_algo`, or the matching length when an algorithm is selected. Invalid input raises `ApiError` before a request. |
 
-Every model-attestation fetch generates a fresh 32-byte client nonce, requests
-`include_tls_fingerprint=false`, checks the Gateway's echoed nonce, and returns a
-`ModelClientBinding` with the raw evidence. `signing_algo` and
-`signing_address` only narrow the remote response. The result preserves every
-model attestation the Gateway returns, including an empty collection. Verify each
-returned item before inference. Use `find_model_attestations_for_signature`
-after a `provider_tee` signature is available to select all matching verified
-reports. Matching the signer does not identify a unique serving instance.
+Verify each returned model report with the `ModelClientBinding` from the same fetch.
 
 ### Local model selection
 
@@ -437,10 +430,9 @@ reports. Matching the signer does not identify a unique serving instance.
 | `find_model_attestations_for_signature` | `attestations` | `tuple[VerifiedModelAttestation, ...] \| list[VerifiedModelAttestation]` | Yes | Results returned by verifying every item from `client.fetch_model_attestations()`. All matching reports are retained; no match raises `ApiError`. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature whose signer selects the result. |
 
-The deprecated `find_model_attestation_for_signature` returns the first matching
-report in input order. Both helpers select
-evidence without verifying the signature. If the request selected a routing or
-encryption key, response verification must still require that selected key.
+The deprecated `find_model_attestation_for_signature` returns the first match.
+Use `find_model_attestations_for_signature` for all matches and `verify_model_response`
+to check the signature against the report selected for the request.
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
@@ -513,12 +505,6 @@ Dispatch only after fetching the completion signature: pass a `provider_tee` sig
 signature to `verify_gateway_response` with the Gateway deployment result.
 Each function verifies exact bytes and requires its signature signer to match
 the supplied verified result.
-
-The two deployment results and a single completion signature do not currently
-prove a complete model-to-Gateway-to-final-bytes chain. A `provider_tee`
-signature does not identify the Gateway that returned the bytes; a `gateway`
-signature does not prove that an attested model generated them. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986) tracks the missing
-provider-signature and Gateway-receipt chain.
 
 ## Image build provenance
 

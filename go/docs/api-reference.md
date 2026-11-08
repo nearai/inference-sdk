@@ -366,8 +366,7 @@ type VerifiedCompletionResult struct {
 	Signature     CompletionSignature
  // Gateway evidence for gateway receipts; nil for Direct.
  // Deprecated for provider_tee receipts: use Attestations for all matching reports.
- // Retains the report used to select the request's model public key;
- // it does not identify the serving instance.
+ // Holds the report selected for the request key.
  Attestation *VerifiedAttestation
  // Every matching verified model deployment for provider_tee receipts.
 	Attestations []VerifiedAttestation
@@ -432,18 +431,11 @@ Always close the client and each HTTP response body. `Close` cancels shared
 verification work and active requests, clears retained data, and closes owned
 idle connections. Caller-supplied HTTP clients/transports are borrowed.
 
-`Verify(ctx, model)` performs deployment admission without sending Chat and
-returns `AttestationVerificationResult`: Gateway evidence (nil for direct), all
-model reports, and the original `VerifiedAt` timestamp. Cache hits preserve the
-timestamp. Mutating returned evidence does not modify the internal cache.
+`Verify(ctx, model)` returns verified model reports and `VerifiedAt`.
+Gateway clients also return Gateway evidence.
 
-`AttestationTTL` and `ResponseTTL` are optional `*time.Duration` values, defaulting
-to one hour. A pointer to zero disables reuse/retention. Expired records are
-unavailable immediately and cleaned up periodically. Simultaneous callers share
-preflight and response-verification work. Cancelling one waiter leaves other
-waiters intact; shared verification is limited to two minutes. Failed preflight
-is not cached. Retryable signature retrieval failures can be attempted again
-without replaying the completion.
+`AttestationTTL` and `ResponseTTL` default to one hour. A pointer to zero disables
+that cache. Verify receipts before `ResponseTTL` expires.
 
 Streaming is incremental, but signature verification requires retaining the wire body.
 Once verification caches a success or a failure that cannot be retried, it releases
@@ -498,16 +490,10 @@ E2EE. It distinguishes:
 - `gateway`: a verified Gateway signer signed the exact client-visible bytes.
   This does not prove execution in a model TEE.
 
-`VerifiedCompletionResult.Attestations` includes every verified model report
-matching a `provider_tee` response's signer. Gateway clients also require that
-signer to match the key selected for the request. Reading `Attestation` for
-`provider_tee` receipts is deprecated: use `Attestations` for model evidence. The
-old field retains the report used to select the request's model public key and
-does not identify the serving instance.
-For `gateway` receipts, `Attestation` contains Gateway evidence and `Attestations`
-is empty. Direct endpoints keep `Attestation` nil and return the matching group in
-`Attestations`: a shared signing key cannot identify an individual serving instance.
-`VerifyDirectModelResponse` provides the same behavior for manual workflows.
+For model receipts, `Attestations` contains all verified reports sharing the selected signer.
+The model use of `Attestation` is deprecated. It holds the report selected for the request key.
+For Gateway receipts, `Attestation` contains the Gateway evidence.
+Direct receipts use `Attestations` and leave `Attestation` nil.
 
 Signatures and independently verified deployments do not establish a complete
 cryptographic chain from model execution through Gateway rewriting.
@@ -524,9 +510,8 @@ Manual workflow APIs:
 - `VerifyGatewayResponse`, `VerifyModelResponse`, `VerifyDirectModelResponse`
   verify exact bytes using already authenticated evidence.
 - `FindModelAttestationsForSignature` selects all matching reports from already
-  verified inputs and rejects missing matches. It does not verify attestations
-  or response signatures. Call `VerifyModelResponse` separately; if a model key
-  was selected before sending, pass the report used to select that key.
+  verified inputs. Verify the signature with `VerifyModelResponse` and the report
+  selected for the request key.
 - The deprecated `FindModelAttestationForSignature` returns the first matching
   report in input order. An absent signer returns an error.
 

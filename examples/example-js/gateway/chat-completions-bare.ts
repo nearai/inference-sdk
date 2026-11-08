@@ -346,7 +346,6 @@ async function verifyCompletionResponse({
       signature,
       attestation: selectedModelAttestation,
     });
-    // Shared keys identify a report group, not one serving instance.
     const matchingAttestations = findModelAttestationsForSignature({
       attestations: modelAttestations,
       signature,

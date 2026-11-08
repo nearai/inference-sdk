@@ -68,19 +68,10 @@ from a third-party OpenAI crate.
 
 ### Cache lifetime
 
-Both caches default to 60 minutes. `attestation_cache_ttl = Duration::ZERO`
-disables reuse of completed deployment checks. `verify()` results contain Unix
-milliseconds in `verified_at`; cache hits preserve that time. Completion records
-retain their original evidence even if the deployment cache expires or refreshes.
+Deployment verification and response retention both default to one hour.
+Set `attestation_cache_ttl` to `Duration::ZERO` to verify on every request.
 
-The response TTL begins after successful full-body consumption;
-`response_cache_ttl = Duration::ZERO` disables retention. Receipt lookups
-and new records prune expired entries; dropping all client clones and responses
-releases state. Verification shares the retained byte buffers rather than copying
-them. Successful verification and cached non-retryable failures release the
-original request/response bytes; their results remain available until the original
-TTL expires. Unverified responses and retryable receipt lookups retain their bytes
-for a later verification attempt.
+Verify the response before `response_cache_ttl` expires. Set it to `Duration::ZERO` to disable response retention.
 
 A missing, expired, or incomplete completion yields `api.completion_not_found`.
 A duplicate retained completion ID fails with `api.duplicate_completion_id` and
@@ -166,10 +157,7 @@ OHTTP is bound to the serving signer. `DirectAttestationClient` and the standalo
 support manual flows. Model names and instance IDs are endpoint metadata, not
 quote-authenticated model identity claims.
 
-Direct TLS fingerprint fetching remains disabled pending complete fleet coverage
-([cloud-api#1087](https://github.com/nearai/cloud-api/issues/1087)). Normal HTTPS
-validation still applies. Independently routed direct requests may reach different
-instances; use Gateway clients for production.
+Direct requests use standard HTTPS. Attested TLS pinning is disabled by default.
 
 ### Existing Rust callers
 
@@ -402,34 +390,11 @@ async fn verify_completion_response(
 }
 ```
 
-`ProviderTee` proves that the model signer selected before the request signed the
-exact request and response bytes. To obtain the complete evidence group after
-this check, use `find_model_attestations_for_signature` with the preflight reports
-and signature. Shared signing keys do not identify one serving instance.
-`Gateway` proves that the preflight-verified Gateway signer signed the exact
-client-visible bytes. It is not a choice
-between doing model verification and Gateway verification: both were completed
-before chat. The kind only determines which signer issued this completion's
-receipt.
+For `ProviderTee`, verify the exact request and response bytes against the model key
+selected for the request. Use `find_model_attestations_for_signature` for all matching
+reports. For `Gateway`, verify the same bytes against the Gateway signer.
 
 ## Evidence currently available
-
-The preflight attestations and receipt answer complementary questions:
-
-| Evidence | It proves | It does not prove |
-| --- | --- | --- |
-| Verified Gateway attestation | A Gateway deployment met the configured quote, policy, and optional TLS binding checks. | That this Gateway processed a particular completion. |
-| Verified model attestation | A model-serving deployment met the configured quote, policy, signer, and GPU-evidence checks. | That this model produced a particular completion. |
-| `ProviderTee` receipt | The verified model signer signed these exact bytes. | Gateway deployment or TLS provenance. |
-| `Gateway` receipt | The verified Gateway signer signed these exact client-visible bytes. | That an attested model produced those bytes. |
-
-The Gateway currently returns one response signature, not a cryptographically
-linked provider signature and Gateway receipt. As a result, independently
-verified preflight evidence plus one current receipt does not prove a complete
-model → Gateway → final-response chain for a particular inference.
-[cloud-api#986](https://github.com/nearai/cloud-api/issues/986) tracks the
-planned evidence model for that chain. Do not infer it from matching model
-names, timestamps, signing algorithms, or the signature kind.
 
 ## Policy and trust roots
 

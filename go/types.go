@@ -116,15 +116,11 @@ type VerifiedCompletionResult struct {
 	SignatureKind string
 	Signature     CompletionSignature
 	// Attestation contains Gateway evidence for gateway receipts and is nil for Direct.
-	// For provider_tee receipts it retains the report used to select the request's
-	// model public key; it does not identify which instance served the request.
-	//
-	// Reading this field for provider_tee receipts is deprecated: use Attestations
-	// for all verified reports sharing the selected signer. Gateway receipts
-	// continue to use Attestation.
+	// For provider_tee receipts, this field holds the report selected for the request
+	// key. Its use for model receipts is deprecated. Use Attestations instead.
 	Attestation *VerifiedAttestation
 	// Attestations contains every matching verified model deployment for provider_tee
-	// receipts. A shared key does not identify one CVM. It is empty for Gateway receipts.
+	// receipts. It is empty for Gateway receipts.
 	Attestations []VerifiedAttestation
 }
 

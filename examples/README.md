@@ -29,16 +29,8 @@ and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 Runnable examples make one explicit receipt-verification call and propagate failure.
 Native clients and official SDK adapters disable automatic inference retries.
 
-The standalone Gateway Chat examples retain all verified model reports in
-`modelAttestations` (`model_attestations` in Python/Rust), and keep the report
-selected for routing/E2EE separately as `selectedModelAttestation`
-(`selected_model_attestation`). After verifying a model response against that
-selected key, the plural signature helper returns `matchingAttestations`
-(`matching_attestations`): every preflight report sharing the response signer. The
-examples print both the preflight count and the matching count; use those
-collections to display individual reports. A shared key does not identify which
-instance served the request. Gateway-signed responses use Gateway evidence and
-do not have a model report group.
+Bare Gateway Chat examples verify the response with the model key selected for the
+request, then show how many verified reports share the response signer.
 
 ## Entry points
 
@@ -197,12 +189,10 @@ output for receipt verification. Integrated clients capture those bytes internal
 
 ## Direct endpoints
 
-Direct clients are experimental. Use Gateway clients for production and an
-endpoint-accepted credential for direct inference.
+Direct clients are experimental. Set `NEARAI_BASE_URL` and `NEARAI_API_KEY` for the model endpoint.
 
-All direct examples verify every returned model attestation; an endpoint may
-omit other serving instances. Standard HTTPS certificate validation applies,
-while direct TLS fingerprint binding to attestation remains disabled. Integrated
+Direct examples verify every returned model report and use standard HTTPS without
+attested TLS pinning. Integrated
 clients use E2EE and require response signatures from the selected model signer.
 Standalone direct examples send plaintext over HTTPS and verify exact response
 bytes against the matching attestation group.

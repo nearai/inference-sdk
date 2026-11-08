@@ -33,13 +33,8 @@ requires every returned NEAR model report to pass before Chat. Other models use
 Incognito mode, which verifies the Gateway only. Invalid metadata or failed
 model verification stops Chat without falling back to Incognito.
 
-For a `provider_tee` response, `verified.attestations` contains every preflight
-report matching the request's selected signer. Multiple instances can share a
-signing key, so the response signature identifies that key, not a unique instance.
-The deprecated `verified.attestation` is representative key evidence retained for
-compatibility. A `gateway` response continues to return its Gateway `attestation`.
-Standalone callers can use `find_model_attestations_for_signature(reports, signature)`
-to select the full matching set; it does not perform signature verification.
+For `provider_tee` receipts, read `verified.attestations` for every report sharing
+the selected signer. For `gateway` receipts, read `verified.attestation`.
 
 E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 `e2ee=True`, a model policy, or a deployment callback rejects Incognito models.
@@ -156,12 +151,8 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
     verified = await inference_client.verify_response(completion.id)
 ```
 
-`verify()` sends no Chat request. It shares Chat's attestation cache and in-flight
-verification, including TLS, model policy, and optional OHTTP checks. It raises if
-any required check fails. The result contains the verified Gateway, every verified
-model report, and `verified_at` in Unix milliseconds. Incognito results have an
-empty `models` tuple. Cache hits preserve the original result and verification
-time. With a cache TTL of zero, the later Chat verifies again.
+`verify(model)` returns Gateway evidence, every verified model report, and `verified_at`
+(Unix milliseconds). Incognito models return Gateway evidence and an empty `models` tuple.
 
 `DirectInferenceClient.verify(model)` returns the complete verified direct report
 set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
@@ -403,8 +394,7 @@ Set `stream=True` and use `async for` for typed Responses events. An external
 
 ## Direct model endpoints
 
-Direct clients are experimental and not recommended for production. They use a
-model's own base URL, without Gateway verification or catalog lookup.
+Experimental Direct clients connect to the model endpoint.
 
 ```python
 from nearai_inference_sdk import DirectInferenceClient
@@ -459,10 +449,6 @@ currently requests `include_tls_fingerprint=false`, matching JavaScript. When
 verifying caller-supplied TLS-bound evidence, every fingerprint is authenticated
 by its own quote and the serving fingerprint must match the observed TLS peer.
 The returned `spki_fingerprints` can be used with `create_pinned_tls_client`.
-
-Known endpoint limitations are tracked in [cloud-api#1087](https://github.com/nearai/cloud-api/issues/1087):
-reports may omit other serving CVMs, and signature lookup may return 404 when
-inference and lookup reach different instances. Use Gateway clients for production.
 
 ## Standalone workflow
 
@@ -838,9 +824,6 @@ else:
     )
 ```
 
-Retain `matching_attestations` as the matching evidence set. These reports share the
-request's selected signing key; they do not identify the serving instance.
-
 The Gateway provides two signature kinds. They are different response signatures,
 not two top-level deployment workflows:
 
@@ -866,12 +849,6 @@ form a complete model-to-Gateway-to-final-bytes cryptographic chain.
 - With `gateway`, Gateway evidence and the Gateway signature bind the Gateway
   signer to the final client-visible bytes, but do not prove model execution or
   connect an upstream model response to those bytes.
-
-Consequently, successfully verifying both preflight deployments must not be
-presented as proof that they served the same inference. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
-tracks the missing chain: preserving a provider signature and adding a Gateway
-receipt that binds the upstream and final response hashes for the same
-inference.
 
 ## Set policy and trust roots
 

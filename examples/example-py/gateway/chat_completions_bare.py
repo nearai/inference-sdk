@@ -230,7 +230,6 @@ async def verify_completion_response(
             signature,
             selected_model_attestation,
         )
-        # Shared keys identify a report group, not one serving instance.
         matching_attestations = find_model_attestations_for_signature(
             model_attestations, signature
         )

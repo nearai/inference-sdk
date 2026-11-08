@@ -62,8 +62,7 @@ decrypts its response. Choose a model that supports NEAR model attestation;
 E2EE rejects unsupported models before sending Chat.
 
 Gateway TLS identity verification is enabled by default, and subsequent requests
-are pinned to that identity. Clone a client to share connections, caches, and
-in-flight verification.
+are pinned to that identity. Clones share the same connections and cache.
 
 ## When verification happens
 
@@ -78,10 +77,7 @@ in-flight verification.
    calling `verify_response()`. Output displayed before that call succeeds is
    not yet signature-verified. See the [streaming example](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#streaming).
 
-Optionally call `verify(model)` before sending Chat. It sends no Chat request,
-shares Chat's verification cache and in-flight work, and returns verified Gateway
-and model evidence with its original verification timestamp. This preflight
-verifies deployments; it does not verify a particular reply.
+Call `verify(model)` to inspect verified Gateway and model evidence before inference.
 
 Successful deployment verification is cached for 60 minutes by default. Set
 `attestation_cache_ttl: Duration::ZERO` (from `std::time`) to verify before every
@@ -136,10 +132,8 @@ or `message_request()` and `send()`.
   verification remain the application's responsibility. See
   [encryption and OHTTP](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#encryption-and-ohttp).
 - **Direct endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect without Gateway verification. Direct TLS
-  fingerprint fetching is disabled pending complete fleet coverage; normal HTTPS
-  verification remains enabled. Use Gateway clients for production. See
-  [direct-endpoint limitations](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#experimental-direct-endpoints).
+  `DirectAttestationClient` connect to the model endpoint using standard HTTPS
+  without attested TLS pinning. See the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#experimental-direct-endpoints).
 
 ## Standalone verification
 
@@ -175,14 +169,6 @@ verifier:
 | --- | --- | --- |
 | `ProviderTee` | `verify_model_response` | The verified model signer signed the exact request and response bytes. |
 | `Gateway` | `verify_gateway_response` | The verified Gateway signer signed the exact client-visible request and response bytes. |
-
-The current Gateway interface does not yet provide a cryptographic chain from
-a particular model response through a Gateway transformation to the final
-response. In particular, preflight Gateway and model attestation candidates do not prove
-that they served a particular chat completion. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
-tracks a provider-signature plus Gateway-receipt design for that complete
-chain. Verify both deployments before the request, but do not claim more than
-the evidence currently proves.
 
 ## Documentation
 

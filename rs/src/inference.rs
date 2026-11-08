@@ -113,7 +113,6 @@ pub struct AttestationVerificationResult {
 pub enum VerifiedCompletionAttestation {
     Gateway(VerifiedGatewayAttestation),
     /// Report used to select the request's model public key, retained for compatibility.
-    /// It does not identify which instance served the request.
     #[deprecated(
         note = "Use VerifiedCompletionResult::attestations for all verified reports sharing the selected model signer."
     )]

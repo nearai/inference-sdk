@@ -480,7 +480,6 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		if direct {
 			fmt.Printf("Verified %s ciphertext receipt, stream=%t\n", sig.Kind, stream)
 		} else if sig.Kind == "provider_tee" {
-			// Shared keys identify a report group, not one serving instance.
 			matchingAttestations, err := nearai.FindModelAttestationsForSignature(modelAttestations, sig)
 			if err != nil {
 				return err

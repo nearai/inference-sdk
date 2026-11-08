@@ -291,11 +291,7 @@ def find_model_attestations_for_signature(
     attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
     signature: CompletionSignatureReference,
 ) -> tuple[VerifiedModelAttestation, ...]:
-    """Return all verified reports matching a provider signature's signing identity.
-
-    Shared signing keys do not identify a unique serving instance. This helper
-    selects evidence; it does not verify the response signature again.
-    """
+    """Return all verified reports matching the provider signature's signer."""
 
     if signature.kind != 'provider_tee':
         raise _invalid_input(

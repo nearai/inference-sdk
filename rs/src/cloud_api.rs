@@ -350,8 +350,6 @@ impl AttestationClient {
 }
 
 /// Return every verified model report sharing a `provider_tee` signature's key.
-/// Shared keys identify a signer group, not an individual serving instance.
-/// This function performs no response-signature verification itself.
 pub fn find_model_attestations_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
