@@ -221,7 +221,7 @@ func (c *InferenceClient) CreateSystemOne(ctx context.Context, request any) (Sys
 func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, request any, headers http.Header) (SystemOneResult, error) {
 	generation := c.responseCacheGeneration()
 	var result SystemOneResult
-	if c.api.direct || c.options.E2EE || c.options.OHTTP {
+	if c.options.E2EE || c.options.OHTTP {
 		return result, detail("api.invalid_input", "resource", "systemone")
 	}
 	body, err := json.Marshal(request)

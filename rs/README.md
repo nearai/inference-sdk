@@ -132,8 +132,9 @@ or `message_request()` and `send()`.
   verification remain the application's responsibility. See
   [encryption and OHTTP](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#encryption-and-ohttp).
 - **Direct endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect to the model endpoint using standard HTTPS
-  without attested TLS pinning. See the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#experimental-direct-endpoints).
+  `DirectAttestationClient` connect without Gateway verification.
+  `DirectInferenceClient` pins verified model TLS fingerprints by default. See
+  the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#experimental-direct-endpoints).
 
 ## Standalone verification
 

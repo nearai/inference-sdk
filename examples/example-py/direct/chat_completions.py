@@ -43,8 +43,6 @@ async def run_streaming_example(client: DirectInferenceClient) -> None:
 
 
 async def main() -> None:
-    # Enable E2EE explicitly. A credential must be accepted by
-    # this endpoint; a Gateway API key is not necessarily valid here.
     async with DirectInferenceClient(
         BASE_URL,
         api_key=os.environ.get('NEARAI_API_KEY'),

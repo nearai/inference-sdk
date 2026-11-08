@@ -36,10 +36,11 @@ export function decodeDirectModelAttestations(
   // The top-level report identifies the endpoint that answered this request.
   // The returned attestation set must contain that same evidence; do not infer it
   // from a shared signer or instance ID.
-  // Manager evidence belongs to the envelope, not individual wire reports.
   const { composeManagerAttestation, ...modelReport } = root;
   const servingIndex = findDirectModelAttestationIndex(
-    attestations,
+    attestations.map(
+      ({ composeManagerAttestation: _manager, ...report }) => report,
+    ),
     modelReport,
   );
   let servingAttestation = attestations[servingIndex];
@@ -50,9 +51,11 @@ export function decodeDirectModelAttestations(
       value: response.all_attestations,
     });
   }
-  // The top-level control-plane report belongs to the serving entry. Never
-  // copy it to other CVMs merely because they share a model or signing key.
-  if (composeManagerAttestation !== undefined) {
+  // Use envelope evidence for the serving report when it is absent from the list.
+  if (
+    servingAttestation.composeManagerAttestation === undefined &&
+    composeManagerAttestation !== undefined
+  ) {
     servingAttestation = {
       ...servingAttestation,
       composeManagerAttestation,

@@ -486,13 +486,11 @@ default; this example enables it:
 
 ```go
 client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-	InferenceOptions: nearai.InferenceOptions{
-		ClientOptions: nearai.ClientOptions{
-			APIKey:  apiKey,
-			BaseURL: directBaseURL,
-		},
-		E2EE: true,
+	ClientOptions: nearai.ClientOptions{
+		APIKey:  apiKey,
+		BaseURL: directBaseURL,
 	},
+	E2EE: true,
 })
 if err != nil {
 	return err
@@ -500,15 +498,12 @@ if err != nil {
 defer client.Close()
 ```
 
-The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
-Use `E2EE` to configure encryption; `DisableE2EE` is deprecated.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. It supports Chat, streaming, OHTTP, and OpenAI integration.
+Requests use the verified model TLS fingerprints by default.
 
-Direct uses standard HTTPS. The inference request can reach a different instance
-from the one verified during preflight. With E2EE disabled, that instance receives
-the plaintext prompt.
-
-Direct response results include all matching deployments in `Attestations` and
-leave `Attestation` nil.
+`VerifyResponse` returns `VerifiedDirectCompletionResult` with all matching model
+reports in `Attestations`. Use `VerifyDirectModelResponse` for manual verification.
 
 ## Manual verification
 

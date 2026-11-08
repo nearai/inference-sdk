@@ -145,8 +145,9 @@ for transport configuration and receipt verification.
   encrypts a raw Chat request and supplies a JSON/SSE response decryptor.
   Your application verifies the model key and response signature separately.
 - **Direct model endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect to the model endpoint using standard HTTPS
-  without attested TLS pinning. See the [Direct guide](./docs/verification-guide.md#use-a-direct-model-endpoint).
+  `DirectAttestationClient` connect to model endpoints without Gateway
+  verification. In Node, `DirectInferenceClient` pins verified model TLS
+  fingerprints by default. See the [Direct guide](./docs/verification-guide.md#use-a-direct-model-endpoint).
 
 ## Documentation
 

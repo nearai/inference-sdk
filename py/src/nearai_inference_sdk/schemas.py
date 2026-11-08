@@ -212,10 +212,10 @@ class DirectModelAttestationSchema(CloudAttestationSchema):
     report_data: StrictStr | None = None
     nvidia_payload: StrictStr | None = None
     signing_public_key: StrictStr | None = None
+    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
 
 
 class DirectAttestationReportSchema(DirectModelAttestationSchema):
-    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
     all_attestations: list[DirectModelAttestationSchema] = Field(min_length=1)
     ohttp_attestation: OhttpAttestationSchema | None = None
 

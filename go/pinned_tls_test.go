@@ -62,7 +62,7 @@ func TestPinnedTLSProtectsChatAndEvidenceBeforeSending(t *testing.T) {
 				case "untrusted chain":
 					base.TLSClientConfig.RootCAs = x509.NewCertPool()
 				}
-				transport, err := NewPinnedTransport(base, pin)
+				transport, err := NewPinnedTransport(base, strings.Repeat("44", 32), pin)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -371,7 +371,7 @@ func TestGatewayOHTTPVerificationPrecedesAuthenticatedRequests(t *testing.T) {
 			if _, ok := session.transport.(*ohttpTransport); !ok {
 				t.Fatal("valid OHTTP configuration was not installed")
 			}
-			if fixture.metadata.Load() != 1 || fixture.attestations.Load() != 2 || len(session.result.Models) != 1 {
+			if fixture.metadata.Load() != 1 || fixture.attestations.Load() != 2 || len(session.models) != 1 {
 				t.Fatal("valid OHTTP evidence did not allow authenticated model verification")
 			}
 		})
@@ -455,9 +455,6 @@ func TestClientPreflightAndSignature(t *testing.T) {
 				second, e := c.Verify(context.Background(), "canonical/model")
 				if e != nil || !first.VerifiedAt.Equal(second.VerifiedAt) {
 					t.Fatal("cache not reused")
-				}
-				if first.Gateway != nil {
-					first.Gateway.Signer.SigningAddress = "mutated"
 				}
 				body, _ := json.Marshal(chatRequest())
 				req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
@@ -1000,10 +997,11 @@ func TestDirectClientE2EEIsOptIn(t *testing.T) {
 			f.tee, f.direct, f.encrypt = true, true, e2ee
 			server := httptest.NewServer(f)
 			defer server.Close()
-			opts := DirectInferenceOptions{InferenceOptions: InferenceOptions{
+			opts := DirectInferenceOptions{
+				DisableTLSBinding: true,
 				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
 				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
-			}}
+			}
 			if e2ee {
 				opts.E2EE = true
 			}

@@ -1,5 +1,4 @@
 import { getDirectSpkiFingerprints } from '../core/attestation-direct';
-import { DirectApiClient } from '../core/direct-api';
 import {
   DirectInferenceClientBase,
   type CreateDirectSessionTransportParams,
@@ -10,24 +9,10 @@ import type { NodeDirectInferenceClientOptions } from '../types/direct-inference
 import { createPinnedTlsFetch } from './attestation-client';
 import { DirectAttestationClient } from './direct-attestation-client';
 
-class DirectSessionAttestationClient extends DirectApiClient {
-  constructor(
-    options: NodeDirectInferenceClientOptions,
-    private readonly pinnedTlsFetch: typeof globalThis.fetch,
-  ) {
-    super(options);
-  }
-
-  protected override requestApi(request: Request): Promise<Response> {
-    return this.pinnedTlsFetch(request);
-  }
-}
-
 /**
  * Node direct model transport with preflight verification.
  *
- * @experimental Not recommended for production. Use `InferenceClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class NodeDirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;
@@ -42,6 +27,7 @@ export class NodeDirectInferenceClient extends DirectInferenceClientBase {
   protected override fetchModelAttestations(): Promise<FetchedDirectModelAttestations> {
     return this.attestationClient.fetchModelAttestations({
       signingAlgo: this.signingAlgo,
+      includeSpkiFingerprint: this.nodeOptions.includeSpkiFingerprint,
     });
   }
 
@@ -54,10 +40,10 @@ export class NodeDirectInferenceClient extends DirectInferenceClientBase {
       tlsBinding.kind === 'attested'
         ? createPinnedTlsFetch(fingerprints)
         : globalThis.fetch.bind(globalThis);
-    const client = new DirectSessionAttestationClient(
-      this.nodeOptions,
-      pinnedTlsFetch,
-    );
+    const client = new DirectAttestationClient({
+      ...this.nodeOptions,
+      fetch: pinnedTlsFetch,
+    });
     return {
       fetch: pinnedTlsFetch,
       fetchCompletionSignature: (params) =>

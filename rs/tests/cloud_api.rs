@@ -239,7 +239,15 @@ async fn optional_keys_are_omitted_from_bootstrap_but_retained_for_model_reports
                     )
                     .unwrap()
                     .with_headers(headers);
-                    client.fetch_model_attestations(None, None).await.unwrap();
+                    client
+                        .fetch_model_attestations_with_options(
+                            nearai_inference_sdk::DirectAttestationFetchOptions {
+                                include_spki_fingerprint: false,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .unwrap();
                     client
                         .fetch_completion_signature("test", None)
                         .await

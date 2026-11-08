@@ -58,18 +58,22 @@ pub use e2ee::{prepare_e2ee_chat_request, E2eeModelKey, PreparedE2eeChatRequest}
 pub use pinned_tls::create_pinned_tls_client;
 mod direct;
 mod inference;
+mod inference_core;
 mod ohttp;
 mod sse;
 pub use direct::{
     verify_direct_model_attestation, verify_direct_model_attestations,
-    verify_direct_model_response, DirectAttestationClient, DirectAttestationVerificationResult,
-    DirectClientBinding, DirectInferenceClient, DirectInferenceClientOptions,
-    DirectModelAttestation, FetchedDirectModelAttestations, VerifiedDirectModelAttestation,
+    verify_direct_model_response, DirectAttestationClient, DirectAttestationFetchOptions,
+    DirectAttestationVerificationResult, DirectClientBinding, DirectInferenceClient,
+    DirectInferenceClientOptions, DirectModelAttestation, FetchedDirectModelAttestations,
+    VerifiedDirectCompletionResult, VerifiedDirectModelAttestation,
 };
 pub use inference::{
-    AttestationVerificationResult, ByteStream, DeploymentPolicy, GatewayVerificationOptions,
-    InferenceClient, InferenceClientOptions, InferenceResponse, ModelVerificationOptions,
-    VerifiedCompletionAttestation, VerifiedCompletionResult,
+    AttestationVerificationResult, GatewayVerificationOptions, InferenceClient,
+    InferenceClientOptions, VerifiedCompletionAttestation, VerifiedCompletionResult,
+};
+pub use inference_core::{
+    ByteStream, DeploymentPolicy, InferenceResponse, ModelVerificationOptions,
 };
 pub use ohttp::{create_ohttp_client, verify_ohttp_key_config, OhttpClient};
 

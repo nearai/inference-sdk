@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from sigstore.models import TrustedRoot
@@ -9,21 +8,20 @@ from sigstore.verify import Verifier
 
 from nearai_inference_sdk import (
     ComposeManagerImagePolicy,
-    DirectAttestationClient,
     ImageProvenancePolicy,
     MeasuredDeployment,
     RuntimeMeasurements,
     VerificationError,
     verify_compose_manager_deployment_image_provenance,
 )
-from nearai_inference_sdk.core import cloud_api, compose_manager_provenance, provenance
+from nearai_inference_sdk.core import compose_manager_provenance, provenance
 from nearai_inference_sdk.types.compose_manager import VerifiedComposeManagerAttestation
 from nearai_inference_sdk.utils.common import sha256
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .test_cloud_api import cloud_attestation
+TEST_FIXTURES = Path(__file__).resolve().parents[3] / 'test-fixtures'
 
-FIXTURES = Path(__file__).resolve().parents[3] / 'test-fixtures'
+FIXTURES = TEST_FIXTURES
 FIXTURE = json.loads((FIXTURES / 'compose-manager/deployment.json').read_text())
 COMPOSE = FIXTURE['compose'].replace(
     'nearaidev/compose-manager-launcher', 'nearaidev/compose-manager'
@@ -92,36 +90,6 @@ async def test_empty_policy_rejects_before_fetch(monkeypatch):
     assert result.value.failure.code == 'provenance.deployment_images_invalid'
     assert result.value.failure.details['reason'] == 'empty_policy'
     fetch.assert_not_awaited()
-
-
-async def test_nested_only_manager_is_not_serving_evidence(monkeypatch):
-    async def fetch(url, **kwargs):
-        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        report = cloud_attestation(nonce, model_name='test', tls_cert_fingerprint=None)
-        manager = {
-            'actions': [],
-            'actions_hash': '00' * 32,
-            'nonce': nonce,
-            'quote': 'bb',
-            'event_log': [],
-        }
-        return FetchResponse(
-            status=200,
-            body=json.dumps(
-                {
-                    **report,
-                    'all_attestations': [
-                        {**report, 'compose_manager_attestation': manager}
-                    ],
-                }
-            ).encode(),
-        )
-
-    monkeypatch.setattr(cloud_api, 'default_fetch', fetch)
-    result = await DirectAttestationClient(
-        'https://model.example/v1'
-    ).fetch_model_attestations(signing_algo='ecdsa')
-    assert result.serving_attestation.compose_manager_attestation is None
 
 
 async def test_stale_compose_cannot_vouch_for_current_manager_digest(monkeypatch):

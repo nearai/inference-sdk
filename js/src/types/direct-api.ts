@@ -15,7 +15,7 @@ export type DirectModelAttestation = ModelAttestation & {
   readonly spkiFingerprint?: string;
 };
 
-/** Reports supplied by a direct endpoint; they may not cover every serving CVM. */
+/** Model reports returned by a Direct endpoint. */
 export type DirectModelAttestations = {
   /** The top-level attestation returned by the endpoint serving this request. Also an entry in `attestations`. */
   readonly servingAttestation: DirectModelAttestation;
@@ -34,12 +34,14 @@ export type FetchedDirectModelAttestations = DirectModelAttestations & {
   readonly clientBinding: DirectClientBinding;
 };
 
-/** @experimental Options for the direct client, which is not recommended for production. */
+/** @experimental Options for the Direct client. */
 export type DirectAttestationClientOptions = {
   /** Provider API base URL, including its version path (for example /v1). */
   readonly baseUrl: string;
   readonly apiKey?: string;
   readonly headers?: HeadersInit;
+  /** Transport for signature requests. */
+  readonly fetch?: typeof globalThis.fetch;
 };
 
 export type FetchDirectModelAttestationsParams = {
@@ -48,7 +50,10 @@ export type FetchDirectModelAttestationsParams = {
 };
 
 export type NodeFetchDirectModelAttestationsParams =
-  FetchDirectModelAttestationsParams;
+  FetchDirectModelAttestationsParams & {
+    /** Request attested TLS fingerprints. Defaults to true. */
+    readonly includeSpkiFingerprint?: boolean;
+  };
 
 export type DirectApiModelAttestation = v.InferOutput<
   typeof DirectApiModelAttestationSchema

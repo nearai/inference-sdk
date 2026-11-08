@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TrustedRootProvider } from '@freedomofpress/sigstore-browser';
 import { verifyComposeManagerDeploymentImageProvenance } from '../src/core/compose-manager-provenance';
-import { decodeDirectModelAttestations } from '../src/boundaries/direct-api';
 import type { MeasuredDeployment } from '../src/types/verification';
 import { sha256 } from './fixtures';
 
@@ -102,31 +101,6 @@ test('rejects empty policy before fetching compose', async () => {
     },
   });
   expect(fetch).not.toHaveBeenCalled();
-});
-
-test('discards nested-only manager evidence before selecting the serving report', () => {
-  const report = {
-    model_name: 'test',
-    request_nonce: '11'.repeat(32),
-    signing_algo: 'ed25519',
-    signing_address: '22'.repeat(32),
-    signing_public_key: '44'.repeat(32),
-    intel_quote: 'aa',
-    event_log: [],
-    info: { tcb_info: { app_compose: '{}' } },
-  };
-  const manager = {
-    actions: [],
-    actions_hash: '00'.repeat(32),
-    nonce: report.request_nonce,
-    quote: 'bb',
-    event_log: [],
-  };
-  const result = decodeDirectModelAttestations({
-    ...report,
-    all_attestations: [{ ...report, compose_manager_attestation: manager }],
-  });
-  expect(result.servingAttestation.composeManagerAttestation).toBeUndefined();
 });
 
 test('a valid stale compose image cannot vouch for a different current manager digest', async () => {

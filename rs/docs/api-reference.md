@@ -34,7 +34,6 @@ After a valid response ID, Chat and Responses streams can end with `[DONE]` or n
 For `ProviderTee` receipts, `attestations` contains all verified reports sharing the selected signer.
 The deprecated `Model` variant holds the report selected for the request key.
 For Gateway-signed receipts, use `VerifiedCompletionAttestation::Gateway`.
-Direct receipts hold their matching reports in `VerifiedCompletionAttestation::Direct`.
 `signature_kind()` returns `CompletionSignatureKind`.
 
 Use `clear_response_cache().await` to discard retained responses.
@@ -119,18 +118,29 @@ method while the response remains cached.
   `OhttpClient`; its `send` returns `InferenceResponse`. Config bytes must already
   be authenticated, and the supplied HTTP client must disable redirects.
 - `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
-  Gateway client. Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
-  to enable it. Chat/transport/receipt methods match
-  `InferenceClient`; `verify` returns `DirectAttestationVerificationResult`.
+  Gateway client. An explicit model endpoint URL is required, including with `with_options`.
+  Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
+  to enable it. Direct has its own options type without Gateway verification settings.
+  `verify` returns `DirectAttestationVerificationResult`.
+  `verify_response` returns `VerifiedDirectCompletionResult` with `id`, `signature`,
+  and `attestations: Vec<VerifiedDirectModelAttestation>`. Read the matching report
+  group directly from `receipt.attestations`; `signature_kind()` returns the
+  receipt's signature kind. Chat and transport methods match `InferenceClient`.
 - `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
   and direct signatures. `with_headers` configures extra headers.
+  `fetch_model_attestations_with_options(DirectAttestationFetchOptions)` accepts
+  `signing_algo`, `signing_address`, and `include_spki_fingerprint` (default `true`).
+  After verification, use `with_http_client(create_pinned_tls_client(&verified.spki_fingerprints)?)`
+  to pin signature requests.
 - `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
   `verify_direct_model_response` validate individual reports, complete report
   sets, and exact completion bytes respectively. The response verifier returns
   every verified report sharing the signature's signer.
 
-See the [guide](./verification-guide.md#experimental-direct-endpoints) for direct
-endpoint limitations and source migration notes for new optional evidence fields.
+See the [Direct client guide](./verification-guide.md#experimental-direct-endpoints)
+for usage. Direct clients are experimental and use attested TLS by default.
+Set `DirectInferenceClientOptions.include_spki_fingerprint` to `false` for an
+application proxy or HTTP endpoint.
 
 ## Verification lifecycle
 

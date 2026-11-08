@@ -7,12 +7,20 @@ from nearai_inference_sdk import ApiError, DirectAttestationClient
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .test_cloud_api import cloud_attestation
+from .fixtures import cloud_attestation
 
 
 @pytest.mark.parametrize(
     'fault',
-    [None, 'nested_manager', 'missing_serving', 'nonce', 'fingerprint', 'empty'],
+    [
+        None,
+        'nested_manager',
+        'invalid_manager',
+        'missing_serving',
+        'nonce',
+        'fingerprint',
+        'empty',
+    ],
 )
 async def test_direct_fetch_validates_every_report_and_requires_serving_evidence(
     monkeypatch, fault
@@ -20,28 +28,41 @@ async def test_direct_fetch_validates_every_report_and_requires_serving_evidence
     async def fetch(url, **kwargs):
         query = parse_qs(urlsplit(url).query)
         assert 'model' not in query and 'provider' not in query
-        assert query['include_tls_fingerprint'] == ['false']
+        assert query['include_tls_fingerprint'] == ['true']
+        assert kwargs['_capture_peer_spki'] is True
         assert query['signing_algo'] == ['ecdsa']
         root = cloud_attestation(
-            query['nonce'][0], model_name='test-model', tls_cert_fingerprint=None
+            query['nonce'][0], model_name='test-model', tls_cert_fingerprint='33' * 32
         )
         sibling = {**root, 'intel_quote': 'bb'}
         if fault == 'nonce':
             sibling['request_nonce'] = '77' * 32
         if fault == 'fingerprint':
-            sibling['tls_cert_fingerprint'] = '33' * 32
+            sibling['tls_cert_fingerprint'] = None
         reports = [root, sibling]
         if fault == 'nested_manager':
             reports = [
-                {**item, 'compose_manager_attestation': {'future_format': True}}
-                for item in reports
+                {
+                    **item,
+                    'compose_manager_attestation': {
+                        'actions': [],
+                        'actions_hash': '00' * 32,
+                        'nonce': query['nonce'][0],
+                        'quote': quote,
+                        'event_log': [],
+                    },
+                }
+                for item, quote in zip(reports, ('dd', 'ee'), strict=True)
             ]
+        if fault == 'invalid_manager':
+            sibling['compose_manager_attestation'] = {'future_format': True}
         if fault == 'missing_serving':
             reports = [sibling]
         if fault == 'empty':
             reports = []
         return FetchResponse(
             status=200,
+            peer_spki_fingerprint='33' * 32,
             body=json.dumps(
                 {
                     **root,
@@ -64,7 +85,14 @@ async def test_direct_fetch_validates_every_report_and_requires_serving_evidence
         assert len(fetched.attestations) == 2
         assert fetched.serving_attestation == fetched.attestations[0]
         assert fetched.serving_attestation.compose_manager_attestation is not None
-        assert fetched.attestations[1].compose_manager_attestation is None
+        assert fetched.client_binding.spki_fingerprint == '33' * 32
+        if fault == 'nested_manager':
+            assert [
+                item.compose_manager_attestation.intel_quote
+                for item in fetched.attestations
+            ] == ['dd', 'ee']
+        else:
+            assert fetched.attestations[1].compose_manager_attestation is None
         assert all(
             item.nonce == fetched.client_binding.nonce for item in fetched.attestations
         )
