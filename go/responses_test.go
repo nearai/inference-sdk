@@ -3,23 +3,16 @@ package nearai
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
-
-	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
-	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
 type responsesFixture struct {
 	cloud                       *fakeCloud
-	ecdsaKey                    *secp.PrivateKey
 	raw                         []byte
 	streaming, tamper, provider bool
 	status                      int
@@ -44,38 +37,15 @@ func (f *responsesFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if items[1].(map[string]any)["type"] != "function_call_output" {
 		f.cloud.t.Error("replay input not preserved")
 	}
-	kind := "gateway"
-	text := hashText(body) + ":" + hashText(f.raw)
-	if f.provider {
-		kind = "provider_tee"
-		text = "canonical/model:" + text
-	}
-	sig := CompletionSignature{kind, text, hex.EncodeToString(ed25519.Sign(f.cloud.priv, []byte(text))), f.cloud.a.Signer}
-	if f.ecdsaKey != nil {
-		digest := keccak([]byte("\x19Ethereum Signed Message:\n" + itoa(len(text)) + text))
-		compact := secpecdsa.SignCompact(f.ecdsaKey, digest, false)
-		sig.Signature = hex.EncodeToString(append(compact[1:], compact[0]))
-	}
+	sig := f.cloud.completionSignature(body, f.raw, f.provider)
 	f.cloud.mu.Lock()
 	f.cloud.signatures["resp_fixture"] = sig
 	f.cloud.mu.Unlock()
-	contentType := "application/json"
-	if f.streaming {
-		contentType = "text/event-stream"
-	}
-	w.Header().Set("Content-Type", contentType)
-	if f.status != 0 {
-		w.WriteHeader(f.status)
-	}
 	visible := f.raw
 	if f.tamper {
 		visible = bytes.ReplaceAll(visible, []byte("Original"), []byte("Tampered"))
 	}
-	for i := 0; i < len(visible); i += 7 {
-		end := min(i+7, len(visible))
-		w.Write(visible[i:end])
-		w.(http.Flusher).Flush()
-	}
+	writeChunkedResponse(w, visible, f.streaming, f.status)
 }
 
 func responseInput(streaming bool) map[string]any {
@@ -97,16 +67,7 @@ func responsesClient(t *testing.T, streaming bool, modify func(*InferenceOptions
 	cloud := newFakeCloud(t)
 	cloud.tee = true
 	f := &responsesFixture{cloud: cloud, raw: raw, streaming: streaming}
-	server := httptest.NewServer(f)
-	options := InferenceOptions{ClientOptions: ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"}, DisableTLSBinding: true, GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote}, ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote}}
-	if modify != nil {
-		modify(&options)
-	}
-	c, e := NewInferenceClient(options)
-	if e != nil {
-		t.Fatal(e)
-	}
-	t.Cleanup(func() { c.Close(); server.Close() })
+	c, _ := fakeClient(t, f, modify)
 	return c, f
 }
 func sendResponse(t *testing.T, c *InferenceClient, streaming bool) ([]byte, error) {
@@ -139,29 +100,34 @@ func TestResponsesClearResponseCache(t *testing.T) {
 }
 
 func TestResponsesExactGatewayReceipts(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
-			c, f := responsesClient(t, streaming, nil)
-			body, e := sendResponse(t, c, streaming)
-			if e != nil {
-				t.Fatal(e)
-			}
-			if !bytes.Equal(body, f.raw) {
-				t.Fatal("response bytes changed")
-			}
-			receipt, e := c.VerifyResponse(context.Background(), "resp_fixture")
-			if e != nil {
-				t.Fatal(e)
-			}
-			if receipt.SignatureKind != "gateway" || receipt.Signature.SignedText == "" {
-				t.Fatal("wrong receipt")
-			}
-			_, e = c.VerifyResponse(context.Background(), "msg_1")
-			requireCode(t, e, "api.completion_not_found")
-			if f.cloud.chats.Load() != 1 {
-				t.Fatal("inference repeated")
-			}
-		})
+	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(string(algo)+"/"+map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
+				c, f := responsesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = algo })
+				if algo == ECDSA {
+					f.cloud.useECDSA()
+				}
+				body, e := sendResponse(t, c, streaming)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if !bytes.Equal(body, f.raw) {
+					t.Fatal("response bytes changed")
+				}
+				receipt, e := c.VerifyResponse(context.Background(), "resp_fixture")
+				if e != nil {
+					t.Fatal(e)
+				}
+				if receipt.SignatureKind != "gateway" || receipt.Signature.SignedText == "" || receipt.Signature.Signer.SigningAlgo != algo {
+					t.Fatal("wrong receipt")
+				}
+				_, e = c.VerifyResponse(context.Background(), "msg_1")
+				requireCode(t, e, "api.completion_not_found")
+				if f.cloud.chats.Load() != 1 {
+					t.Fatal("inference repeated")
+				}
+			})
+		}
 	}
 }
 func TestResponsesTamperingAndProviderReceipts(t *testing.T) {
@@ -215,6 +181,7 @@ func TestResponsesMissingIDsAndHTTPErrors(t *testing.T) {
 	_, e = c.VerifyResponse(context.Background(), "resp_fixture")
 	requireCode(t, e, "api.completion_not_found")
 }
+
 func TestResponsesStreamContract(t *testing.T) {
 	const start = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\",\"status\":\"in_progress\"}}\n\n"
 	for _, tc := range []struct {
@@ -281,38 +248,5 @@ func TestResponsesRejectUnsupportedBeforeIO(t *testing.T) {
 	requireCode(t, e, "api.invalid_input")
 	if f.cloud.attestations.Load() != 0 {
 		t.Fatal("unsupported endpoint triggered I/O")
-	}
-}
-
-func TestResponsesECDSA(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
-			c, f := responsesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = ECDSA })
-			key, err := secp.GeneratePrivateKey()
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.ecdsaKey = key
-			public := key.PubKey().SerializeUncompressed()[1:]
-			address := keccak(public)[12:]
-			f.cloud.a.Signer = SigningIdentity{ECDSA, hex.EncodeToString(address)}
-			f.cloud.a.SigningPublicKey = hex.EncodeToString(public)
-			clear(f.cloud.q.ReportData[:32])
-			copy(f.cloud.q.ReportData, address)
-			raw, err := sendResponse(t, c, streaming)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(raw, f.raw) {
-				t.Fatal("response bytes changed")
-			}
-			receipt, err := c.VerifyResponse(t.Context(), "resp_fixture")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != ECDSA {
-				t.Fatal("wrong receipt")
-			}
-		})
 	}
 }

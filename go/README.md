@@ -167,7 +167,7 @@ including both signing algorithms, JSON/SSE, E2EE, OHTTP, and the official OpenA
 client. Live tests require the `e2e` build tag and credentials.
 
 No authenticated live inference is required by the unit tests. They use local
-servers, shared encryption vectors, signed Sigstore fixtures, and an offline
+servers, encryption vectors, signed Sigstore fixtures, and an offline
 Intel-signed quote with its collateral.
 
 ## Verification and privacy

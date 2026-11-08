@@ -3,25 +3,19 @@ package nearai
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/http/httptrace"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
-	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
-// Keep this copy in sync with rs/test-fixtures/systemone-responses.json.
 //
 //go:embed testdata/systemone-responses.json
 var systemOneResponseVectors []byte
@@ -39,7 +33,7 @@ func systemOneVectors(t *testing.T) systemOneResponseFixture {
 	}
 	return fixture
 }
-func TestSystemOneSharedResponseVectors(t *testing.T) {
+func TestSystemOneResponseVectors(t *testing.T) {
 	fixture := systemOneVectors(t)
 	for _, body := range fixture.Valid {
 		data, err := decodeSystemOneResponse(body)
@@ -71,7 +65,6 @@ type systemOneCloud struct {
 	body, id            string
 	status              int
 	tamper, wrongSigner bool
-	key                 *secp.PrivateKey
 	calls               atomic.Int32
 	dropDecisionAt      int32
 	truncateBody        bool
@@ -131,20 +124,7 @@ func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.expectedRequest != nil && !bytes.Equal(body, f.expectedRequest) {
 		f.f.t.Errorf("System One changed the JSON image request: %s", body)
 	}
-	kind := "gateway"
-	text := hashText(body) + ":" + hashText([]byte(f.body))
-	if f.f.tee {
-		kind = "provider_tee"
-		text = "canonical/model:" + text
-	}
-	sig := CompletionSignature{Kind: kind, SignedText: text, Signer: f.f.a.Signer}
-	if f.key == nil {
-		sig.Signature = hex.EncodeToString(ed25519.Sign(f.f.priv, []byte(text)))
-	} else {
-		digest := keccak([]byte("\x19Ethereum Signed Message:\n" + itoa(len(text)) + text))
-		compact := secpecdsa.SignCompact(f.key, digest, false)
-		sig.Signature = hex.EncodeToString(append(compact[1:], compact[0]))
-	}
+	sig := f.f.completionSignature(body, []byte(f.body), f.f.tee)
 	if f.wrongSigner {
 		sig.Signer.SigningAddress = strings.Repeat("11", len(sig.Signer.SigningAddress)/2)
 	}
@@ -153,7 +133,7 @@ func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.f.mu.Unlock()
 	w.Header().Set("X-Generation-Id", f.id)
 	if f.truncateBody {
-		w.Header().Set("Content-Length", itoa(len(f.body)+1))
+		w.Header().Set("Content-Length", strconv.Itoa(len(f.body)+1))
 	}
 	wire := f.body
 	if f.tamper {
@@ -166,24 +146,16 @@ func systemOneClient(t *testing.T, tee bool, algo SigningAlgo, modify func(*syst
 	f := &systemOneCloud{f: newFakeCloud(t), id: "decision/with % space", body: " \n" + string(systemOneVectors(t).Valid[0]) + " \n"}
 	f.f.tee = tee
 	if algo == ECDSA {
-		f.key, _ = secp.GeneratePrivateKey()
-		address := keccak(f.key.PubKey().SerializeUncompressed()[1:])[12:]
-		f.f.a.Signer = SigningIdentity{ECDSA, hex.EncodeToString(address)}
-		f.f.a.SigningPublicKey = hex.EncodeToString(f.key.PubKey().SerializeUncompressed())
-		clear(f.f.q.ReportData[:32])
-		copy(f.f.q.ReportData, address)
+		f.f.useECDSA()
+		// Exercise normalization of an uncompressed public key with its 04 prefix.
+		f.f.a.SigningPublicKey = "04" + f.f.a.SigningPublicKey
 	}
-	server := httptest.NewServer(f)
-	o := InferenceOptions{ClientOptions: ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"}, SigningAlgo: algo, DisableTLSBinding: true, GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote}, ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote}}
-	if modify != nil {
-		modify(f, &o)
-	}
-	c, err := NewInferenceClient(o)
-	if err != nil {
-		server.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { c.Close(); server.Close() })
+	c, _ := fakeClient(t, f, func(o *InferenceOptions) {
+		o.SigningAlgo = algo
+		if modify != nil {
+			modify(f, o)
+		}
+	})
 	return c, f
 }
 func systemOneRequest() any {
@@ -209,7 +181,7 @@ func TestSystemOneClearResponseCache(t *testing.T) {
 func TestSystemOnePlaintextKeyRoutingAndReceipt(t *testing.T) {
 	for _, tee := range []bool{false, true} {
 		for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
-			t.Run(itoa(boolInt(tee))+string(algo), func(t *testing.T) {
+			t.Run(fmt.Sprintf("tee=%t/%s", tee, algo), func(t *testing.T) {
 				c, f := systemOneClient(t, tee, algo, nil)
 				headers := http.Header{"Authorization": {"Bearer bad"}, "Api-Key": {"bad"}, "Accept-Encoding": {"gzip"}, "Content-Encoding": {"gzip"}, "X-Model-Pub-Key": {"bad"}, "Digest": {"bad"}}
 				result, err := c.CreateSystemOneWithHeaders(context.Background(), systemOneRequest(), headers)

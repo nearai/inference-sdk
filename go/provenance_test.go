@@ -27,8 +27,8 @@ func TestProvenanceAPIURLRejectsEmptyQuery(t *testing.T) {
 	}
 }
 
-func TestSharedSignedProvenanceFixtures(t *testing.T) {
-	raw, e := os.ReadFile("../test-fixtures/provenance/trusted-root.json")
+func TestSignedProvenanceFixtures(t *testing.T) {
+	raw, e := os.ReadFile("testdata/provenance/trusted-root.json")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -59,7 +59,7 @@ func TestSharedSignedProvenanceFixtures(t *testing.T) {
 		},
 	} {
 		t.Run(tt.file, func(t *testing.T) {
-			b, e := os.ReadFile("../test-fixtures/provenance/" + tt.file)
+			b, e := os.ReadFile("testdata/provenance/" + tt.file)
 			if e != nil {
 				t.Fatal(e)
 			}

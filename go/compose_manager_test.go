@@ -25,7 +25,7 @@ type managerFixture struct {
 
 func loadManagerFixture(t *testing.T) managerFixture {
 	t.Helper()
-	b, e := os.ReadFile("../test-fixtures/compose-manager/deployment.json")
+	b, e := os.ReadFile("testdata/compose-manager/deployment.json")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -115,11 +115,11 @@ func TestManagerEvidenceAuthenticatesEverySignedField(t *testing.T) {
 
 func TestComposeManagerImagePolicyAndProxy(t *testing.T) {
 	f := loadManagerFixture(t)
-	bundle, e := os.ReadFile("../test-fixtures/provenance/compose-manager-launcher.bundle.json")
+	bundle, e := os.ReadFile("testdata/provenance/compose-manager-launcher.bundle.json")
 	if e != nil {
 		t.Fatal(e)
 	}
-	rootJSON, e := os.ReadFile("../test-fixtures/provenance/trusted-root.json")
+	rootJSON, e := os.ReadFile("testdata/provenance/trusted-root.json")
 	if e != nil {
 		t.Fatal(e)
 	}
