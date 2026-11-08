@@ -562,16 +562,12 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	id := ""
 	failed := false
 	messageStarted, messageStopped := false, false
-	firstRecord := true
-	transform := func(record []byte) ([]byte, error) {
-		parsed := record
-		if firstRecord {
-			parsed = bytes.TrimPrefix(record, []byte("\xef\xbb\xbf"))
-			firstRecord = false
-		}
-		data, event, hasEvent := sseFields(parsed)
+	observe := func(record []byte, data, event string, hasEvent bool) error {
 		if messages && (!completeSSERecord(record) || event == "error" || data == "[DONE]") {
-			return nil, failure("api.invalid_response", nil)
+			return failure("api.invalid_response", nil)
+		}
+		if data == "[DONE]" && id == "" {
+			return failure("api.invalid_response", nil)
 		}
 		if event == "error" {
 			failed = true
@@ -579,25 +575,25 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		if data != "" && data != "[DONE]" && event != "error" {
 			obj, e := decodeObject([]byte(data))
 			if e != nil {
-				return nil, e
+				return e
 			}
 			if _, ok := obj["error"]; ok {
+				failed = true
+			}
+			if obj["type"] == "error" {
 				failed = true
 			}
 			if messages {
 				kind, _ := obj["type"].(string)
 				if kind == "" || (hasEvent && event != kind) || messageStopped {
-					return nil, failure("api.invalid_response", nil)
-				}
-				if kind == "error" {
-					failed = true
+					return failure("api.invalid_response", nil)
 				}
 				if kind == "message_stop" {
 					messageStopped = true
 				}
 				if kind == "message_start" {
 					if messageStarted {
-						return nil, failure("api.invalid_response", nil)
+						return failure("api.invalid_response", nil)
 					}
 					messageStarted = true
 					obj, _ = obj["message"].(map[string]any)
@@ -608,19 +604,21 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			if responses {
 				// Output item IDs are not response IDs. Lifecycle events carry
 				// the receipt ID inside their response object.
-				obj, _ = obj["response"].(map[string]any)
-			}
-			if candidate, ok := obj["id"].(string); ok && candidate != "" {
-				if id != "" && candidate != id {
-					return nil, failure("api.invalid_response", nil)
+				response, exists := obj["response"]
+				if !exists {
+					return nil
 				}
-				id = candidate
+				obj, _ = response.(map[string]any)
+			} else if _, exists := obj["id"]; !exists {
+				return nil
 			}
+			candidate, _ := obj["id"].(string)
+			if candidate == "" || (id != "" && candidate != id) {
+				return failure("api.invalid_response", nil)
+			}
+			id = candidate
 		}
-		if prepared != nil {
-			return prepared.transformSSE(parsed)
-		}
-		return record, nil
+		return nil
 	}
 	finish := func() error {
 		if failed || id == "" || (messages && !messageStopped) {
@@ -628,11 +626,15 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return c.register(id, body, capture.body.Bytes(), s, gatewayOnly, generation)
 	}
-	response.Body = &sseReader{
-		source: capture, reader: bufio.NewReader(capture), transform: transform,
-		terminal: func([]byte) bool { return messages && messageStopped },
+	events := &sseReader{
+		source: capture, reader: bufio.NewReader(capture), observe: observe,
+		terminal: func() bool { return messages && messageStopped },
 		finish:   finish,
 	}
+	if prepared != nil {
+		events.decrypt = prepared.transformSSE
+	}
+	response.Body = events
 	removeBodyHeaders(response.Header)
 	response.ContentLength = -1
 	return response, nil

@@ -29,6 +29,8 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 receipt registration. Non-2xx responses pass through `send`; `chat_completions`, `create_response`, and `create_message`
 turn them into `ApiError::HttpStatus`.
 
+After a valid response ID, Chat and Responses streams can end with `[DONE]` or normal EOF.
+
 For `ProviderTee` receipts, `attestations` contains all verified reports sharing the selected signer.
 The deprecated `Model` variant holds the report selected for the request key.
 For Gateway-signed receipts, use `VerifiedCompletionAttestation::Gateway`.

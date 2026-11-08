@@ -13,7 +13,14 @@ from pydantic import ValidationError
 from ..schemas import ChatCompletionResponseSchema
 from ..types.e2ee import E2eeModelKey
 from ..utils.errors import ApiError, api_failure, verification_failure
-from ..utils.sse import get_sse_data, split_sse_lines, take_complete_sse_records
+from ..utils.sse import (
+    get_sse_data,
+    get_sse_event,
+    get_sse_record_data,
+    parse_sse_json,
+    split_sse_lines,
+    take_complete_sse_records,
+)
 from .e2ee import (
     E2eeClientKeyPair,
     decrypt_e2ee_text,
@@ -145,20 +152,41 @@ async def decrypt_e2ee_chat_sse(
 ) -> AsyncIterator[bytes]:
     """Preserve SSE controls and boundaries, even across split UTF-8 or CRLF."""
 
-    decoder = codecs.getincrementaldecoder('utf-8')()
-    pending = ''
+    decoder = codecs.getincrementaldecoder('utf-8-sig')()
+    pending = b''
+    text = ''
+    done = False
     try:
         async for chunk in source:
-            pending += decoder.decode(chunk)
-            complete = take_complete_sse_records(pending)
-            pending = complete.pending
+            if done:
+                yield chunk
+                continue
+            decoded = len(pending)
+            pending += chunk
+            # ASCII framing with one character per byte preserves raw offsets.
+            complete = take_complete_sse_records(pending.decode('latin1'))
+            consumed = 0
             for record in complete.records:
+                end = consumed + len(record.value) + len(record.separator)
+                text += decoder.decode(pending[decoded:end])
+                decoded = end
+                if get_sse_record_data(text) == '[DONE]':
+                    done = True
+                    yield pending[consumed:]
+                    pending = b''
+                    text = ''
+                    break
                 yield _transform_sse_record(
-                    record.value, record.separator, client_key_pair
+                    text[: -len(record.separator)], record.separator, client_key_pair
                 ).encode()
-        pending += decoder.decode(b'', final=True)
-        if pending:
-            yield _transform_sse_record(pending, '', client_key_pair).encode()
+                text = ''
+                consumed = end
+            if not done:
+                text += decoder.decode(pending[decoded:])
+                pending = pending[consumed:]
+        text += decoder.decode(b'', final=True)
+        if text:
+            yield _transform_sse_record(text, '', client_key_pair).encode()
     except UnicodeDecodeError as cause:
         raise _invalid_response('Chat Completions SSE response', cause) from cause
 
@@ -269,18 +297,10 @@ def _transform_sse_record(
     if not data_lines:
         return record + separator
     data = '\n'.join(data_lines)
-    event = None
-    for line in lines:
-        if line.content == 'event':
-            event = ''
-            break
-        if line.content.startswith('event:'):
-            event = line.content[len('event:') :].removeprefix(' ')
-            break
-    if data in ('', '[DONE]') or event == 'error':
+    if data in ('', '[DONE]') or get_sse_event(record) == 'error':
         return record + separator
     try:
-        body = json.loads(data)
+        body = parse_sse_json(data)
     except ValueError as cause:
         raise _invalid_response('Chat Completions SSE data', cause) from cause
     chunk = parse_e2ee_chat_response(body)

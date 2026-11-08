@@ -7,7 +7,7 @@ import {
   verifyDirectModelAttestations,
   verifyDirectModelResponse,
 } from '@nearai/inference-sdk/node';
-import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
+import { readChatOutput } from '../utils/chat-output.ts';
 
 // Standalone verification of plaintext Chat bodies over HTTPS.
 // See client.ts for E2EE.
@@ -69,30 +69,11 @@ async function runStreamingExample(
     ...params,
     stream: true,
   });
-  if (response.body === null) throw new Error('Streaming response has no body');
-
-  // Capture exact bytes while displaying text as it arrives.
-  const responseBytesPromise = response.clone().arrayBuffer();
-  const reader = response.body
-    .pipeThrough(new TextDecoderStream('utf-8', { ignoreBOM: true }))
-    .getReader();
-  let responseText = '';
-  const output = new ChatStreamOutput();
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      responseText += chunk.value;
-      process.stdout.write(output.push(chunk.value));
-    }
-  } finally {
-    process.stdout.write(output.push('', true));
-    process.stdout.write('\n');
-    reader.releaseLock();
-  }
-  const responseBytes = await responseBytesPromise;
+  const [responseBytes, { id: completionId }] = await Promise.all([
+    response.clone().arrayBuffer(),
+    readChatOutput(response, true),
+  ]);
   const responseBody = new Uint8Array(responseBytes);
-  const completionId = chatOutput(responseText, true).id;
   await verifyResponse({ ...params, completionId, requestBody, responseBody });
 }
 

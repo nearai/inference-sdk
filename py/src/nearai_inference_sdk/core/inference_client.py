@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import codecs
-import json
 import math
 import re
 import traceback
@@ -49,7 +48,12 @@ from ..utils.errors import (
     api_failure,
     verification_failure,
 )
-from ..utils.sse import get_sse_data_records, get_sse_event, take_complete_sse_records
+from ..utils.sse import (
+    get_sse_event,
+    get_sse_record_data,
+    parse_sse_json,
+    take_complete_sse_records,
+)
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
 from .chat import verify_gateway_response, verify_model_response
@@ -61,6 +65,7 @@ from .cloud_api import (
 )
 from .e2ee_request import (
     decode_chat_request,
+    is_server_sent_event_response,
     prepare_e2ee_chat_request,
     remove_e2ee_headers,
 )
@@ -366,7 +371,26 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 gateway_only=responses or messages,
             )
 
-        captured = httpx.Response(
+        wire = None
+        if prepared is not None:
+            if not is_server_sent_event_response(response):
+                decrypted = await prepared.decrypt_response(response)
+                body = response.content
+                register(_json_completion_id(body))
+                response_body.set_result(body)
+                return decrypted
+            wire = _WireStream(response)
+            response = await prepared.decrypt_response(
+                httpx.Response(
+                    response.status_code,
+                    headers=_decoded_headers(response.headers),
+                    stream=wire,
+                    extensions=response.extensions,
+                    request=prepared_request,
+                )
+            )
+
+        return httpx.Response(
             response.status_code,
             headers=_decoded_headers(response.headers),
             stream=_CapturedResponseStream(
@@ -374,15 +398,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 response_body,
                 register,
                 self,
+                wire=wire,
                 responses=responses,
                 messages=messages,
             ),
             extensions=response.extensions,
             request=prepared_request,
         )
-        if prepared is not None:
-            return await prepared.decrypt_response(captured)
-        return captured
 
     def _request_headers(self, request_headers: Mapping[str, str]) -> httpx.Headers:
         headers = httpx.Headers(self._headers)
@@ -846,8 +868,24 @@ class InferenceClient(
         return httpx.AsyncClient(timeout=None)
 
 
+class _WireStream(httpx.AsyncByteStream):
+    """Retain the signed representation while the E2EE reader decrypts it."""
+
+    def __init__(self, response: httpx.Response):
+        self.response = response
+        self.chunks: list[bytes] = []
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        async for chunk in self.response.aiter_bytes():
+            self.chunks.append(chunk)
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self.response.aclose()
+
+
 class _CapturedResponseStream(httpx.AsyncByteStream):
-    """Capture wire bytes under consumer backpressure, before E2EE decryption."""
+    """Finish the receipt after the visible stream reaches EOF successfully."""
 
     def __init__(
         self,
@@ -856,6 +894,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         register: Callable[[str], None],
         client: _VerifiedInferenceClient,
         *,
+        wire: _WireStream | None = None,
         responses: bool = False,
         messages: bool = False,
     ) -> None:
@@ -865,11 +904,11 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         self._client = client
         self._responses = responses
         self._messages = messages
-        self._chunks: list[bytes] = []
+        self._wire = wire
+        self._chunks: list[bytes] = [] if wire is None else wire.chunks
         self._reader = response.aiter_bytes()
-        self._content_type = response.headers.get('content-type', '')
-        self._streaming = self._content_type.lower().startswith('text/event-stream')
-        self._decoder = codecs.getincrementaldecoder('utf-8-sig')()
+        self._streaming = is_server_sent_event_response(response)
+        self._decoder = codecs.getincrementaldecoder('utf-8-sig')(errors='replace')
         self._pending = ''
         self._registered = False
         self._done = False
@@ -898,58 +937,62 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             raise
 
     def _capture(self, chunk: bytes) -> None:
-        self._chunks.append(chunk)
-        if not self._streaming:
+        if self._wire is None:
+            self._chunks.append(chunk)
+        if not self._streaming or (self._done and not self._messages):
             return
         self._pending += self._decoder.decode(chunk)
-        parsed = take_complete_sse_records(self._pending)
+        # The optional LF after a blank CR cannot change the event or its ID.
+        parsed = take_complete_sse_records(self._pending, eof=True)
         self._pending = parsed.pending
         for record in parsed.records:
-            for data in get_sse_data_records(record.value):
-                if data == '[DONE]':
-                    self._done = True
-                elif self._messages and data:
-                    try:
-                        value = json.loads(data)
-                        if value.get('type') == 'message_stop':
-                            self._done = True
-                        if (
-                            value.get('type') == 'message_start'
-                            and not self._registered
-                        ):
-                            self._register(
-                                CompletionResponseIdSchema.model_validate(
-                                    value.get('message')
-                                ).id
-                            )
-                            self._registered = True
-                    except (ValueError, ValidationError, AttributeError):
-                        continue
-                elif data and not self._registered:
-                    try:
-                        value = json.loads(data)
-                        if self._responses:
-                            value = (
-                                value.get('response')
-                                if isinstance(value, dict)
-                                else None
-                            )
-                        completion_id = CompletionResponseIdSchema.model_validate(
-                            value
-                        ).id
-                    except (ValueError, ValidationError):
-                        continue
-                    self._register(completion_id)
-                    self._registered = True
+            data = get_sse_record_data(record.value)
+            if data == '[DONE]':
+                if not self._registered:
+                    raise _invalid_completion_id()
+                self._done = True
+                return
+            elif self._messages and data:
+                try:
+                    value = parse_sse_json(data)
+                    if value.get('type') == 'message_stop':
+                        self._done = True
+                    if value.get('type') == 'message_start' and not self._registered:
+                        self._register(
+                            CompletionResponseIdSchema.model_validate(
+                                value.get('message')
+                            ).id
+                        )
+                        self._registered = True
+                except (ValueError, ValidationError, AttributeError):
+                    continue
+            elif data and not self._registered:
+                try:
+                    value = parse_sse_json(data)
+                    if self._responses:
+                        value = (
+                            value.get('response') if isinstance(value, dict) else None
+                        )
+                    completion_id = CompletionResponseIdSchema.model_validate(value).id
+                except (ValueError, ValidationError):
+                    continue
+                self._register(completion_id)
+                self._registered = True
 
     def _complete(self) -> None:
         if self._response_body.done():
             return
         body = b''.join(self._chunks)
-        if self._messages and self._streaming:
-            _validate_message_stream(body)
+        if self._streaming:
+            completion_id = (
+                _validate_message_stream(body)
+                if self._messages
+                else _validate_openai_stream(body, responses=self._responses)
+            )
+        else:
+            completion_id = _json_completion_id(body)
         if not self._registered:
-            self._register(_completion_id(body, self._content_type, self._responses))
+            self._register(completion_id)
             self._registered = True
         self._response_body.set_result(body)
         self._chunks.clear()
@@ -999,31 +1042,59 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             await self._response.aclose()
 
 
-def _completion_id(body: bytes, content_type: str, responses: bool = False) -> str:
+def _json_completion_id(body: bytes) -> str:
     try:
-        if content_type.lower().startswith('text/event-stream'):
-            for data in get_sse_data_records(body.decode('utf-8-sig')):
-                if data and data != '[DONE]':
-                    value = json.loads(data)
-                    if responses:
-                        value = (
-                            value.get('response') if isinstance(value, dict) else None
-                        )
-                    try:
-                        return CompletionResponseIdSchema.model_validate(value).id
-                    except ValidationError:
-                        continue
-        else:
-            return CompletionResponseIdSchema.model_validate_json(body).id
-    except (ValueError, UnicodeDecodeError) as error:
+        return CompletionResponseIdSchema.model_validate_json(body).id
+    except ValidationError as error:
         raise _invalid_completion_id(error) from error
-    raise _invalid_completion_id()
 
 
-def _validate_message_stream(body: bytes) -> None:
+def _validate_openai_stream(body: bytes, *, responses: bool) -> str:
+    response_id = None
+    framing = body.removeprefix(codecs.BOM_UTF8).decode('latin1')
+    parsed = take_complete_sse_records(framing, eof=True)
+    for raw_record in [*(item.value for item in parsed.records), parsed.pending]:
+        try:
+            record = raw_record.encode('latin1').decode('utf-8')
+        except UnicodeDecodeError as error:
+            raise _invalid_completion_id(error) from error
+        data = get_sse_record_data(record)
+        if get_sse_event(record) == 'error':
+            raise _invalid_completion_id()
+        if data == '[DONE]':
+            break
+        if not data:
+            continue
+        try:
+            event = parse_sse_json(data)
+            if not isinstance(event, dict):
+                raise _invalid_completion_id()
+            if event.get('type') == 'error' or 'error' in event:
+                raise _invalid_completion_id()
+            if responses:
+                if 'response' not in event:
+                    continue
+                event = event['response']
+            elif 'id' not in event:
+                continue
+            current_id = CompletionResponseIdSchema.model_validate(event).id
+            if response_id is not None and current_id != response_id:
+                raise _invalid_completion_id()
+            response_id = current_id
+        except (ValueError, ValidationError) as error:
+            raise _invalid_completion_id(error) from error
+    if response_id is None:
+        raise _invalid_completion_id()
+    return response_id
+
+
+def _validate_message_stream(body: bytes) -> str:
     """Only a complete message_start/message_stop sequence can have a receipt."""
-    parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
-    started = False
+    try:
+        parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
+    except UnicodeDecodeError as error:
+        raise _invalid_completion_id(error) from error
+    message_id = None
     stopped = False
     if parsed.pending:
         raise _invalid_completion_id()
@@ -1031,31 +1102,33 @@ def _validate_message_stream(body: bytes) -> None:
         event_name = get_sse_event(record.value)
         if event_name == 'error':
             raise _invalid_completion_id()
-        for data in get_sse_data_records(record.value):
-            if not data:
-                continue
-            try:
-                event = json.loads(data)
-                kind = event.get('type')
-                if (
-                    not isinstance(kind, str)
-                    or not kind
-                    or kind == 'error'
-                    or stopped
-                    or (event_name is not None and event_name != kind)
-                ):
+        data = get_sse_record_data(record.value)
+        if not data:
+            continue
+        try:
+            event = parse_sse_json(data)
+            kind = event.get('type')
+            if (
+                not isinstance(kind, str)
+                or not kind
+                or kind == 'error'
+                or stopped
+                or (event_name is not None and event_name != kind)
+            ):
+                raise _invalid_completion_id()
+            if kind == 'message_start':
+                if message_id is not None:
                     raise _invalid_completion_id()
-                if kind == 'message_start':
-                    if started:
-                        raise _invalid_completion_id()
-                    CompletionResponseIdSchema.model_validate(event.get('message'))
-                    started = True
-                if kind == 'message_stop':
-                    stopped = True
-            except (ValueError, AttributeError) as error:
-                raise _invalid_completion_id(error) from error
-    if not started or not stopped:
+                message_id = CompletionResponseIdSchema.model_validate(
+                    event.get('message')
+                ).id
+            if kind == 'message_stop':
+                stopped = True
+        except (ValueError, AttributeError) as error:
+            raise _invalid_completion_id(error) from error
+    if message_id is None or not stopped:
         raise _invalid_completion_id()
+    return message_id
 
 
 def _invalid_completion_id(cause: BaseException | None = None) -> ApiError:

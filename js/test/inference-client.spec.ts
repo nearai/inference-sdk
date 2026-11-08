@@ -1148,6 +1148,184 @@ describe('inference client', () => {
     expect(inferenceClient.verifyResponse(completion.id)).toBe(verification);
   });
 
+  function signedChatResponse(
+    wire: Uint8Array,
+    contentType = 'text/event-stream',
+    stream?: ReadableStream<Uint8Array>,
+  ) {
+    const gateway = createTestGateway();
+    let signature: Record<string, string>;
+    let signatureCalls = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (path === '/v1/chat/completions') {
+        signature = gateway.createProviderSignature(
+          new Uint8Array(await request.arrayBuffer()),
+          wire,
+        );
+        return new Response(stream ?? Buffer.from(wire), {
+          headers: { 'content-type': contentType },
+        });
+      }
+      if (path.startsWith('/v1/signature/')) {
+        signatureCalls++;
+        return jsonResponse(signature);
+      }
+      return gateway.fetch(request);
+    });
+    return { gateway, signatureCalls: () => signatureCalls };
+  }
+
+  const firstChatChunk = 'data: {"id":"chat-1","choices":[]}\n\n';
+  test.each([
+    {
+      name: 'normal EOF',
+      ending: 'data: {"id":"chat-1","choices":[]}\n\n',
+      valid: true,
+    },
+    {
+      name: 'DONE with trailing bytes',
+      ending: 'data: [DONE]\n\ndata: not-json\n\n',
+      valid: true,
+    },
+    {
+      name: 'conflicting response ID',
+      ending: 'data: {"id":"other","choices":[]}\n\n',
+      valid: false,
+    },
+    {
+      name: 'stream error',
+      ending:
+        'event: error\ndata: {"type":"error","error":{"message":"failed"}}\n\n',
+      valid: false,
+    },
+  ])('Chat stream receipt: $name', async ({ ending, valid }) => {
+    const wire = Buffer.from(firstChatChunk + ending);
+    const fixture = signedChatResponse(wire);
+    for (const e2ee of [false, true]) {
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee,
+      });
+      const response = await client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [], stream: true }),
+      );
+      if (valid) {
+        await response.arrayBuffer();
+        await expect(client.verifyResponse('chat-1')).resolves.toMatchObject({
+          id: 'chat-1',
+        });
+      } else {
+        // E2EE can reject malformed events while the body is being read.
+        await response
+          .arrayBuffer()
+          .catch((error: unknown) => expect(error).toBeInstanceOf(ApiError));
+        await expect(client.verifyResponse('chat-1')).rejects.toBeInstanceOf(
+          ApiError,
+        );
+      }
+      client.clearResponseCache();
+    }
+    expect(fixture.signatureCalls()).toBe(valid ? 2 : 0);
+  });
+
+  test('rejects the Chat receipt when the signed stream fails decryption', async () => {
+    const wire = Buffer.from(
+      'data: {"id":"chat-1","choices":[]}\n\ndata: {"id":"chat-1","choices":[{"delta":{"content":"invalid"}}]}\n\ndata: [DONE]\n\n',
+    );
+    const fixture = signedChatResponse(wire);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: true,
+    });
+    const response = await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [], stream: true }),
+    );
+    await expect(response.arrayBuffer()).rejects.toMatchObject({
+      failure: { code: 'e2ee.decryption_failed' },
+    });
+    await expect(client.verifyResponse('chat-1')).rejects.toThrow();
+    expect(fixture.signatureCalls()).toBe(0);
+  });
+
+  test.each([false, true])(
+    'Chat finishes at [DONE] while verification waits for the signed tail (E2EE=%s)',
+    async (e2ee) => {
+      const prefix = Buffer.from(
+        'data: {"id":"chat-1","choices":[]}\n\ndata: [DONE]\n\n',
+      );
+      const tail = Buffer.from(': signed tail\n\n');
+      let source!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          source = controller;
+          source.enqueue(prefix);
+        },
+      });
+      const fixture = signedChatResponse(
+        Buffer.concat([prefix, tail]),
+        'text/event-stream',
+        body,
+      );
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee,
+      });
+      const stream = await client.chat.completions.create({
+        model,
+        messages: [],
+        stream: true,
+      });
+      const ids = [];
+      for await (const chunk of stream) ids.push(chunk.id);
+      expect(ids).toEqual(['chat-1']);
+      const receipt = client.verifyResponse('chat-1');
+      expect(fixture.signatureCalls()).toBe(0);
+      source.enqueue(tail);
+      source.close();
+      await expect(receipt).resolves.toMatchObject({ id: 'chat-1' });
+      expect(fixture.signatureCalls()).toBe(1);
+    },
+  );
+
+  test.each(['chat/completions', 'responses'])(
+    'rejects %s [DONE] without an ID before exposing it',
+    async (endpoint) => {
+      const gateway = createTestGateway();
+      const payload =
+        endpoint === 'responses'
+          ? { response: { id: 'late-id' } }
+          : { id: 'late-id' };
+      const records = [
+        'data: [DONE]\n\n',
+        `data: ${JSON.stringify(payload)}\n\n`,
+      ];
+      jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const request = new Request(input, init);
+        return new URL(request.url).pathname === `/v1/${endpoint}`
+          ? Promise.resolve(streamResponse(records))
+          : gateway.fetch(request);
+      });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee: false,
+      });
+      const response = await client.fetch(
+        `${baseUrl}${endpoint}`,
+        chatRequest({ messages: [], input: 'Hello', stream: true }),
+      );
+      await expect(response.body?.getReader().read()).rejects.toMatchObject({
+        failure: { code: 'api.invalid_response' },
+      });
+      await expect(client.verifyResponse('late-id')).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+    },
+  );
+
   test.each([
     ['default', undefined, 60 * 60 * 1000],
     ['custom', 1000, 1000],
@@ -2920,26 +3098,21 @@ describe('inference client', () => {
     expect(gateway.state.completionRequests).toBe(1);
   });
 
-  test('fails closed when an encrypted Chat response is tampered with', async () => {
-    const gateway = createTestGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const response = await gateway.fetch(input, init);
-      if (!isChatCompletionRequest(input)) {
-        return response;
-      }
-      return jsonResponse({
-        id: 'chatcmpl-tampered',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: 'not-a-valid-ciphertext',
+  test('rejects the receipt when an encrypted Chat JSON response fails decryption', async () => {
+    const fixture = signedChatResponse(
+      Buffer.from(
+        JSON.stringify({
+          id: 'chatcmpl-tampered',
+          choices: [
+            {
+              message: { role: 'assistant', content: 'not-a-valid-ciphertext' },
             },
-          },
-        ],
-      });
-    });
-    const client = new InferenceClient(inferenceClientOptions(gateway));
+          ],
+        }),
+      ),
+      'application/json',
+    );
+    const client = new InferenceClient(inferenceClientOptions(fixture.gateway));
 
     await expect(
       client.fetch(
@@ -2952,7 +3125,12 @@ describe('inference client', () => {
         details: { field: 'choices[0].message.content' },
       },
     });
-    expect(gateway.state.completionRequests).toBe(1);
+    await expect(
+      client.verifyResponse('chatcmpl-tampered'),
+    ).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+    expect(fixture.signatureCalls()).toBe(0);
   });
 
   test('returns non-success Chat responses without decrypting them', async () => {
@@ -5304,6 +5482,7 @@ describe('Responses API', () => {
     status = 200,
     retrySignature = false,
     tee = true,
+    rawBody = undefined as Uint8Array | undefined,
   } = {}) {
     const gateway = createTestGateway({
       providerType: tee ? 'vllm' : 'openai',
@@ -5312,12 +5491,15 @@ describe('Responses API', () => {
     const requests: Request[] = [];
     let signatureCalls = 0;
     let receipt: Record<string, string>;
-    const raw = readFileSync(
-      resolve(
-        __dirname,
-        '../../test-fixtures/responses',
-        streaming ? 'response.sse' : 'response.json',
-      ),
+    const raw = Buffer.from(
+      rawBody ??
+        readFileSync(
+          resolve(
+            __dirname,
+            '../../test-fixtures/responses',
+            streaming ? 'response.sse' : 'response.json',
+          ),
+        ),
     );
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const request = new Request(input, init);
@@ -5553,24 +5735,99 @@ describe('Responses API', () => {
     expect(fixture.signatureCalls()).toBe(2);
   });
 
-  test.each([false, true])(
-    'rejects responses without a response ID (stream: %s)',
-    async (streaming) => {
-      const fixture = responsesGateway({ streaming, missingId: true });
-      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
-      const client = new InferenceClient({
-        ...inferenceClientOptions(fixture.gateway),
-        e2ee: false,
-      });
+  const responseCreated =
+    'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_fixture","status":"in_progress"}}\n\n';
+  test.each([
+    {
+      name: 'completed at EOF',
+      ending:
+        'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed"}}\n\n',
+      valid: true,
+    },
+    {
+      name: 'output limit',
+      ending:
+        'event: response.incomplete\ndata: {"type":"response.incomplete","response":{"id":"resp_fixture","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}\n\n',
+      valid: true,
+    },
+    {
+      name: 'failed response',
+      ending:
+        'event: response.failed\ndata: {"type":"response.failed","response":{"id":"resp_fixture","status":"failed","error":{"code":"server_error","message":"failed"}}}\n\n',
+      valid: true,
+    },
+    {
+      name: 'DONE with trailing bytes',
+      ending: 'data: [DONE]\n\ndata: not-json\n\n',
+      valid: true,
+    },
+    {
+      name: 'conflicting response ID',
+      ending:
+        'event: response.completed\ndata: {"type":"response.completed","response":{"id":"other","status":"completed"}}\n\n',
+      valid: false,
+    },
+    {
+      name: 'stream error',
+      ending:
+        'event: error\ndata: {"type":"error","error":{"message":"failed"}}\n\n',
+      valid: false,
+    },
+  ])('Responses stream contract: $name', async ({ ending, valid }) => {
+    const fixture = responsesGateway({
+      streaming: true,
+      rawBody: Buffer.from(responseCreated + ending),
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    let body: Buffer | undefined;
+    try {
       const response = await client.fetch(
         `${baseUrl}responses`,
-        chatRequest({ input: 'Hello', stream: streaming }),
+        chatRequest({ input: 'Hello', stream: true }),
       );
-      await expect(response.text()).rejects.toMatchObject({
-        failure: { code: 'api.invalid_response' },
-      });
-    },
-  );
+      body = Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      if (valid) throw error;
+      expect(error).toBeInstanceOf(ApiError);
+    }
+    if (valid) {
+      expect(body).toEqual(fixture.raw);
+      await expect(
+        client.verifyResponse('resp_fixture'),
+      ).resolves.toMatchObject({ signatureKind: 'gateway' });
+      expect(fixture.signatureCalls()).toBe(1);
+    } else {
+      await expect(
+        client.verifyResponse('resp_fixture'),
+      ).rejects.toBeInstanceOf(ApiError);
+      expect(fixture.signatureCalls()).toBe(0);
+    }
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  test('rejects a JSON response without a response ID', async () => {
+    const fixture = responsesGateway({ missingId: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const response = await client.fetch(
+      `${baseUrl}responses`,
+      chatRequest({ input: 'Hello' }),
+    );
+    await expect(response.text()).rejects.toMatchObject({
+      failure: { code: 'api.invalid_response' },
+    });
+    await expect(client.verifyResponse('resp_fixture')).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+    expect(fixture.signatureCalls()).toBe(0);
+  });
 
   test('passes HTTP errors through without creating a receipt', async () => {
     const fixture = responsesGateway({ status: 400 });
@@ -5809,7 +6066,7 @@ describe('Messages API', () => {
     },
   );
 
-  test.each(streamCases)('shared stream contract: $name', async (scenario) => {
+  test.each(streamCases)('Messages stream receipt: $name', async (scenario) => {
     const fixture = messagesGateway({
       streaming: true,
       rawBody: Buffer.from(scenario.body),

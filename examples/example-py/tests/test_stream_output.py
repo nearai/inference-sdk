@@ -86,6 +86,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                     yield bytes([byte])
                 test.assertEqual(output.getvalue(), 'Hello 🌍')
                 yield (separator * 2 + 'data: [DONE]' + separator * 2).encode()
+                yield b'data: \xff\n\n'
 
         with contextlib.redirect_stdout(output):
             response = httpx.Response(200, stream=Source())
@@ -127,25 +128,26 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values[0]['id'], 'chat-fixture')
         self.assertEqual(output.getvalue(), 'Hello 🌍\n')
 
-    async def test_truncated_stream_is_an_error(self):
-        for read_stream in (read_direct, read_gateway):
-            with (
-                contextlib.redirect_stdout(io.StringIO()),
-                self.assertRaisesRegex(RuntimeError, 'without'),
-            ):
-                await read_stream(httpx.Response(200, content=b'data: {}\n\n'))
+    async def test_complete_event_at_eof(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            values = await read_gateway(
+                httpx.Response(200, content=b'data: {"id":"chat-1"}')
+            )
+        self.assertEqual(values, [{'id': 'chat-1'}])
+        with self.assertRaises(UnicodeDecodeError):
+            await read_gateway(
+                httpx.Response(200, content=b'data: {"id":"chat-1","extra":"\xff"}')
+            )
 
-    async def test_gateway_rejects_conflicting_completion_ids(self):
-        body = (
-            b'data: {"id":"chat-first","choices":[]}\n\n'
-            b'data: {"id":"chat-other","choices":[]}\n\n'
-            b'data: [DONE]\n\n'
-        )
-        with (
-            contextlib.redirect_stdout(io.StringIO()),
-            self.assertRaisesRegex(RuntimeError, 'conflicting completion IDs'),
-        ):
-            await read_gateway(httpx.Response(200, content=body))
+    async def test_gateway_rejects_invalid_or_conflicting_completion_ids(self):
+        for event in (b'{"id":"chat-other"}', b'{"id":""}', b'{"id":17}'):
+            body = b'data: {"id":"chat-first"}\n\ndata: ' + event + b'\n\n'
+            with (
+                self.subTest(event=event),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(RuntimeError, 'completion ID'),
+            ):
+                await read_gateway(httpx.Response(200, content=body))
 
     async def test_gateway_rejects_error_events(self):
         for event in (b'{"error":"failed"}', b'{"type":"error","message":"failed"}'):

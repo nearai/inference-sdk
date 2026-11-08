@@ -102,63 +102,149 @@ fn event_name<'a>(lines: &[(&'a str, &str)]) -> Option<&'a str> {
         })
         .next_back()
 }
-pub(crate) fn transform(
-    record: &[u8],
-    key: Option<&ResponseKey>,
-    id: &mut Option<String>,
-    responses: bool,
-    messages: bool,
-) -> Result<Vec<u8>, InferenceError> {
-    let text = std::str::from_utf8(record).map_err(|_| invalid_response())?;
-    let lines = lines(text);
-    let values: Vec<_> = lines.iter().filter_map(|(line, _)| data(line)).collect();
-    let joined = values.join("\n");
-    if values.is_empty()
-        || joined.is_empty()
-        || joined == "[DONE]"
-        || event_name(&lines) == Some("error")
-    {
-        return Ok(record.to_vec());
-    }
-    let mut body: Value = match serde_json::from_str(&joined) {
-        Ok(value) => value,
-        Err(_) if key.is_none() => return Ok(record.to_vec()),
-        Err(_) => return Err(invalid_response().into()),
-    };
-    // Responses lifecycle events nest the receipt ID; item IDs are unrelated.
-    let receipt = if responses {
-        &body["response"]
-    } else if messages {
-        if body["type"] == "message_start" {
-            &body["message"]
-        } else {
-            &Value::Null
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum SseMode {
+    DecryptOnly,
+    Chat,
+    Responses,
+    Messages,
+}
+
+pub(crate) struct SseStream {
+    mode: SseMode,
+    first: bool,
+    done: bool,
+    id: Option<String>,
+    message_stopped: bool,
+}
+
+impl SseStream {
+    pub(crate) fn new(mode: SseMode) -> Self {
+        Self {
+            mode,
+            first: true,
+            done: false,
+            id: None,
+            message_stopped: false,
         }
-    } else {
-        &body
-    };
-    if let Some(value) = receipt
-        .get("id")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-    {
-        if id.as_ref().is_some_and(|s| s != value) {
+    }
+
+    pub(crate) fn transform(
+        &mut self,
+        record: Vec<u8>,
+        key: Option<&ResponseKey>,
+    ) -> Result<Vec<u8>, InferenceError> {
+        if self.done {
+            return Ok(record);
+        }
+        let parsed = if std::mem::take(&mut self.first) {
+            record.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&record)
+        } else {
+            &record
+        };
+        let text = std::str::from_utf8(parsed).map_err(|_| invalid_response())?;
+        let lines = lines(text);
+        let event = event_name(&lines);
+        let values: Vec<_> = lines.iter().filter_map(|(line, _)| data(line)).collect();
+        let joined = values.join("\n");
+        if self.mode == SseMode::Messages && !lines.last().is_some_and(|(line, _)| line.is_empty())
+        {
             return Err(invalid_response().into());
         }
-        *id = Some(value.to_owned());
+        if event == Some("error") && self.mode != SseMode::DecryptOnly {
+            return Err(invalid_response().into());
+        }
+        if joined == "[DONE]" {
+            if self.mode == SseMode::Messages
+                || (self.mode != SseMode::DecryptOnly && self.id.is_none())
+            {
+                return Err(invalid_response().into());
+            }
+            self.done = true;
+        } else if !joined.is_empty() && event != Some("error") {
+            let mut body: Value = serde_json::from_str(&joined).map_err(|_| invalid_response())?;
+            if !body.is_object() {
+                return Err(invalid_response().into());
+            }
+            self.observe(event, &body)?;
+            if let Some(key) = key.filter(|_| body.get("choices").is_some()) {
+                decrypt_response(&mut body, key, true)?;
+                return Ok(replace_data(lines, values.len(), &body));
+            }
+        }
+        // Preserve the wire representation on plaintext transports.
+        Ok(if key.is_some() && parsed.len() != record.len() {
+            parsed.to_vec()
+        } else {
+            record
+        })
     }
-    let Some(key) = key else {
-        return Ok(record.to_vec());
-    };
-    if !body.is_object() {
-        return Err(invalid_response().into());
+
+    fn observe(&mut self, event: Option<&str>, body: &Value) -> Result<(), InferenceError> {
+        let receipt = match self.mode {
+            SseMode::DecryptOnly => return Ok(()),
+            SseMode::Messages => {
+                let kind = body["type"].as_str();
+                if self.message_stopped
+                    || kind.is_none_or(str::is_empty)
+                    || kind == Some("error")
+                    || event.is_some_and(|name| Some(name) != kind)
+                {
+                    return Err(invalid_response().into());
+                }
+                if kind == Some("message_stop") {
+                    self.message_stopped = true;
+                }
+                if kind != Some("message_start") {
+                    return Ok(());
+                }
+                if self.id.is_some() {
+                    return Err(invalid_response().into());
+                }
+                &body["message"]
+            }
+            SseMode::Chat | SseMode::Responses => {
+                if body.get("error").is_some() || body["type"] == "error" {
+                    return Err(invalid_response().into());
+                }
+                if self.mode == SseMode::Chat {
+                    if body.get("id").is_none() {
+                        return Ok(());
+                    }
+                    body
+                } else {
+                    // Output item IDs are unrelated to the Responses receipt.
+                    let Some(response) = body.get("response") else {
+                        return Ok(());
+                    };
+                    response
+                }
+            }
+        };
+        let id = receipt["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(invalid_response)?;
+        if let Some(previous) = self.id.as_deref() {
+            if previous != id {
+                return Err(invalid_response().into());
+            }
+        } else {
+            self.id = Some(id.to_owned());
+        }
+        Ok(())
     }
-    if body.get("choices").is_none() {
-        return Ok(record.to_vec());
+
+    pub(crate) fn finish(self) -> Result<String, InferenceError> {
+        if self.mode == SseMode::Messages && !self.message_stopped {
+            return Err(invalid_response().into());
+        }
+        Ok(self.id.ok_or_else(invalid_response)?)
     }
-    decrypt_response(&mut body, key, true)?;
+}
+
+fn replace_data(lines: Vec<(&str, &str)>, mut remaining: usize, body: &Value) -> Vec<u8> {
     let mut result = String::new();
-    let mut remaining = values.len();
     for (line, ending) in lines {
         if data(line).is_none() {
             result.push_str(line);
@@ -172,61 +258,7 @@ pub(crate) fn transform(
             }
         }
     }
-    Ok(result.into_bytes())
-}
-
-#[derive(Default)]
-pub(crate) struct MessageStreamState {
-    started: bool,
-    stopped: bool,
-}
-
-impl MessageStreamState {
-    pub(crate) fn observe(&mut self, record: &[u8]) -> Result<(), InferenceError> {
-        let text = std::str::from_utf8(record).map_err(|_| invalid_response())?;
-        let lines = lines(text);
-        if !lines.last().is_some_and(|(line, _)| line.is_empty()) {
-            return Err(invalid_response().into());
-        }
-        let joined = lines
-            .iter()
-            .filter_map(|(line, _)| data(line))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let name = event_name(&lines);
-        if name == Some("error") {
-            return Err(invalid_response().into());
-        }
-        if joined.is_empty() {
-            return Ok(());
-        }
-        let event: Value = serde_json::from_str(&joined).map_err(|_| invalid_response())?;
-        let kind = event["type"].as_str();
-        if self.stopped
-            || kind == Some("error")
-            || kind.is_none_or(str::is_empty)
-            || name.is_some_and(|name| Some(name) != kind)
-        {
-            return Err(invalid_response().into());
-        }
-        match kind {
-            Some("message_start") => {
-                if self.started {
-                    return Err(invalid_response().into());
-                }
-                self.started = true;
-            }
-            Some("message_stop") => self.stopped = true,
-            _ => {}
-        }
-        Ok(())
-    }
-    pub(crate) fn finish(&self) -> Result<(), InferenceError> {
-        if !self.started || !self.stopped {
-            return Err(invalid_response().into());
-        }
-        Ok(())
-    }
+    result.into_bytes()
 }
 
 #[cfg(test)]

@@ -140,6 +140,8 @@ SDK client does not close the owner or discard receipts. Keep the owner open
 while sending requests and verifying responses, and consume streams completely
 before calling `verify_response()`.
 
+After a valid response ID, Chat and Responses streams can end with `[DONE]` or normal EOF.
+
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
 | `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, Messages ID, or System One decision ID. |

@@ -30,11 +30,7 @@ pub fn completion_id(bytes: &[u8], stream: bool) -> Result<String> {
     if !stream {
         return id(&serde_json::from_slice(bytes)?);
     }
-    let mut decoder = EventDecoder::default();
-    let values = decoder.push(bytes, true)?;
-    if !decoder.done {
-        return Err("Stream ended without [DONE]".into());
-    }
+    let values = events(bytes)?;
     let mut found = None;
     for value in values {
         if value.get("id").is_some() {
@@ -76,7 +72,13 @@ pub struct EventDecoder {
 }
 impl EventDecoder {
     pub fn push(&mut self, chunk: &[u8], eof: bool) -> Result<Vec<Value>> {
+        if self.done {
+            return Ok(Vec::new());
+        }
         self.pending.extend_from_slice(chunk);
+        if eof {
+            self.pending.extend_from_slice(b"\n\n");
+        }
         if !self.started {
             if self.pending.len() < 3 && !eof {
                 return Ok(Vec::new());
@@ -107,20 +109,27 @@ impl EventDecoder {
                 let record = std::str::from_utf8(&self.pending[start..end])?
                     .replace("\r\n", "\n")
                     .replace('\r', "\n");
-                let data = record
-                    .split('\n')
-                    .filter_map(|line| {
-                        if line == "data" {
-                            Some("")
-                        } else {
-                            line.strip_prefix("data:")
-                                .map(|s| s.strip_prefix(' ').unwrap_or(s))
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let mut data_lines = Vec::new();
+                let mut event = "";
+                for line in record.split('\n') {
+                    if line == "data" {
+                        data_lines.push("");
+                    } else if let Some(value) = line.strip_prefix("data:") {
+                        data_lines.push(value.strip_prefix(' ').unwrap_or(value));
+                    } else if line == "event" {
+                        event = "";
+                    } else if let Some(value) = line.strip_prefix("event:") {
+                        event = value.strip_prefix(' ').unwrap_or(value);
+                    }
+                }
+                if event == "error" {
+                    return Err("Stream returned an error".into());
+                }
+                let data = data_lines.join("\n");
                 if data == "[DONE]" {
                     self.done = true;
+                    self.pending.clear();
+                    return Ok(values);
                 } else if !data.is_empty() {
                     let value: Value = serde_json::from_str(&data)?;
                     if value.get("error").is_some() || value["type"] == "error" {
@@ -223,9 +232,10 @@ mod tests {
                 assert_eq!(delta(&values[0]), "Hello 🌍");
                 assert!(!decoder.done);
             }
-            let body = format!("{event}data: [DONE]{separator}{separator}");
-            assert_eq!(completion_id(body.as_bytes(), true).unwrap(), "chat-1");
-            assert!(completion_id(event.as_bytes(), true).is_err());
+            let mut body = format!("{event}data: [DONE]{separator}{separator}data: ").into_bytes();
+            body.push(0xff);
+            assert_eq!(completion_id(&body, true).unwrap(), "chat-1");
+            assert_eq!(completion_id(event.as_bytes(), true).unwrap(), "chat-1");
         }
     }
 
@@ -251,12 +261,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_error_events_and_conflicting_ids() {
+    fn rejects_error_events_and_invalid_or_conflicting_ids() {
+        assert!(completion_id(b"data: {\"id\":\"chat-1\",\"extra\":\"\xff\"}", true).is_err());
         assert!(events(b"data: {\"type\":\"error\"}\n\n").is_err());
-        assert!(completion_id(
-            b"data: {\"id\":\"one\"}\n\ndata: {\"id\":\"two\"}\n\ndata: [DONE]\n\n",
-            true
-        )
-        .is_err());
+        for event in [r#"{"id":"two"}"#, r#"{"id":""}"#, r#"{"id":17}"#] {
+            let wire = format!("data: {{\"id\":\"one\"}}\n\ndata: {event}\n\n");
+            assert!(completion_id(wire.as_bytes(), true).is_err(), "{event}");
+        }
     }
 }

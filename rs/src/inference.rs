@@ -642,35 +642,28 @@ impl InferenceClient {
         let stream = async_stream::try_stream! {
             let mut wire = Vec::new();
             let mut decoder = crate::sse::SseDecoder::default();
-            let mut id = None;
-            let mut message_state = crate::sse::MessageStreamState::default();
-            let mut first_record = true;
-            let mut transform_record = |record: Vec<u8>| -> Result<Vec<u8>, InferenceError> {
-                let parsed = if std::mem::replace(&mut first_record, false) {
-                    record.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&record)
-                } else {
-                    &record
-                };
-                if messages { message_state.observe(parsed)?; }
-                let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, responses, messages)?;
-                // The retained signature payload and plaintext output keep the BOM.
-                Ok(if key.is_some() { transformed } else { record })
+            let mode = if responses {
+                crate::sse::SseMode::Responses
+            } else if messages {
+                crate::sse::SseMode::Messages
+            } else {
+                crate::sse::SseMode::Chat
             };
+            let mut events = crate::sse::SseStream::new(mode);
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
                 wire.extend_from_slice(&chunk);
                 if streaming {
                     for record in decoder.push(&chunk, false) {
-                        yield bytes::Bytes::from(transform_record(record)?);
+                        yield bytes::Bytes::from(events.transform(record, key.as_ref())?);
                     }
                 }
             }
             if streaming {
                 for record in decoder.push(&[], true) {
-                    yield bytes::Bytes::from(transform_record(record)?);
+                    yield bytes::Bytes::from(events.transform(record, key.as_ref())?);
                 }
-                let id = id.ok_or_else(invalid_response)?;
-                if messages { message_state.finish()?; }
+                let id = events.finish()?;
                 owner.register(id, request_body, wire, session, gateway_only, generation).await?;
             } else {
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
