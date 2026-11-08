@@ -70,12 +70,8 @@ and pins subsequent requests to that identity.
    Any output displayed before that call succeeds is not yet signature-verified.
    See the [streaming example](./docs/verification-guide.md#stream-an-e2ee-completion).
 
-To verify when a user selects a model, before they send a message, call
-`await client.verify(model)`. It sends no Chat request and uses the same
-configured checks, cache, and in-flight verification as Chat. It resolves
-with verified Gateway and model reports for your UI, or rejects if verification
-fails. This optional preflight verifies the deployment; you still call `verifyResponse()` to verify
-a particular reply. See [deployment preverification and caching](./docs/verification-guide.md#cache-deployment-verification).
+Call `await client.verify(model)` to inspect verified Gateway and model evidence before inference.
+See [deployment verification and caching](./docs/verification-guide.md#cache-deployment-verification).
 
 ## Verification and encryption
 
@@ -149,10 +145,8 @@ for transport configuration and receipt verification.
   encrypts a raw Chat request and supplies a JSON/SSE response decryptor.
   Your application verifies the model key and response signature separately.
 - **Direct model endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect to model endpoints without Gateway
-  verification. They are not recommended for production in either entry point;
-  direct TLS fingerprint binding is currently disabled. Use Gateway clients
-  for production and review the [direct-endpoint limitations](./docs/verification-guide.md#use-a-direct-model-endpoint).
+  `DirectAttestationClient` connect to the model endpoint using standard HTTPS
+  without attested TLS pinning. See the [Direct guide](./docs/verification-guide.md#use-a-direct-model-endpoint).
 
 ## Documentation
 

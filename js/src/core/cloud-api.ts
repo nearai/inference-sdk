@@ -17,6 +17,7 @@ import type {
   FetchGatewayAttestationParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
+  FindModelAttestationsForSignatureParams,
   ModelMetadata,
 } from '../types/cloud-api';
 import type { VerifiedModelAttestation } from '../types/verification';
@@ -465,14 +466,13 @@ export async function readCloudApiJson({
 }
 
 /**
- * Select the single verified model attestation whose signer matches a
- * provider_tee completion signature. This is a selection helper; it does not
- * perform another attestation or completion-signature verification.
+ * Return every verified report matching a provider_tee signature's signer.
+ * Use `verifyModelResponse` to verify the response signature.
  */
-export function findModelAttestationForSignature({
+export function findModelAttestationsForSignature({
   attestations,
   signature,
-}: FindModelAttestationForSignatureParams): VerifiedModelAttestation {
+}: FindModelAttestationsForSignatureParams): readonly VerifiedModelAttestation[] {
   const signer = requireProviderSignature(signature);
   const signerAddress = validateApiSigningAddress({
     signingAddress: signer.signingAddress,
@@ -499,16 +499,17 @@ export function findModelAttestationForSignature({
       code: 'api.model_attestation_signer_not_found',
     });
   }
-  if (matches.length !== 1) {
-    throw new ApiError({
-      code: 'api.ambiguous_model_attestation_signer',
-      details: {
-        matchingCount: matches.length,
-        totalCount: attestations.length,
-      },
-    });
-  }
-  return matches[0];
+  return matches;
+}
+
+/**
+ * Return the first verified report matching the response signer.
+ * @deprecated Use `findModelAttestationsForSignature` to retain the signer group.
+ */
+export function findModelAttestationForSignature(
+  params: FindModelAttestationForSignatureParams,
+): VerifiedModelAttestation {
+  return findModelAttestationsForSignature(params)[0];
 }
 
 function requireProviderSignature(

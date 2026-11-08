@@ -110,6 +110,55 @@ func TestAddressOnlyAttestationFilter(t *testing.T) {
 	}
 }
 
+func TestFindModelAttestationsForSignature(t *testing.T) {
+	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+		t.Run(string(algo), func(t *testing.T) {
+			length, otherAlgo := 32, ECDSA
+			if algo == ECDSA {
+				length, otherAlgo = 20, Ed25519
+			}
+			signer := SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ab", length)}
+			items := []VerifiedAttestation{
+				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("cd", length)}, InstanceID: "other-key"},
+				{Signer: signer, InstanceID: "first", AdvisoryIDs: []string{"original"}, Deployment: MeasuredDeployment{AppCompose: "first-compose"}},
+				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: "0X" + strings.Repeat("AB", length)}, InstanceID: "second", Deployment: MeasuredDeployment{AppCompose: "second-compose"}},
+			}
+			items = append(items, items[2])
+			sig := CompletionSignature{Kind: "provider_tee", Signer: signer}
+			matchingAttestations, err := FindModelAttestationsForSignature(items, sig)
+			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].InstanceID != "first" || matchingAttestations[1].InstanceID != "second" || matchingAttestations[2].InstanceID != "second" {
+				t.Fatalf("shared-signer reports and duplicates: %#v %v", matchingAttestations, err)
+			}
+			first, err := FindModelAttestationForSignature(items, sig)
+			if err != nil || first.InstanceID != "first" {
+				t.Fatalf("first matching report: %#v %v", first, err)
+			}
+			one, err := FindModelAttestationsForSignature(items[1:2], sig)
+			if err != nil || len(one) != 1 {
+				t.Fatalf("single match: %v", err)
+			}
+			_, err = FindModelAttestationsForSignature(nil, sig)
+			requireCode(t, err, "api.model_attestation_not_found")
+			for _, tc := range []struct {
+				name string
+				sig  CompletionSignature
+				code string
+			}{
+				{"wrong kind", CompletionSignature{Kind: "gateway", Signer: signer}, "api.invalid_input"},
+				{"missing signer", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ef", length)}}, "api.model_attestation_not_found"},
+				{"wrong algorithm", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: otherAlgo, SigningAddress: signer.SigningAddress}}, "api.model_attestation_not_found"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					_, err := FindModelAttestationForSignature(items, tc.sig)
+					requireCode(t, err, tc.code)
+					_, err = FindModelAttestationsForSignature(items, tc.sig)
+					requireCode(t, err, tc.code)
+				})
+			}
+		})
+	}
+}
+
 func TestStructuralAttestationComparison(t *testing.T) {
 	a := Attestation{EventLog: json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740993}}]`)}
 	b := a

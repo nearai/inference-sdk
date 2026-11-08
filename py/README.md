@@ -73,10 +73,7 @@ manager, call `await client.aclose()` when finished.
    Content displayed before that call succeeds is not yet signature-verified.
    See the [streaming example](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#verified-chat-client).
 
-Optionally call `await client.verify(model)` before the first Chat. It sends no
-Chat request and shares Chat's verification cache and in-flight work. It returns
-verified Gateway and model evidence with the verification time, preserved on
-cache hits. It raises if verification fails and does not verify a particular reply.
+Call `await client.verify(model)` to inspect verified Gateway and model evidence before inference.
 
 Successful deployment verification is cached for 60 minutes per model and shared
 by `verify()`, Chat, and System One calls on the same client.
@@ -143,10 +140,8 @@ can keep their current dependencies and calls.
   request and supplies its JSON/SSE decryptor. Key verification and response
   signature verification remain the application's responsibility.
 - **Direct endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect without Gateway verification. Direct TLS
-  fingerprint requests are disabled pending complete fleet coverage; normal HTTPS
-  verification remains enabled. Use Gateway clients for production. See
-  [direct-endpoint limitations](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#direct-model-endpoints).
+  `DirectAttestationClient` connect to the model endpoint using standard HTTPS
+  without attested TLS pinning. See the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#direct-model-endpoints).
 
 ## Documentation
 

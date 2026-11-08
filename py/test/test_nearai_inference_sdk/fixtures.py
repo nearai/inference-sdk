@@ -99,3 +99,16 @@ def create_gateway_attestation(**overrides: object) -> GatewayAttestation:
         reported_quote_data=quote.report_data.hex(),
     )
     return replace(attestation, **overrides)
+
+
+def cloud_attestation(nonce: str, **overrides: object) -> dict[str, object]:
+    return {
+        'request_nonce': nonce,
+        'signing_algo': 'ecdsa',
+        'signing_address': SIGNING_ADDRESS,
+        'intel_quote': 'aa',
+        'event_log': [],
+        'info': {'tcb_info': {'app_compose': '{}'}},
+        'tls_cert_fingerprint': '33' * 32,
+        **overrides,
+    }

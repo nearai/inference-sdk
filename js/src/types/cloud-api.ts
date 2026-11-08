@@ -44,11 +44,15 @@ export type FetchModelAttestationsParams = {
   readonly signingAddress?: string;
 };
 
-export type FindModelAttestationForSignatureParams = {
+export type FindModelAttestationsForSignatureParams = {
   /** Successful results returned by `verifyModelAttestation`. */
   readonly attestations: readonly VerifiedModelAttestation[];
   readonly signature: CompletionSignatureReference;
 };
+
+/** @deprecated Use `FindModelAttestationsForSignatureParams` for signer groups. */
+export type FindModelAttestationForSignatureParams =
+  FindModelAttestationsForSignatureParams;
 
 export type FetchGatewayAttestationParams = {
   readonly signingAlgo?: SigningAlgo;

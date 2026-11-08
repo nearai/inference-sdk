@@ -147,6 +147,12 @@ export type VerifiedModelCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
+  /** Verified reports sharing the request's selected signer. */
+  readonly attestations: readonly VerifiedModelAttestation[];
+  /**
+   * Report used to select the request's model public key, retained for compatibility.
+   * @deprecated Use `attestations` for all verified reports sharing the selected signer.
+   */
   readonly attestation: VerifiedModelAttestation;
 };
 

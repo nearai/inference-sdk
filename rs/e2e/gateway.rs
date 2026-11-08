@@ -6,10 +6,11 @@ mod systemone;
 use std::{env, error::Error, io, time::Duration};
 
 use nearai_inference_sdk::{
-    create_pinned_tls_client, find_model_attestation_for_signature, verify_gateway_attestation,
+    create_pinned_tls_client, find_model_attestations_for_signature, verify_gateway_attestation,
     verify_gateway_response, verify_model_attestation, verify_model_response, ApiError,
     AttestationClient, CompletionSignature, CompletionSignatureKind,
     GatewayAttestationFetchOptions, GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
+    SigningIdentity,
 };
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
 use serde::Deserialize;
@@ -32,6 +33,18 @@ struct LiveModel {
     id: String,
     provider: String,
     endpoint: String,
+}
+
+fn same_signer(left: &SigningIdentity, right: &SigningIdentity) -> bool {
+    left.signing_algo == right.signing_algo
+        && left
+            .signing_address
+            .to_ascii_lowercase()
+            .trim_start_matches("0x")
+            == right
+                .signing_address
+                .to_ascii_lowercase()
+                .trim_start_matches("0x")
 }
 
 fn select_models(json: &str, endpoint: &str) -> Result<Vec<LiveModel>, serde_json::Error> {
@@ -97,8 +110,7 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         GatewayTlsBinding::Attested { .. }
     ));
 
-    // Bind standalone Chat to the same quote-authenticated Gateway TLS identity
-    // as the JavaScript and Python live cases, before any HTTP bytes are sent.
+    // Pin all subsequent evidence, Chat, and signature requests to the verified Gateway.
     let pin = match &gateway.tls_binding {
         GatewayTlsBinding::Attested { spki_fingerprint } => spki_fingerprint,
         GatewayTlsBinding::None => {
@@ -107,28 +119,38 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
     };
     let http = create_pinned_tls_client(std::slice::from_ref(pin))?;
     let client = client.with_http_client(http.clone());
-    let mut models = Vec::new();
+
+    let mut model_attestations = Vec::new();
     if model.provider == "near" {
-        let fetched_models = client
+        let fetched_model_attestations = client
             .fetch_model_attestations(&model.id, Some(signing_algo), None)
             .await?;
         assert!(
-            !fetched_models.attestations.is_empty(),
+            !fetched_model_attestations.attestations.is_empty(),
             "Expected NEAR model evidence"
         );
-        for attestation in &fetched_models.attestations {
+        for attestation in &fetched_model_attestations.attestations {
             let verified = verify_model_attestation(
                 attestation,
-                &fetched_models.client_binding,
+                &fetched_model_attestations.client_binding,
                 None,
                 Default::default(),
             )
             .await?;
             assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::Verified);
-            models.push(verified);
+            model_attestations.push(verified);
         }
     }
 
+    let selected_attestation = model_attestations.iter().find(|report| {
+        report.evidence.signer.signing_algo == signing_algo && report.signing_public_key.is_some()
+    });
+    if model.provider == "near" {
+        assert!(
+            selected_attestation.is_some(),
+            "Expected a verified model key"
+        );
+    }
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     for stream in [false, true] {
         // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
@@ -143,15 +165,20 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
             "max_completion_tokens": 1024,
             "stream": stream,
         }))?;
-        let response = http
+        let mut request = http
             .post(&url)
             .bearer_auth(&api_key)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT_ENCODING, "identity")
             .header("x-no-aliasing", "true")
-            .body(request_body.clone())
-            .send()
-            .await?;
+            .body(request_body.clone());
+        if let Some(attestation) = selected_attestation {
+            request = request.header(
+                "X-Model-Pub-Key",
+                attestation.signing_public_key.as_ref().unwrap(),
+            );
+        }
+        let response = request.send().await?;
         assert!(
             response.status().is_success(),
             "Chat returned HTTP {}",
@@ -170,8 +197,17 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         altered.push(b' ');
         match signature.kind {
             CompletionSignatureKind::ProviderTee => {
-                let attestation = find_model_attestation_for_signature(&models, &signature)?;
+                let attestation = selected_attestation.expect("Expected a verified model key");
                 verify_model_response(&request_body, &response_body, &signature, attestation)?;
+                let matching_attestations =
+                    find_model_attestations_for_signature(&model_attestations, &signature)?;
+                let expected: Vec<_> = model_attestations
+                    .iter()
+                    .filter(|report| {
+                        same_signer(&report.evidence.signer, &attestation.evidence.signer)
+                    })
+                    .collect();
+                assert_eq!(matching_attestations, expected);
                 assert!(
                     verify_model_response(&request_body, &altered, &signature, attestation)
                         .is_err()

@@ -2,6 +2,28 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
 
+test('rejects error events and conflicting completion IDs', () => {
+  for (const event of [
+    { error: 'failed' },
+    { type: 'error', message: 'failed' },
+  ]) {
+    assert.throws(
+      () =>
+        chatOutput(`data: ${JSON.stringify(event)}\n\ndata: [DONE]\n\n`, true),
+      /Stream returned an error/,
+    );
+  }
+  assert.throws(
+    () =>
+      chatOutput(
+        'data: {"id":"chat-first","choices":[]}\n\n' +
+          'data: {"id":"chat-other","choices":[]}\n\ndata: [DONE]\n\n',
+        true,
+      ),
+    /Conflicting completion IDs/,
+  );
+});
+
 for (const separator of ['\n', '\r\n', '\r']) {
   test(`incremental Chat output with ${JSON.stringify(separator)} records`, () => {
     const record = [

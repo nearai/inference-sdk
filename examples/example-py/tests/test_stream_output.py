@@ -58,7 +58,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(verify.call_args.args[1], body)
 
                     completion = await gateway.send_completion(
-                        client, 'test', SimpleNamespace(key=None), stream=streaming
+                        client, 'test', None, stream=streaming
                     )
                     self.assertEqual(completion.response_body, body)
 
@@ -134,3 +134,27 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                 self.assertRaisesRegex(RuntimeError, 'without'),
             ):
                 await read_stream(httpx.Response(200, content=b'data: {}\n\n'))
+
+    async def test_gateway_rejects_conflicting_completion_ids(self):
+        body = (
+            b'data: {"id":"chat-first","choices":[]}\n\n'
+            b'data: {"id":"chat-other","choices":[]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(RuntimeError, 'conflicting completion IDs'),
+        ):
+            await read_gateway(httpx.Response(200, content=body))
+
+    async def test_gateway_rejects_error_events(self):
+        for event in (b'{"error":"failed"}', b'{"type":"error","message":"failed"}'):
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(RuntimeError, 'Stream returned an error'),
+            ):
+                await read_gateway(
+                    httpx.Response(
+                        200, content=b'data: ' + event + b'\n\ndata: [DONE]\n\n'
+                    )
+                )

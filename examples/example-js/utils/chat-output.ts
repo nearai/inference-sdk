@@ -35,7 +35,8 @@ export class ChatStreamOutput {
         if (data === '[DONE]') this.done = true;
         else if (data) {
           const value = JSON.parse(data);
-          if (value.error) throw new Error('Stream returned an error');
+          if (value.error || value.type === 'error')
+            throw new Error('Stream returned an error');
           if (value.id) {
             if (this.id && this.id !== value.id)
               throw new Error('Conflicting completion IDs');
