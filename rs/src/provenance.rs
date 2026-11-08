@@ -60,8 +60,7 @@ pub async fn fetch_image_provenance(
 #[derive(Clone, Copy, Default)]
 pub struct ImageProvenanceFetchOptions<'a> {
     pub github_token: Option<&'a str>,
-    /// GitHub API base URL, defaulting to https://api.github.com. Use a backend
-    /// endpoint when a frontend cannot supply a token; the backend handles authentication.
+    /// GitHub API base URL. Defaults to <https://api.github.com>.
     pub github_api_url: Option<&'a str>,
 }
 
@@ -263,14 +262,7 @@ fn pagination_error(actual: &str) -> ApiError {
     }
 }
 
-/// Verify one matching GitHub build provenance from a collection of bundles.
-///
-/// The Sigstore library verifies the DSSE signature, Fulcio certificate, SCT,
-/// Rekor inclusion proof/checkpoint and artifact digest using its embedded
-/// public-good trust root. This function additionally checks the caller's
-/// source repository, workflow and optional ref, and binds the SLSA source
-/// commit to the certificate's source digest before applying an optional pin.
-/// It does not discover images, approve a deployment or rebuild the artifact.
+/// Verify GitHub build provenance against an image digest and source policy.
 pub async fn verify_image_provenance(
     bundles: &[String],
     digest: &str,

@@ -22,6 +22,7 @@ func run() error {
 		return fmt.Errorf("NEARAI_MODEL is required")
 	}
 	expected := os.Getenv("NEARAI_EXPECT_SIGNATURE_KIND")
+	imagePath := os.Getenv("NEARAI_IMAGE_PATH")
 	if expected == "" {
 		expected = "gateway"
 	}
@@ -49,7 +50,7 @@ func run() error {
 		"team":    {Type: "choice", Instructions: "Which team should handle this?", Criteria: map[string]string{"billing": "Payments and subscriptions", "support": "Technical issues"}},
 		"urgency": {Type: "score", Instructions: "How urgent is this request?", Criteria: []string{"Routine", "Needs prompt attention", "Critical"}},
 	}}
-	if imagePath := os.Getenv("NEARAI_IMAGE_PATH"); imagePath != "" {
+	if imagePath != "" {
 		image, err := os.ReadFile(imagePath)
 		if err != nil {
 			return err

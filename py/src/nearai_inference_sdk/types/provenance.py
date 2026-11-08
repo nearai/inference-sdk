@@ -8,7 +8,7 @@ class ImageProvenancePolicy:
     """Expected source repository and workflow, optionally pinned to a ref or commit.
 
     ``signer_identity`` selects an exact certificate identity when a reusable
-    workflow signs the build. It does not replace the source constraints.
+    workflow signs the build.
     """
 
     repository: str

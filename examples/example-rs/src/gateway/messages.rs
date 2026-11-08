@@ -27,6 +27,8 @@ async fn display_stream(mut body: ByteStream, output: &mut impl Write) -> Result
 }
 
 async fn run() -> Result<()> {
+    let model =
+        std::env::var("NEARAI_MODEL").unwrap_or_else(|_| "anthropic/claude-haiku-4-5".into());
     let client = InferenceClient::with_options(InferenceClientOptions {
         api_key: Some(api_key()?),
         base_url: gateway(),
@@ -34,8 +36,6 @@ async fn run() -> Result<()> {
         ohttp: ohttp(),
         ..Default::default()
     })?;
-    let model =
-        std::env::var("NEARAI_MODEL").unwrap_or_else(|_| "anthropic/claude-haiku-4-5".into());
     let request = json!({
         "model": model,
         "messages": [{"role": "user", "content": "Reply with the word ok."}],

@@ -20,6 +20,8 @@ async def main() -> None:
     model = os.environ['NEARAI_MODEL']
     expected_kind = os.environ.get('NEARAI_EXPECT_SIGNATURE_KIND', 'gateway')
     signing_algo = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
+    image_path = os.environ.get('NEARAI_IMAGE_PATH')
+
     if signing_algo not in ('ed25519', 'ecdsa'):
         raise ValueError('NEARAI_SIGNING_ALGO must be ed25519 or ecdsa')
     if expected_kind not in ('provider_tee', 'gateway'):
@@ -44,7 +46,7 @@ async def main() -> None:
             },
         },
     }
-    if image_path := os.environ.get('NEARAI_IMAGE_PATH'):
+    if image_path:
         image_base64 = b64encode(Path(image_path).read_bytes()).decode('ascii')
         request = {
             'model': model,

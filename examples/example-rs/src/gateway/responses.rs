@@ -10,9 +10,8 @@ async fn run() -> Result<()> {
         ohttp: ohttp(),
         ..Default::default()
     })?;
-    let model = std::env::var("NEARAI_MODEL").unwrap_or_else(|_| "z-ai/glm-5.3-flash".into());
     let mut request = json!({
-        "model": model,
+        "model": model(),
         "input": "Reply with the word ok.",
         "max_output_tokens": 1024,
         "store": false,

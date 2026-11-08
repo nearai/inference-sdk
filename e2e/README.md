@@ -1,8 +1,8 @@
 # Live E2E tests
 
 Run the SDKs against staging or production to check deployment attestation,
-inference, and response signatures. These tests require a funded test account
-and make billable requests.
+inference, and response signatures. These tests make billable requests and
+require a funded test account.
 
 ## Local use
 
@@ -68,21 +68,11 @@ block publication on failure.
 
 ### Slack failure notifications
 
-Create a [Slack incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)
+For optional failure alerts, create a [Slack incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)
 for the destination channel and save its URL as the repository Actions secret
 `TEST_ALERTS_SLACK_WEBHOOK_URL`.
 
-When configuration or an SDK test job fails, the workflow sends one summary
-after all selected jobs finish, including the failed job groups, commit, and a
-link to that run attempt. Language groups cover both STG and PRD; follow the
-link to see which environment failed. This also applies to live checks in the
-release workflow, which forwards the same secret. Successful runs and runs
-with only skipped or cancelled jobs send no notification.
-
-The secret is optional: if it is missing, a failed run records a warning and
-skips notification. Delivery errors fail the notification job, while the
-original E2E failures remain visible. Notifications contain run metadata, not
-test logs or inference payloads.
+A failed configuration or SDK job sends the failed job names and a workflow run link.
 
 ## Coverage
 
@@ -93,81 +83,29 @@ and `endpoints` (`chat`, `responses`, `messages`, or `systemone`). A model used
 by multiple endpoints shares the same ID. The first NEAR Chat model is also the
 default for shared encryption/client cases.
 
-Keep the provider and endpoint coverage below when replacing models. The
-selector tests use separate fixtures, so changing a configured ID requires no
-selector, workflow, or test edits. Validate a replacement against both
-environments with `NEARAI_BASE_URL` set as described above:
+Keep the provider and endpoint coverage below when replacing models. Validate
+the replacement against staging and production:
 
 ```sh
 node --test e2e/select-models.test.mjs
 node e2e/select-models.mjs
 ```
 
-The public `/model/list` catalog is used only to validate that these exact IDs
-exist and match the required provider, attestation, and endpoint capabilities.
-A missing or incompatible model fails setup with its ID. Prices, reasoning
-labels, catalog order, and newly added models do not affect selection; updating
-the matrix requires an explicit configuration change. Catalog validation does not establish
-live inference availability; the live suites check that separately.
-
-Each `NEARAI_E2E_MODELS` entry carries an `endpoint` (`chat`, `responses`,
-`messages`, or `systemone`), and each suite uses only its endpoint. The matrix
-preserves two NEAR TEE Chat models, one Chutes Chat model, one external Chat
-model, two Responses models (NEAR and OpenAI), and one Anthropic Messages model.
+The selector checks each configured model ID and its capabilities against `/model/list`.
 
 | Area | Live checks |
 | --- | --- |
-| Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
-| Chat and receipts | JSON responses across the fixed Chat matrix; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
-| Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; native and official OpenAI clients, with Ed25519/ECDSA over plain transport and Ed25519 over OHTTP. |
-| Messages | JSON and SSE on an Anthropic model, through all four native clients and the official Anthropic JS/Python/Go clients. Ed25519 and ECDSA use plain transport; Ed25519 also uses OHTTP. |
-| Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
-| Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
-
-The suite uses real verifiers and Gateway endpoints. Chutes cases use JSON and
-Gateway receipts. Browser/CORS and experimental Direct endpoints have separate
-integration requirements.
-
-Chat runs the same native and supported official-client modes in each language,
-with at most 1,024 completion tokens per request. Responses must contain an answer and
-finish with `stop`. Test failures and timeouts fail the workflow.
-
-Receipt lookups retry transient API failures up to five attempts within the
-model case's 180 second deadline. A receipt retry does not send another
-inference request.
-
-Messages adds 42 inference requests per environment, with at most 128 output
-tokens each. Every path requires nonempty text, `end_turn`, and a matching
-Gateway receipt. Streams must reach `message_stop` and EOF. Receipt lookup has
-a 15 second deadline; automatic inference retries are disabled. Ordinary PR CI
-checks the live test sources without credentials; the live workflow runs them
-against STG and PRD, including through the release gate.
+| Deployment | Gateway attestation and TLS identity, plus model and GPU evidence for NEAR TEE models. |
+| Chat | JSON and streaming receipts, matching model reports, and rejection of altered responses. |
+| Responses and Messages | JSON and streaming receipts through the native clients and supported official SDKs. |
+| Encryption | Chat E2EE with Ed25519 and ECDSA, and OHTTP with Ed25519. |
+| System One | Decision receipts for the configured deployment. |
 
 ## Official TypeSafe SDK integration
 
-`js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published
-`@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
-send one real decision per case, parse the official response types, extract
-`X-Generation-Id`, and verify the captured bytes. Receipt lookups alone may
-retry. Compression, E2EE, OHTTP, and automatic inference retries are disabled.
-Both Ed25519 and ECDSA are covered.
+The JavaScript and Python suites send decisions through the official TypeSafe SDK
+and verify the response bytes using `X-Generation-Id`. They run with the same
+commands and configuration as the native System One tests.
 
-The official-SDK cases are part of the existing System One live suites and run
-through the existing live commands and workflow. They use the same
-`NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_E2E_MODELS` configuration as the
-native cases. The selector supplies the fixed external Jev model; there are no
-separate TypeSafe SDK environment variables or CI steps.
-
-The default matrix uses a hosted Jev model. To test a self-hosted deployment,
-configure a `systemone` model with provider `near` and check its `provider_tee` receipt.
-
-Like the existing live tests, these suites require explicit configuration and
-are excluded from ordinary unit-test runs. Missing required external-model
-configuration or verification failures fail the tests.
-
-The runnable examples use `examples/example-js/utils/systemone.ts` and
-`examples/example-py/utils/systemone.py` to keep the API root, verified
-transport, disabled retries/compression, and receipt-ID extraction together.
-The official SDKs remain example/test dependencies only. Python uses
-`inference.httpx2_client` to bridge
-TypeSafe's HTTPX2 client to the existing verified HTTPX transport.
+The default matrix uses a hosted Jev model. For a self-hosted deployment that
+supports provider receipts, add a `systemone` entry with provider `near` to `models.json`.

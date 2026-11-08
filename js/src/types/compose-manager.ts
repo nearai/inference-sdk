@@ -27,10 +27,7 @@ export type ComposeManagerAttestation = {
   readonly reportedQuoteData?: string;
 };
 
-/**
- * Quote-authenticated actions under the same measured appCompose configuration.
- * This does not establish a unique CVM identity or successful/current execution.
- */
+/** Quote-authenticated actions under the model's measured appCompose configuration. */
 export type VerifiedComposeManagerAttestation = {
   readonly actions: readonly ComposeManagerAction[];
   readonly tcbStatus: TcbStatus;

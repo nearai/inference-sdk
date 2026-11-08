@@ -14,10 +14,6 @@ With a NEAR TEE model, applications use the public APIs in three stages:
 3. Fetch the completion signature and dispatch on `signature.kind` to verify
    the exact bytes with the preverified model or Gateway evidence.
 
-The signature kind selects a response verifier; it does not select or replace
-the deployment checks. See the guide for the evidence boundary of this current
-one-signature design.
-
 ## Public API
 
 Gateway retrieval, attestation verification, and inference operations are
@@ -31,9 +27,9 @@ cleanup are synchronous.
 | `inference_client.http_client` | property | `httpx.AsyncClient` | HTTPX adapter for external SDKs using the verified request pipeline. |
 | `inference_client.httpx2_client` | property | `httpx2.AsyncClient` | HTTPX2 adapter sharing the verified HTTPX pipeline, loaded on demand. |
 | `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat, Responses, Messages, or uncompressed JSON System One requests, with exact bytes retained for receipts. |
-| `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat, Responses, Messages, and System One. |
+| `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Verifies Gateway and model deployments before inference. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a response signature over retained bytes. |
-| `inference_client.clear_response_cache` | `()` | `None` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
+| `inference_client.clear_response_cache` | `()` | `None` | Discards retained responses and their verification results. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
@@ -41,12 +37,12 @@ cleanup are synchronous.
 | `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding. |
 | `verify_direct_model_response` | `(request_body, response_body, signature, attestations)` | `tuple[VerifiedDirectModelAttestation, ...]` | Verifies exact bytes against all reports sharing the response signer. |
 | `prepare_e2ee_chat_request` | `(request, model_key)` | `PreparedE2eeChatRequest` | Encrypts supported Chat fields and returns the matching response decryptor. |
-| `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Pins every HTTPS connection to a supplied SPKI before sending HTTP data; does not verify its attestation. |
+| `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Creates an HTTPS client pinned to verified SPKI fingerprints. |
 | `verify_ohttp_key_config` | `(ohttp_attestation, signer)` | `bytes` | Authenticates the advertised OHTTP key configuration against a verified Ed25519 signer. |
 | `create_ohttp_client` | `(key_config, *, base_url, http_client=None, forwarded_headers=())` | `httpx.AsyncClient` | Encapsulates HTTP requests with OHTTP and returns decoded inner responses. |
 | `AttestationClient` | `(api_key=None, *, base_url=..., headers=None)` | client | Owns Gateway credentials and retrieves deployment evidence and completion signatures. |
 | `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature after a completion. |
-| `client.fetch_model_metadata` | `(model)` | `ModelMetadata` | Reads catalog capabilities, without cryptographic verification. |
+| `client.fetch_model_metadata` | `(model)` | `ModelMetadata` | Returns the provider and attestation support listed in the model catalog. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
 | `find_model_attestations_for_signature` | `(attestations, signature)` | `tuple[VerifiedModelAttestation, ...]` | Selects every preverified report matching a `provider_tee` signer. |
@@ -107,14 +103,13 @@ E2EE and model deployment policies require model attestation.
 
 ### Attestation results
 
-`verify(model)` returns `AttestationVerificationResult` after all required checks
-pass.
+`verify(model)` returns the verified Gateway and all model reports.
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `gateway` | `VerifiedGatewayAttestation` | Verified Gateway deployment and TLS binding. |
 | `models` | `tuple[VerifiedModelAttestation, ...]` | Every verified model report; empty for Incognito models. |
-| `verified_at` | `int` | Unix time in milliseconds when verification completed, not a quote timestamp or cache expiry. |
+| `verified_at` | `int` | Unix time in milliseconds when verification completed. |
 
 ### HTTP integration and receipt results
 
@@ -125,56 +120,30 @@ Both adapters delegate to the same `send()` pipeline:
 | `http_client` | `httpx.AsyncClient` | Chat JSON/SSE; Gateway clients also support Responses and Messages JSON/SSE and System One. |
 | `httpx2_client` | `httpx2.AsyncClient` | The same requests, verification, and encryption settings. |
 
-They share authentication, preflight, TLS pinning, sessions, and receipt capture.
-HTTPX2 converts request/response types and forwards response streams on demand;
-network I/O remains with the owner's HTTPX clients. Both properties are also
-available on `DirectInferenceClient` for Chat.
+Both adapters use the client's verification and encryption settings.
+`DirectInferenceClient` also exposes them for Chat.
 
-Install `httpx2` to use `httpx2_client`. It is loaded only when that property is
-accessed. For OpenAI, use a version supporting HTTPX2 and install `openai[httpx2]`;
-the `typesafe-sdk` package already depends on HTTPX2. Regular HTTPX consumers
-keep the existing dependencies. Standalone HTTP APIs continue to use HTTPX types.
+Install `httpx2` for `httpx2_client`, or `openai[httpx2]` when using OpenAI
+with HTTPX2.
 
-Each access returns a new, non-owning adapter. Closing an adapter or its external
-SDK client does not close the owner or discard receipts. Keep the owner open
-while sending requests and verifying responses, and consume streams completely
-before calling `verify_response()`.
-
-After a valid response ID, Chat and Responses streams can end with `[DONE]` or normal EOF.
+Keep the inference client open through response verification. Consume streams
+completely before calling `verify_response()`.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
 | `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, Messages ID, or System One decision ID. |
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
-| `attestations` | `tuple[VerifiedModelAttestation, ...]` | Present for `provider_tee`: all preflight reports matching the request's selected signer, without attributing the response to a unique instance. |
-| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Gateway evidence for `gateway`. Deprecated for `provider_tee`: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key. |
+| `attestations` | `tuple[VerifiedModelAttestation, ...]` | All verified reports sharing the request's selected model signer. |
+| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Gateway evidence for `gateway`. For model receipts, the selected-key report is deprecated; use `attestations`. |
 
-Response records expire at the configured TTL after body completion. Successful
-verification and cached terminal failures release the captured wire bytes and
-keep the result or error until expiry. Unverified responses and retryable failures
-retain their bytes for another verification attempt, including
-`api.completion_signature_unavailable`. Set
-`response_cache_time_to_live_ms=0` to disable retention. Both TTL options accept
-finite, non-negative durations. Expired records are unavailable immediately;
-timers release retained bodies while idle. A duplicate retained ID fails with
-`api.duplicate_completion_id` and preserves the original receipt. An expired ID
-can be reused. Closing the client releases retained records.
-
-Call `clear_response_cache()` when discarding a conversation. Cleared IDs become
-unavailable to `verify_response`. Ongoing response captures stay discarded when
-they finish. To end active work and release its buffers,
-also cancel the requests and finish any ongoing verification. Direct clients
-support the same cleanup method.
+Verify responses within `response_cache_time_to_live_ms`; `0` disables response
+retention. Use `clear_response_cache()` to discard retained responses.
 
 ### Errors wrapped by official SDKs
 
-The OpenAI and Anthropic clients can wrap transport errors. Use
-`get_sdk_error(error)` to retrieve an `ApiError` or `VerificationError` from the
-exception cause chain; it returns `None` when no SDK error is present. This also
-works with the native Chat, Responses, and Messages facades, which use official
-SDK clients internally. Inference retries are disabled; callers choose whether
-to retry after inspecting the error.
+Use `get_sdk_error(error)` to extract an SDK error from an OpenAI or Anthropic
+exception. It returns `None` if no SDK error is present.
 
 ```python
 from nearai_inference_sdk import get_sdk_error
@@ -251,12 +220,7 @@ including references returned in a Score's `legend`.
 See the [native image example](../../examples/example-py/gateway/systemone.py) and
 [run instructions](../../examples/README.md#system-one-images).
 
-Attestation sessions are cached per model and shared with Chat and `verify()`.
-Response records use the client's `response_cache_time_to_live_ms`.
-
-Inference is sent once. Retry transient receipt lookups with
-`verify_response(result.decision_id)` while the response remains cached.
-See the [guide](./verification-guide.md#system-one-decisions) for a complete call.
+See the [System One guide](./verification-guide.md#system-one-decisions) for a complete example.
 
 ## Direct clients and verification
 
@@ -271,7 +235,7 @@ same common options as `InferenceClient`, with the following differences:
 | `include_spki_fingerprint` | Defaults to `True`. Set `False` for an application proxy or HTTP endpoint. |
 | `model_verification` | `ModelVerificationOptions`: model `policy` and `verifiers`. `DirectModelVerificationOptions` is an alias. |
 | `deployment_policy` | Applied to every supplied direct model report. |
-| `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
+| `verify(model)` | Returns `DirectAttestationVerificationResult` with every verified model report. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
 
 E2EE defaults to `False` for both clients. Set `e2ee=True` to enable it.
@@ -325,14 +289,11 @@ signature, and a sequence of verified direct reports.
 | `PreparedE2eeChatRequest` | `request` | `httpx.Request` | Encrypted request with model-routing and encryption headers. |
 | | `decrypt_response` | asynchronous `(httpx.Response) -> httpx.Response` | Decrypts JSON or streaming SSE using this request's response key. |
 
-The E2EE helper does not verify attestations or response signatures. Retain the
-encrypted request and response bytes for standalone response verification.
+Supply a verified model key and retain the encrypted body bytes for response
+signature verification.
 
-`create_pinned_tls_client(spki_fingerprint: str | Sequence[str])` accepts a SHA-256
-SPKI fingerprint or a nonempty set of allowed fingerprints obtained from verified
-evidence. Close the returned
-HTTP client after use. Normal certificate-chain and hostname validation remain
-enabled; a different SPKI is rejected before sending request headers or body.
+`create_pinned_tls_client(spki_fingerprint)` creates an HTTPX client pinned to
+one verified SHA-256 SPKI fingerprint or a sequence of allowed fingerprints.
 
 ## OHTTP helpers
 
@@ -357,15 +318,12 @@ bytes to `create_ohttp_client`.
 | `key_config` | `str` | Hexadecimal encoded OHTTP key configuration. |
 | `signature` | `str` | Hexadecimal signature over the raw configuration bytes. |
 
-Use the returned HTTP client as an asynchronous context manager or close it
-with `aclose()`. A caller-supplied outer client remains open. This helper does
-not fetch attestations, encrypt Chat fields, or retain response bytes for
-signature verification.
+Use the returned client as an asynchronous context manager or call `aclose()`
+when finished.
 
 ## AttestationClient
 
-The client does not send completion requests or retain completion bytes. It
-creates a fresh nonce for every attestation fetch.
+Fetches model metadata, attestations, and response signatures.
 
 `fetch_model_metadata(model)` requests the URL-encoded model ID and returns
 `ModelMetadata(provider_type: str, attestation_supported: bool)`, mapped from the
@@ -414,7 +372,8 @@ an unavailable 2xx response. The error code is
 |  | `signing_algo` | `SigningAlgo \| None` | No | Optional API request filter for the required signing algorithm. |
 |  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. It must be hexadecimal: 20 or 32 bytes without `signing_algo`, or the matching length when an algorithm is selected. Invalid input raises `ApiError` before a request. |
 
-Verify each returned model report with the `ModelClientBinding` from the same fetch.
+Pass each fetch result's `client_binding` and attestation together to the
+corresponding verifier. Verify every returned model report before inference.
 
 ### Local model selection
 
@@ -503,10 +462,8 @@ the supplied verified result.
 
 ### `verify_deployment_image_provenance`
 
-Asynchronously returns `None` when every configured image repository is present
-and every matching service image passes provenance verification. It parses
-`app_compose` as JSON containing a `docker_compose_file` YAML string with a
-`services` map. Missing or null service images are ignored.
+Verifies required container images from measured `app_compose` against their
+GitHub build policies. Use in a deployment callback. Returns `None`.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -515,29 +472,14 @@ and every matching service image passes provenance verification. It parses
 | `github_token` | `str \| None` | No | GitHub token for direct requests; ignored when `github_api_url` is set. |
 | `github_api_url` | `str \| None` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
-Images must use `repository@sha256:<64 hex>` or
-`repository:tag@sha256:<64 hex>`. A leading `docker.io/` is normalized in policy
-keys and service images. All matching references must be pinned, even when a
-different service uses a valid pin. Unrelated literal images are ignored;
-references containing `$` are rejected without environment expansion. Selection
-is validated before any fetch.
-
-Selection errors raise `VerificationError` with code
-`provenance.deployment_images_invalid` and a `reason` of `empty_policy`,
-`invalid_app_compose`, `invalid_docker_compose`, `unresolved_image`, `image_missing`,
-or `image_not_pinned`; `imageRepository` and `service` identify the selection when
-applicable. GitHub request errors are wrapped as `provenance.image_request_failed`
-with `imageRepository`, `digest`, the original cause, and unchanged retryability.
-Image verification errors pass through unchanged.
+Each configured image repository is required. Compose image references must
+include a literal SHA-256 digest, for example `repository:tag@sha256:...`.
 
 ### `verify_compose_manager_deployment_image_provenance`
 
-Asynchronous. Use in a model deployment callback or after model verification.
-Selects the latest matching `compose_up`, verifies the recorded file's exact
-SHA-256, then checks the action's named `services` and the latest manager-start
-image. An omitted or empty service list selects all services in the file.
-Unknown service names fail with `provenance.deployment_images_invalid`
-(`reason='service_missing'`); images in unselected services cannot satisfy a policy.
+Verifies the recorded Compose file and selected container images, including the
+Compose Manager startup image, against the supplied policies. Use in a model
+deployment callback. Returns `None`.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -549,16 +491,11 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `github_token` | `str \| None` | `None` | GitHub token for direct requests; ignored when `github_api_url` is set. |
 | `github_api_url` | `str \| None` | `None` | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
-Compose files are limited to 8 MiB before hashing or parsing.
+See the [model image guide](./verification-guide.md#model-images-deployed-by-compose-manager)
+for a complete example.
 
-Missing evidence, file/hash mismatches and image-policy failures raise
-`VerificationError`. See the
-[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
-
-`ModelAttestation.compose_manager_attestation` optionally retains the raw
-`ComposeManagerAttestation` (`actions`, `actions_hash`, `nonce`, `intel_quote`,
-`event_log`, optional `reported_quote_data`). When present it is always verified.
-`MeasuredDeployment.compose_manager` contains `VerifiedComposeManagerAttestation`:
+`MeasuredDeployment.compose_manager` contains the authenticated
+`VerifiedComposeManagerAttestation`:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -578,19 +515,13 @@ Asynchronously returns `list[str]` of inline Sigstore bundle JSON from GitHub.
 | `github_token` | `str \| None` | No | GitHub token for direct requests; ignored when `github_api_url` is set. |
 | `github_api_url` | `str \| None` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
-Responses use the GitHub API format. Pagination stays on the configured
-base URL; redirects and returned bundle URLs are not followed. See
-[GitHub API access](verification-guide.md#github-api-access)
-for endpoint requirements.
+For a custom GitHub endpoint, see [GitHub API access](verification-guide.md#github-api-access).
 
 ### `verify_image_provenance`
 
-Asynchronously returns `VerifiedImageProvenance`. One bundle must satisfy every
-signature, artifact, source and policy check. The helper supports GitHub SLSA v1
-and v0.2 provenance and refreshes Sigstore's production trust root through TUF.
-The statement's source commit must match the signing certificate's source digest
-(or legacy GitHub workflow SHA when the source digest is absent), before applying
-the optional commit pin.
+Verifies serialized Sigstore bundles against an image digest and build policy.
+Supports GitHub Actions SLSA v1 and v0.2 provenance.
+Returns `VerifiedImageProvenance`.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -606,10 +537,6 @@ the optional commit pin.
 | `commit` | `str \| None` | `None` | Optional approved source commit SHA. |
 | `issuer` | `str` | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
 | `signer_identity` | `str \| None` | `None` | Exact signing-certificate URI for a reusable workflow, including its ref, tag, or commit suffix. Defaults to the source repository/workflow at the verified source ref. |
-
-The certificate's source repository, ref, and commit must match the signed SLSA
-source. Setting `signer_identity` changes only the accepted signer, not these
-source checks.
 
 | Result field | Type | Description |
 | --- | --- | --- |
@@ -668,9 +595,6 @@ source checks.
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) -> None \| Awaitable[None]` | — | Returns only for an accepted deployment. |
 | `GpuEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |
 
-The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
-timestamps, signed nonce, and boolean verdict.
-
 ### Built-in verifier factories
 
 Both factories are synchronous and return asynchronous verifier callbacks for
@@ -687,12 +611,6 @@ DCAP constructs SGX and TDX collateral paths beneath `pccs_url`. `nras_url` is
 used as the POST endpoint; `jwks_url` independently selects a trusted signing-key
 source. See the
 [configuration example](./verification-guide.md#configure-attestation-service-urls).
-
-Model verification checks the payload nonce against the client nonce before
-calling a NVIDIA verifier. The factory additionally requires a 32-byte
-hexadecimal payload nonce and verifies that the signed JWT nonce matches it.
-Direct callback users must bind the payload nonce to their own fresh request
-nonce. Nonces accept an optional `0x`/`0X` prefix and compare as bytes.
 
 ### Verified quote and deployment measurements
 

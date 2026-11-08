@@ -196,9 +196,7 @@ function invalidGitHubPagination(): ApiError {
 }
 
 /**
- * Verify a GitHub Actions SLSA build proof for an image manifest digest.
- * One complete matching proof is sufficient. This checks the caller's build
- * policy; it does not prove which containers are running now.
+ * Verify GitHub build provenance against an image digest and source policy.
  */
 export async function verifyImageProvenance({
   bundles,
