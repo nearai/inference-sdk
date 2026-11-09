@@ -348,7 +348,7 @@ func TestIntegratedECDSAE2EE(t *testing.T)   { integrated(t, true, nearai.ECDSA,
 func TestIntegratedOHTTPE2EE(t *testing.T)   { integrated(t, true, nearai.Ed25519, true) }
 func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 	base, key := required(t, "NEARAI_BASE_URL"), required(t, "NEARAI_API_KEY")
-	for _, m := range models(t, e2ee || ohttp) {
+	for index, m := range models(t, e2ee || ohttp) {
 		t.Run(m.Provider+"/"+m.ID, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 			defer cancel()
@@ -388,6 +388,9 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 				}
 				if receipt.Signature.Signer.SigningAlgo != algo {
 					t.Fatal("wrong receipt algorithm")
+				}
+				if index == 0 && e2ee && algo == nearai.Ed25519 && !ohttp && receipt.SignatureKind != "provider_tee" {
+					t.Fatal("expected model-signed receipt")
 				}
 				if m.Provider != "near" && receipt.SignatureKind != "gateway" {
 					t.Fatal("expected Gateway receipt")
