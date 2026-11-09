@@ -163,7 +163,7 @@ func TestAttestationSuccessAndTLS(t *testing.T) {
 	a, q, _ := attestationFixture(t, Ed25519)
 	o := VerificationOptions{QuoteVerifier: fixedQuote(q)}
 	v, e := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, o)
-	if e != nil || v.GPUEvidence != "not_provided" {
+	if e != nil || v.GPUEvidence != "not_provided" || v.Report == nil || v.Report.IntelQuote != a.IntelQuote {
 		t.Fatalf("%+v %v", v, e)
 	}
 	fp := bytes.Repeat([]byte{1}, 32)

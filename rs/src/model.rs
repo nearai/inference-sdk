@@ -90,6 +90,7 @@ pub(crate) async fn verify_model_with_tls(
     )
     .await?;
     Ok(VerifiedModelAttestation {
+        report: std::sync::Arc::new(attestation.clone()),
         signing_public_key: verify_signing_public_key(attestation)?,
         evidence,
         gpu_evidence,

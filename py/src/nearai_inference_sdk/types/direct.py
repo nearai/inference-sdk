@@ -38,6 +38,7 @@ class FetchedDirectModelAttestations:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedDirectModelAttestation(VerifiedModelAttestation):
+    report: DirectModelAttestation
     # Endpoint metadata is not a model-name claim authenticated by the quote.
     model_name: str
     instance_id: str | None = None

@@ -26,7 +26,7 @@ func NewDirectInferenceClient(o DirectInferenceOptions) (*DirectInferenceClient,
 		ModelVerification: o.ModelVerification,
 		DeploymentPolicy:  o.DeploymentPolicy,
 	}, true, func(ctx context.Context, c *inferenceCore, s *session, model string) (FetchedModelAttestations, error) {
-		return directPreflight(ctx, c, s, model, o.DisableTLSBinding)
+		return directPreflight(ctx, c, s, o.DisableTLSBinding)
 	})
 	if err != nil {
 		return nil, err
@@ -69,8 +69,9 @@ func (c *DirectInferenceClient) HTTPClient() *http.Client {
 	return &http.Client{Transport: c, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
-func directPreflight(ctx context.Context, c *inferenceCore, s *session, model string, disableTLSBinding bool) (FetchedModelAttestations, error) {
-	fetched, err := c.api.FetchModelAttestations(ctx, model, FetchOptions{
+func directPreflight(ctx context.Context, c *inferenceCore, s *session, disableTLSBinding bool) (FetchedModelAttestations, error) {
+	api := DirectAttestationClient{c.api}
+	fetched, err := api.FetchModelAttestations(ctx, FetchOptions{
 		SigningAlgo: c.options.SigningAlgo, DisableTLSBinding: disableTLSBinding,
 	})
 	if err != nil {

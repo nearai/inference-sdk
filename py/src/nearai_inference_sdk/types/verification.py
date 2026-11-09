@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .attestation_common import SigningIdentity, TcbStatus
+from .attestation_gateway import GatewayAttestation
+from .attestation_model import ModelAttestation
 from .compose_manager import VerifiedComposeManagerAttestation
 
 
@@ -93,12 +95,14 @@ class VerifiedAttestationEvidence:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedModelAttestation(VerifiedAttestationEvidence):
+    report: ModelAttestation
     gpu_evidence: Literal['not_provided', 'verified']
     signing_public_key: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedGatewayAttestation(VerifiedAttestationEvidence):
+    report: GatewayAttestation
     tls_binding: GatewayTlsBinding
 
 

@@ -219,7 +219,7 @@ func TestDirectPreservesPerReportManagerEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := client.FetchModelAttestations(context.Background(), "test", FetchOptions{DisableTLSBinding: true})
+			result, err := client.FetchModelAttestations(context.Background(), FetchOptions{DisableTLSBinding: true})
 			if mode == "invalid sibling" {
 				requireCode(t, err, "api.invalid_response")
 				return

@@ -33,7 +33,7 @@ type session struct {
 	verifiedAt time.Time
 	direct     *VerifiedDirectModelAttestations
 	selected   *VerifiedAttestation
-	api        *AttestationClient
+	api        *apiClient
 	transport  http.RoundTripper
 	expires    time.Time
 }
@@ -67,7 +67,7 @@ type verifiedResponse struct {
 type inferenceCore struct {
 	options                     inferenceOptions
 	preflight                   sessionPreflight
-	api                         *AttestationClient
+	api                         *apiClient
 	ctx                         context.Context
 	cancel                      context.CancelFunc
 	mu                          sync.Mutex

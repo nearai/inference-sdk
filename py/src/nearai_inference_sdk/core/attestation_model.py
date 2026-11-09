@@ -52,6 +52,7 @@ async def verify_model_attestation(
         ),
     )
     return VerifiedModelAttestation(
+        report=attestation,
         signer=evidence.signer,
         tcb_status=evidence.tcb_status,
         advisory_ids=evidence.advisory_ids,

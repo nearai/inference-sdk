@@ -27,7 +27,7 @@ from nearai_inference_sdk import (
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .fixtures import SIGNING_ADDRESS, cloud_attestation
+from .fixtures import SIGNING_ADDRESS, cloud_attestation, create_model_attestation
 
 API_KEY = 'test'
 BASE_URL = 'https://cloud.example/v1'
@@ -363,6 +363,7 @@ def verified_model_attestation_for_signer(
     signer: SigningIdentity,
 ) -> VerifiedModelAttestation:
     return VerifiedModelAttestation(
+        report=create_model_attestation(signer=signer),
         signer=signer,
         tcb_status='UpToDate',
         advisory_ids=(),
