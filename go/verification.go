@@ -181,6 +181,7 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 		return v, e
 	}
 	v = VerifiedAttestation{
+		Report:               &a,
 		Signer:               a.Signer,
 		TCBStatus:            q.TCBStatus,
 		AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),

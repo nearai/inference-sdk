@@ -37,27 +37,16 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 
 // VerifyDirectModelResponse verifies the response signature and returns all
 // verified reports sharing its signer.
-func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedDirectCompletionResult, error) {
-	var matches []VerifiedAttestation
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) ([]VerifiedAttestation, error) {
 	if sig.Kind != "provider_tee" {
-		return VerifiedDirectCompletionResult{}, failure("signature.kind_mismatch", nil)
+		return nil, failure("signature.kind_mismatch", nil)
 	}
-	for _, a := range attestations {
-		if a.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(a.Signer.SigningAddress, sig.Signer.SigningAddress) {
-			matches = append(matches, a)
-		}
+	matches, err := FindModelAttestationsForSignature(attestations, sig)
+	if err != nil {
+		return nil, failure("signature.signer_mismatch", nil)
 	}
-	if len(matches) == 0 {
-		return VerifiedDirectCompletionResult{}, failure("signature.signer_mismatch", nil)
+	if err := VerifyModelResponse(request, response, sig, matches[0]); err != nil {
+		return nil, err
 	}
-	if e := VerifyModelResponse(request, response, sig, matches[0]); e != nil {
-		return VerifiedDirectCompletionResult{}, e
-	}
-	return VerifiedDirectCompletionResult{
-		ID:            id,
-		CompletionID:  id,
-		SignatureKind: sig.Kind,
-		Signature:     sig,
-		Attestations:  matches,
-	}, nil
+	return matches, nil
 }

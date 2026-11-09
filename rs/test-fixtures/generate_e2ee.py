@@ -1,4 +1,4 @@
-# Regenerate with: uv run --with nearai-inference-sdk==0.1.0 rs/tests/fixtures/generate_e2ee.py
+# Regenerate with: uv run --with nearai-inference-sdk==0.1.0 rs/test-fixtures/generate_e2ee.py
 # The recipient key is fixed for testing; fresh ephemeral keys/nonces change ciphertexts.
 import json
 from pathlib import Path
@@ -17,5 +17,4 @@ for algo in ['ed25519','ecdsa']:
     plain='Hello 🌍 — exact UTF-8'
     cases.append(dict(algorithm=algo,private_seed=seed.hex(),public_key=pub,plaintext=plain,ciphertext=encrypt_e2ee_text(plain,E2eeModelKey(signing_algo=algo,public_key=pub))))
 path=Path(__file__).with_name('e2ee-python.json')
-path.parent.mkdir(exist_ok=True)
 path.write_text(json.dumps(dict(source='nearai-inference-sdk Python 0.1.0',cases=cases),ensure_ascii=False,indent=2)+'\n')

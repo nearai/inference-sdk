@@ -24,8 +24,8 @@ Construct `InferenceClient` with `new(api_key)` or
 | `verify_response(id)` | `VerifiedCompletionResult` | Verifies the response signature using retained request and response bytes. |
 | `clear_response_cache().await` | `()` | Discards retained responses and their verification results. |
 
-`InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
-`body` to EOF or call `bytes()` / `json()` before `verify_response()`.
+`InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. For SSE,
+call `verify_response()` after the terminal event or EOF. For JSON, read the body with `bytes()` or `json()`.
 
 `VerifiedCompletionResult` contains `id`, `signature`, and the verified evidence.
 For model receipts, `attestations` contains all reports sharing the selected signer.
@@ -426,9 +426,11 @@ DCAP constructs SGX and TDX collateral paths beneath the PCCS base URL. See
 |  | `tcb_status`, `advisory_ids` | Accepted quote TCB status and authenticated advisory IDs. |
 |  | `deployment` | `MeasuredDeployment` with `app_compose` and derived `RuntimeMeasurements`. |
 |  | `deployment_provenance` | `NotChecked` when no custom deployment verifier was supplied; `Verified` when it accepted the deployment. |
-| `VerifiedModelAttestation` | `evidence` | Shared verified evidence above. |
+| `VerifiedModelAttestation` | `report` | Original model report. |
+|  | `evidence` | Shared verified evidence above. |
 |  | `gpu_evidence` | `GpuEvidenceStatus::NotProvided` or `GpuEvidenceStatus::Verified`. |
-| `VerifiedGatewayAttestation` | `evidence` | Shared verified evidence above. |
+| `VerifiedGatewayAttestation` | `report` | Original gateway report. |
+|  | `evidence` | Shared verified evidence above. |
 |  | `tls_binding` | `GatewayTlsBinding::Attested { spki_fingerprint }` when the quote-bound fingerprint matched the observed peer, or `GatewayTlsBinding::None` when the attestation had no SPKI fingerprint. |
 
 ## Errors

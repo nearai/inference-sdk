@@ -62,6 +62,7 @@ async def verify_gateway_attestation(
         deployment, None if verifiers is None else verifiers.deployment
     )
     return VerifiedGatewayAttestation(
+        report=attestation,
         signer=verified_quote.signer,
         tcb_status=verified_quote.quote.tcb_status,
         advisory_ids=tuple(verified_quote.quote.advisory_ids),

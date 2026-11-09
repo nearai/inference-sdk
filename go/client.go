@@ -72,7 +72,8 @@ func gatewayPreflight(ctx context.Context, c *inferenceCore, s *session, model s
 	o := c.options
 	opts := o.ModelVerification
 	var fetchedModelAttestations FetchedModelAttestations
-	fetched, e := c.api.FetchGatewayAttestation(ctx, FetchOptions{SigningAlgo: o.SigningAlgo, DisableTLSBinding: disableTLSBinding})
+	bootstrap := AttestationClient{c.api}
+	fetched, e := bootstrap.FetchGatewayAttestation(ctx, FetchOptions{SigningAlgo: o.SigningAlgo, DisableTLSBinding: disableTLSBinding})
 	if e != nil {
 		return FetchedModelAttestations{}, e
 	}
@@ -92,12 +93,13 @@ func gatewayPreflight(ctx context.Context, c *inferenceCore, s *session, model s
 	if e := c.configureOHTTP(s, fetched.OHTTPAttestation, verified.Signer); e != nil {
 		return FetchedModelAttestations{}, e
 	}
-	metadata, e := s.api.FetchModelMetadata(ctx, model)
+	api := AttestationClient{s.api}
+	metadata, e := api.FetchModelMetadata(ctx, model)
 	if e != nil {
 		return FetchedModelAttestations{}, e
 	}
 	if metadata.ProviderType == "vllm" && metadata.AttestationSupported {
-		fetchedModelAttestations, e = s.api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: o.SigningAlgo})
+		fetchedModelAttestations, e = api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: o.SigningAlgo})
 		if e != nil {
 			return FetchedModelAttestations{}, e
 		}
