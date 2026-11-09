@@ -59,6 +59,7 @@ pub async fn verify_gateway_attestation(
         deployment_provenance,
     };
     Ok(VerifiedGatewayAttestation {
+        report: std::sync::Arc::new(attestation.clone()),
         evidence,
         tls_binding,
     })

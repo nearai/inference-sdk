@@ -718,9 +718,11 @@ nonce. Nonces accept an optional `0x`/`0X` prefix and compare as bytes.
 |  | `advisory_ids` | `tuple[str, ...]` | Quote advisory IDs. |
 |  | `deployment` | `MeasuredDeployment` | Verified deployment measurements. |
 |  | `deployment_provenance` | `'not_checked' \| 'verified'` | Whether a supplied deployment verifier accepted the deployment. |
-| `VerifiedModelAttestation` | `gpu_evidence` | `'not_provided' \| 'verified'` | GPU-evidence verification outcome. It has no TLS-binding field. |
+| `VerifiedModelAttestation` | `report` | `ModelAttestation` | Original model report. |
+|  | `gpu_evidence` | `'not_provided' \| 'verified'` | GPU-evidence verification outcome. It has no TLS-binding field. |
 |  | `signing_public_key` | `str \| None` | Model public key authenticated against the verified signer; usable with `E2eeModelKey`. |
-| `VerifiedGatewayAttestation` | `tls_binding` | `GatewayTlsBinding` | `attested` when the attestation fingerprint matches the observed peer; `none` when the attestation has no fingerprint. |
+| `VerifiedGatewayAttestation` | `report` | `GatewayAttestation` | Original gateway report. |
+|  | `tls_binding` | `GatewayTlsBinding` | `attested` when the attestation fingerprint matches the observed peer; `none` when the attestation has no fingerprint. |
 
 `GatewayTlsBinding` is either `GatewayTlsBinding(kind='none')` or
 `GatewayTlsBinding(kind='attested', spki_fingerprint=...)`.

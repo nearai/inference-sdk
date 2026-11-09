@@ -236,24 +236,32 @@ func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
 					if customHeaders {
 						options.Headers = http.Header{"Authorization": {"Bearer custom"}, "Api-Key": {"api-key"}, "X-Api-Key": {"x-api-key"}, "X-Tenant": {"tenant"}}
 					}
-					constructor := NewAttestationClient
-					if direct {
-						constructor = NewDirectAttestationClient
-					}
-					client, err := constructor(options)
-					if err != nil {
-						t.Fatal(err)
-					}
 					ctx := context.Background()
-					if !direct {
-						if _, err = client.FetchGatewayAttestation(ctx, FetchOptions{DisableTLSBinding: true}); err != nil {
+					fetch := FetchOptions{DisableTLSBinding: true}
+					var client *apiClient
+					if direct {
+						api, err := NewDirectAttestationClient(options)
+						if err != nil {
 							t.Fatal(err)
 						}
+						if _, err := api.FetchModelAttestations(ctx, fetch); err != nil {
+							t.Fatal(err)
+						}
+						client = api.apiClient
+					} else {
+						api, err := NewAttestationClient(options)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if _, err := api.FetchGatewayAttestation(ctx, fetch); err != nil {
+							t.Fatal(err)
+						}
+						if _, err := api.FetchModelAttestations(ctx, "canonical/model", fetch); err != nil {
+							t.Fatal(err)
+						}
+						client = api.apiClient
 					}
-					if _, err = client.FetchModelAttestations(ctx, "canonical/model", FetchOptions{DisableTLSBinding: true}); err != nil {
-						t.Fatal(err)
-					}
-					if _, err = client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
+					if _, err := client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
 						t.Fatal(err)
 					}
 				})
@@ -311,21 +319,29 @@ func TestAttestationAPIBindsEveryReport(t *testing.T) {
 					json.NewEncoder(w).Encode(envelope)
 				}))
 				defer server.Close()
-				constructor := NewAttestationClient
+				ctx := context.Background()
+				options := ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"}
+				opts := FetchOptions{DisableTLSBinding: true}
+				var fetch func() error
 				if kind == "direct" {
-					constructor = NewDirectAttestationClient
-				}
-				client, err := constructor(ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"})
-				if err != nil {
-					t.Fatal(err)
-				}
-				fetch := func() error {
-					if kind == "gateway" {
-						_, err := client.FetchGatewayAttestation(context.Background(), FetchOptions{DisableTLSBinding: true})
+					client, err := NewDirectAttestationClient(options)
+					if err != nil {
+						t.Fatal(err)
+					}
+					fetch = func() error { _, err := client.FetchModelAttestations(ctx, opts); return err }
+				} else {
+					client, err := NewAttestationClient(options)
+					if err != nil {
+						t.Fatal(err)
+					}
+					fetch = func() error {
+						if kind == "gateway" {
+							_, err := client.FetchGatewayAttestation(ctx, opts)
+							return err
+						}
+						_, err := client.FetchModelAttestations(ctx, "canonical/model", opts)
 						return err
 					}
-					_, err := client.FetchModelAttestations(context.Background(), "canonical/model", FetchOptions{DisableTLSBinding: true})
-					return err
 				}
 				if err := fetch(); err != nil {
 					t.Fatal(err)

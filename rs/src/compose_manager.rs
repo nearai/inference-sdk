@@ -39,7 +39,7 @@ pub struct ComposeManagerAction {
     pub extra: BTreeMap<String, ComposeManagerActionValue>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub struct ComposeManagerAttestation {
     pub actions: Vec<ComposeManagerAction>,
     pub actions_hash: String,

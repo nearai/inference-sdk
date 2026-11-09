@@ -15,6 +15,25 @@ import (
 	"testing"
 )
 
+func TestPinnedTransportRejectsPlainHTTP(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	transport, err := NewPinnedTransport(nil, strings.Repeat("00", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	res, err := client.Post(server.URL, "text/plain", strings.NewReader("private prompt"))
+	if res != nil {
+		res.Body.Close()
+	}
+	if err == nil || requests.Load() != 0 {
+		t.Fatalf("sent pinned request over HTTP: requests=%d, error=%v", requests.Load(), err)
+	}
+}
+
 func TestPinnedTLSProtectsChatAndEvidenceBeforeSending(t *testing.T) {
 	for _, operation := range []string{"chat", "metadata", "model", "signature", "gateway"} {
 		for _, condition := range []string{"valid", "wrong pin", "wrong hostname", "untrusted chain"} {

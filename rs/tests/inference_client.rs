@@ -546,8 +546,10 @@ async fn streaming_retains_tail_and_does_not_verify_partial_responses() {
         client.verify_response("chat-0").await.unwrap_err().code(),
         "api.completion_not_found"
     );
-    let rest = response.bytes().await.unwrap();
-    assert!(rest.ends_with(b": tail\n\n"));
+    let terminal = response.body.next().await.unwrap().unwrap();
+    assert!(terminal.starts_with(b"data: [DONE]"));
+    assert!(terminal.ends_with(b": tail\n\n"));
+    drop(response);
     client.verify_response("chat-0").await.unwrap();
     let mut response = client
         .send(client.chat_request(value).unwrap())

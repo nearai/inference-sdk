@@ -176,14 +176,11 @@ func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
 	text := "canonical/model:" + hashText(request) + ":" + hashText(response)
 	sig := CompletionSignature{"provider_tee", text, hex.EncodeToString(ed25519.Sign(priv, []byte(text))), a.Signer}
 	items := []VerifiedAttestation{{Signer: a.Signer, InstanceID: "one"}, {Signer: a.Signer, InstanceID: "two"}}
-	result, e := VerifyDirectModelResponse("chat", request, response, sig, items)
+	result, e := VerifyDirectModelResponse(request, response, sig, items)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if result.ID != "chat" || result.CompletionID != result.ID {
-		t.Fatal("receipt ID alias mismatch")
-	}
-	if len(result.Attestations) != 2 {
+	if !reflect.DeepEqual(result, items) {
 		t.Fatal("ambiguous instance attribution")
 	}
 }

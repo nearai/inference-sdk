@@ -203,13 +203,15 @@ async def test_nras_factory_compares_payload_and_signed_nonce_as_bytes(
 
 
 async def test_model_attestation_returns_verified_evidence() -> None:
+    attestation = create_model_attestation()
     result = await verify_model_attestation(
-        create_model_attestation(),
+        attestation,
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: create_model_quote()),
     )
 
     assert result.tcb_status == 'UpToDate'
+    assert result.report == attestation
     assert result.gpu_evidence == 'not_provided'
     assert result.deployment.app_compose == APP_COMPOSE
     assert result.deployment_provenance == 'not_checked'
