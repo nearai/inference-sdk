@@ -22,7 +22,7 @@ use std::{
 use tokio::sync::Mutex;
 
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, InferenceError>> + Send>>;
-/// Consume the entire response body before verification.
+/// Verify after reading the response body or receiving its terminal SSE event.
 pub struct InferenceResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
@@ -450,22 +450,31 @@ impl InferenceCore {
                 crate::sse::SseMode::Chat
             };
             let mut events = crate::sse::SseStream::new(mode);
-            while let Some(chunk) = source.next().await {
-                let chunk = chunk?;
-                wire.extend_from_slice(&chunk);
-                if streaming {
-                    for record in decoder.push(&chunk, false) {
-                        yield bytes::Bytes::from(events.transform(record, key.as_ref())?);
-                    }
-                }
-            }
             if streaming {
-                for record in decoder.push(&[], true) {
-                    yield bytes::Bytes::from(events.transform(record, key.as_ref())?);
+                let mut terminal = Vec::new();
+                loop {
+                    let chunk = source.next().await.transpose()?;
+                    let eof = chunk.is_none();
+                    let bytes = chunk.as_deref().unwrap_or_default();
+                    wire.extend_from_slice(bytes);
+                    for record in decoder.push(bytes, eof) {
+                        let record = events.transform(record, key.as_ref())?;
+                        if events.is_terminal() {
+                            // A caller can stop at the terminal event and immediately verify.
+                            terminal.extend(record);
+                        } else {
+                            yield bytes::Bytes::from(record);
+                        }
+                    }
+                    if eof { break; }
                 }
                 let id = events.finish()?;
                 owner.register(id, request_body, wire, session, gateway_only, generation).await?;
+                if !terminal.is_empty() { yield bytes::Bytes::from(terminal); }
             } else {
+                while let Some(chunk) = source.next().await {
+                    wire.extend_from_slice(&chunk?);
+                }
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
                 let id = value
                     .get("id")

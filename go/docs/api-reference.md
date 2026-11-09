@@ -108,12 +108,15 @@ verification function.
 
 ```go
 func NewAttestationClient(o ClientOptions) (*AttestationClient, error)
-func NewDirectAttestationClient(o ClientOptions) (*AttestationClient, error)
+func NewDirectAttestationClient(o ClientOptions) (*DirectAttestationClient, error)
 
 func (c *AttestationClient) FetchModelMetadata(ctx context.Context, model string) (ModelMetadata, error)
 func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o FetchOptions) (FetchedGatewayAttestation, error)
 func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error)
 func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error)
+
+func (c *DirectAttestationClient) FetchModelAttestations(ctx context.Context, o FetchOptions) (FetchedModelAttestations, error)
+func (c *DirectAttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error)
 ```
 
 `FetchOptions` selects the signing algorithm, signer filter, and Gateway TLS
@@ -129,7 +132,7 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
-func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedDirectCompletionResult, error)
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) ([]VerifiedAttestation, error)
 func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error)
 // Deprecated: use FindModelAttestationsForSignature for shared signers.
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
@@ -142,8 +145,8 @@ func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 Pass the verified evidence and exact request/response bytes, before decryption
 when E2EE is enabled. Direct response verification returns all matching reports.
 
-`NewPinnedTransport` clones a standard HTTP transport and requires one of the
-verified SPKI fingerprints in addition to normal TLS validation. Close its idle
+`NewPinnedTransport` accepts HTTPS requests and requires one of the verified
+SPKI fingerprints in addition to normal TLS validation. Close its idle
 connections when finished.
 
 | Factory | Parameter or field | Default | Description |
@@ -325,6 +328,7 @@ type VerificationOptions struct {
 }
 
 type VerifiedAttestation struct {
+	Report                *Attestation
 	Signer                SigningIdentity
 	TCBStatus             string
 	AdvisoryIDs           []string
@@ -468,9 +472,8 @@ selected for the request key; use `Attestations` for model evidence.
 
 Manual workflow APIs:
 
-- `NewAttestationClient` / `NewDirectAttestationClient` retrieve metadata,
-  Gateway/model reports, and completion signatures. Only attestation-report
-  fetches generate fresh random nonces.
+- `NewAttestationClient` retrieves Gateway and model reports, metadata, and completion signatures.
+- `NewDirectAttestationClient` retrieves model reports and completion signatures from a Direct endpoint.
 - `VerifyGatewayAttestation`, `VerifyModelAttestation`,
   `VerifyDirectModelAttestation`, and `VerifyDirectModelAttestations` authenticate
   those reports. The plural direct helper checks serving-report membership and

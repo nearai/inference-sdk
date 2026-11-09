@@ -38,6 +38,7 @@ class FetchedDirectModelAttestations:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedDirectModelAttestation(VerifiedModelAttestation):
+    report: DirectModelAttestation
     # Endpoint-reported model name.
     model_name: str
     instance_id: str | None = None

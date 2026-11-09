@@ -45,8 +45,8 @@ while let Some(chunk) = response.body.next().await {
 Add `futures-util` to use `StreamExt`. Body chunks contain SSE bytes; use an
 SSE decoder to extract events, as in the [examples](../../examples/README.md#rust-setup).
 
-Consume the stream to EOF before `verify_response()`. For non-streaming responses,
-`bytes()` and `json()` read the full body.
+For Chat, you can call `verify_response()` as soon as your SSE decoder yields `[DONE]`,
+or after EOF. For JSON, read the body with `bytes()` or `json()`.
 
 ### Cache lifetime
 

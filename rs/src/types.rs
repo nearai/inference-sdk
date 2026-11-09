@@ -107,7 +107,7 @@ pub struct SigningIdentity {
 }
 
 /// dstack event-log data as returned by the attestation endpoint.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AttestationEventLog {
     Json(String),
@@ -115,7 +115,7 @@ pub enum AttestationEventLog {
 }
 
 /// Evidence shared by NEAR model and Gateway attestations.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttestationEvidence {
     pub nonce: String,
     pub signer: SigningIdentity,
@@ -125,7 +125,7 @@ pub struct AttestationEvidence {
 }
 
 /// Raw model-serving TEE evidence returned through NEAR AI Cloud.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelAttestation {
     /// Optional encryption key; authenticated against the signer during verification.
     pub signing_public_key: Option<String>,
@@ -140,7 +140,7 @@ pub struct ModelAttestation {
 }
 
 /// Raw NEAR AI Cloud Gateway evidence.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GatewayAttestation {
     pub evidence: AttestationEvidence,
     /// SPKI fingerprint reported by the Gateway when evidence was fetched with
@@ -300,6 +300,7 @@ pub enum GpuEvidenceStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedModelAttestation {
+    pub report: std::sync::Arc<ModelAttestation>,
     pub signing_public_key: Option<String>,
     pub evidence: VerifiedAttestationEvidence,
     pub gpu_evidence: GpuEvidenceStatus,
@@ -307,6 +308,7 @@ pub struct VerifiedModelAttestation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedGatewayAttestation {
+    pub report: std::sync::Arc<GatewayAttestation>,
     pub evidence: VerifiedAttestationEvidence,
     pub tls_binding: GatewayTlsBinding,
 }
