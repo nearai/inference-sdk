@@ -235,6 +235,10 @@ impl SseStream {
         Ok(())
     }
 
+    pub(crate) fn is_terminal(&self) -> bool {
+        self.done || self.message_stopped
+    }
+
     pub(crate) fn finish(self) -> Result<String, InferenceError> {
         if self.mode == SseMode::Messages && !self.message_stopped {
             return Err(invalid_response().into());

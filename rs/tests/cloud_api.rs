@@ -1,9 +1,8 @@
+mod support;
 use nearai_inference_sdk::{
     find_model_attestation_for_signature, find_model_attestations_for_signature, ApiError,
     ApiResource, AttestationClient, CompletionSignature, CompletionSignatureKind,
-    DeploymentProvenanceStatus, GatewayAttestationFetchOptions, GpuEvidenceStatus,
-    MeasuredDeployment, RuntimeMeasurements, SigningAlgo, SigningIdentity, TcbStatus,
-    VerifiedAttestationEvidence, VerifiedModelAttestation,
+    GatewayAttestationFetchOptions, SigningAlgo, SigningIdentity,
 };
 use serde_json::json;
 use std::sync::Once;
@@ -309,24 +308,6 @@ async fn optional_keys_are_omitted_from_bootstrap_but_retained_for_model_reports
     }
 }
 
-fn verified_model_attestation_for_signer(signer: SigningIdentity) -> VerifiedModelAttestation {
-    VerifiedModelAttestation {
-        signing_public_key: None,
-        evidence: VerifiedAttestationEvidence {
-            signer,
-            tcb_status: TcbStatus::UpToDate,
-            advisory_ids: vec![],
-            deployment: MeasuredDeployment {
-                compose_manager: None,
-                app_compose: "{}".to_owned(),
-                runtime_measurements: RuntimeMeasurements::default(),
-            },
-            deployment_provenance: DeploymentProvenanceStatus::NotChecked,
-        },
-        gpu_evidence: GpuEvidenceStatus::NotProvided,
-    }
-}
-
 fn signature_for_evidence_selection(
     kind: CompletionSignatureKind,
     signer: SigningIdentity,
@@ -349,15 +330,15 @@ fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
                 signing_address: "ab".repeat(bytes),
             },
         );
-        let first = verified_model_attestation_for_signer(signature.signer.clone());
+        let first = support::verified_model_attestation(signature.signer.clone());
         let mut second = first.clone();
         second.evidence.signer.signing_address = format!("0X{}", "AB".repeat(bytes));
         second.evidence.advisory_ids.push("second-report".into());
-        let other = verified_model_attestation_for_signer(SigningIdentity {
+        let other = support::verified_model_attestation(SigningIdentity {
             signing_algo,
             signing_address: "cd".repeat(bytes),
         });
-        let other_algo = verified_model_attestation_for_signer(SigningIdentity {
+        let other_algo = support::verified_model_attestation(SigningIdentity {
             signing_algo: match signing_algo {
                 SigningAlgo::Ed25519 => SigningAlgo::Ecdsa,
                 SigningAlgo::Ecdsa => SigningAlgo::Ed25519,
@@ -395,7 +376,7 @@ fn finds_a_signer_with_an_equivalent_hex_address() {
             signing_address: format!("0X{}", "AB".repeat(20)),
         },
     );
-    let candidate = verified_model_attestation_for_signer(SigningIdentity {
+    let candidate = support::verified_model_attestation(SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,
         signing_address: "ab".repeat(20),
     });
@@ -465,7 +446,7 @@ fn selection_rejects_a_malformed_candidate_signer_as_api_input() {
             signing_address: "22".repeat(20),
         },
     );
-    let candidates = [verified_model_attestation_for_signer(SigningIdentity {
+    let candidates = [support::verified_model_attestation(SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,
         signing_address: "not hexadecimal".to_owned(),
     })];

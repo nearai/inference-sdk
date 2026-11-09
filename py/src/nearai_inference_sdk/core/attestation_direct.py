@@ -47,6 +47,7 @@ async def verify_direct_model_attestation(
         ),
     )
     return VerifiedDirectModelAttestation(
+        report=attestation,
         signer=evidence.signer,
         tcb_status=evidence.tcb_status,
         advisory_ids=evidence.advisory_ids,

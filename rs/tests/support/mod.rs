@@ -162,6 +162,7 @@ pub fn signed_signature(
 
 pub fn verified_model_attestation(signer: SigningIdentity) -> VerifiedModelAttestation {
     VerifiedModelAttestation {
+        report: model_attestation(None).into(),
         signing_public_key: None,
         evidence: verified_evidence(signer),
         gpu_evidence: GpuEvidenceStatus::NotProvided,
@@ -170,6 +171,7 @@ pub fn verified_model_attestation(signer: SigningIdentity) -> VerifiedModelAttes
 
 pub fn verified_gateway_attestation(signer: SigningIdentity) -> VerifiedGatewayAttestation {
     VerifiedGatewayAttestation {
+        report: gateway_attestation().into(),
         evidence: verified_evidence(signer),
         tls_binding: nearai_inference_sdk::GatewayTlsBinding::Attested {
             spki_fingerprint: TLS_FINGERPRINT.to_owned(),
