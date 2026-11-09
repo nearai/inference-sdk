@@ -17,13 +17,14 @@ export type VerifyDirectModelAttestationParams = {
   readonly verifiers?: ModelAttestationVerifiers;
 };
 
-/** One model attestation, independently verified without observing its TLS peer. */
+/**
+ * One model attestation, independently verified without observing its TLS peer.
+ * The quote does not authenticate the endpoint's `modelName` or `instanceId`.
+ */
 export type VerifiedDirectModelAttestation = VerifiedModelAttestation & {
   /** Original direct report, including endpoint metadata. */
   readonly report: DirectModelAttestation;
-  /** Endpoint-reported model name. */
   readonly modelName: string;
-  /** Instance metadata, when supplied by the endpoint. */
   readonly instanceId?: string;
   /** Quote-authenticated TLS public-key fingerprint. */
   readonly spkiFingerprint?: string;

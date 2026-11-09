@@ -95,6 +95,7 @@ type VerificationOptions struct {
 }
 
 // VerifiedAttestation contains verified signer and deployment evidence.
+// The quote does not authenticate the endpoint's ModelName or InstanceID.
 type VerifiedAttestation struct {
 	Report                *Attestation
 	Signer                SigningIdentity

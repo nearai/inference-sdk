@@ -116,7 +116,8 @@ See the [native image example](../../examples/example-rs/src/gateway/systemone.r
   `verify_response` returns `VerifiedDirectCompletionResult` with `id`, `signature`,
   and `attestations: Vec<VerifiedDirectModelAttestation>`. Read the matching report
   group directly from `receipt.attestations`; `signature_kind()` returns the
-  receipt's signature kind. Chat and transport methods match `InferenceClient`.
+  receipt's signature kind. The quote does not authenticate the endpoint's
+  `model_name` or `instance_id`. Chat and transport methods match `InferenceClient`.
 - `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
   and direct signatures. `with_headers` configures extra headers.
   `fetch_model_attestations_with_options(DirectAttestationFetchOptions)` accepts

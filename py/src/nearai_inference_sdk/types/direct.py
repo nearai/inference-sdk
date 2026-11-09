@@ -38,8 +38,9 @@ class FetchedDirectModelAttestations:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedDirectModelAttestation(VerifiedModelAttestation):
+    """The quote does not authenticate the endpoint's model_name or instance_id."""
+
     report: DirectModelAttestation
-    # Endpoint-reported model name.
     model_name: str
     instance_id: str | None = None
     spki_fingerprint: str | None = None
