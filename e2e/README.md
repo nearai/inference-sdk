@@ -88,7 +88,8 @@ the replacement against staging and production:
 
 ```sh
 node --test e2e/select-models.test.mjs
-node e2e/select-models.mjs
+NEARAI_BASE_URL=https://cloud-stg-api.near.ai/v1 node e2e/select-models.mjs
+NEARAI_BASE_URL=https://cloud-api.near.ai/v1 node e2e/select-models.mjs
 ```
 
 The selector checks each configured model ID and its capabilities against `/model/list`.
