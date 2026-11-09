@@ -103,9 +103,7 @@ The selector checks each configured model ID and its capabilities against `/mode
 
 ## Official TypeSafe SDK integration
 
-The JavaScript and Python suites send decisions through the official TypeSafe SDK
-and verify the response bytes using `X-Generation-Id`. They run with the same
-commands and configuration as the native System One tests.
-
-The default matrix uses a hosted Jev model. For a self-hosted deployment that
-supports provider receipts, add a `systemone` entry with provider `near` to `models.json`.
+The JavaScript and Python suites send decisions to the configured hosted Jev model
+through the official TypeSafe SDK and verify the response bytes using
+`X-Generation-Id`. They run with the same commands and configuration as the
+native System One tests.
