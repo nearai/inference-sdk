@@ -337,6 +337,7 @@ type VerifiedAttestation struct {
 	GPUEvidence           string
 	SigningPublicKey      string
 	SPKIFingerprint       string
+	// The quote does not authenticate the endpoint's ModelName or InstanceID.
 	ModelName, InstanceID string
 }
 

@@ -421,7 +421,7 @@ The Node client captures the attestation connection's TLS fingerprint by default
 |  | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated SPKI fingerprints from the verified model attestations. |
 | `VerifiedDirectModelAttestation` | Base fields | `VerifiedModelAttestation` | Verified quote, signer, measurements, and GPU result. |
 |  | `report` | `DirectModelAttestation` | Original direct report retained for inspection. |
-|  | `modelName` / `instanceId?` | `string` | Endpoint-reported model and instance metadata. |
+|  | `modelName` / `instanceId?` | `string` | Endpoint labels. The quote does not authenticate either value. |
 |  | `spkiFingerprint?` | `string` | Quote-authenticated TLS public-key fingerprint. |
 
 `verifyDirectModelAttestations` verifies every returned attestation and compares

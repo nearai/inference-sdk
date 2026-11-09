@@ -259,7 +259,8 @@ Requests use the verified model TLS fingerprints by default.
 | `FetchedDirectModelAttestations` | `serving_attestation`, `attestations` | Top-level serving report and the full tuple of supplied direct reports. |
 | | `client_binding`, `ohttp_attestation` | Client binding and optional signed OHTTP configuration. |
 | `VerifiedDirectModelAttestation` | Inherited `VerifiedModelAttestation` fields | Independently verified deployment and signing key. |
-| | `model_name`, `instance_id`, `spki_fingerprint` | Endpoint metadata and optional quote-authenticated fingerprint. |
+| | `model_name`, `instance_id` | Endpoint labels. The quote does not authenticate either value. |
+| | `spki_fingerprint` | Optional quote-authenticated TLS public-key fingerprint. |
 | `VerifiedDirectModelAttestations` | `serving_attestation`, `attestations` | Verified serving entry and every verified supplied report. |
 | | `tls_binding: DirectTlsBinding` | `none` or `attested`; only the serving report is compared with the observed peer. |
 | | `spki_fingerprints: tuple[str, ...]` | Distinct fingerprints authenticated by the verified reports, in response order. |
