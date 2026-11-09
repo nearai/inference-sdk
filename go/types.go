@@ -96,6 +96,7 @@ type VerificationOptions struct {
 
 // VerifiedAttestation contains verified signer and deployment evidence.
 type VerifiedAttestation struct {
+	Report                *Attestation
 	Signer                SigningIdentity
 	TCBStatus             string
 	AdvisoryIDs           []string

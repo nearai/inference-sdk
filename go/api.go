@@ -23,20 +23,35 @@ import (
 )
 
 // AttestationClient fetches evidence without making any claim that it is verified.
-type AttestationClient struct {
+type AttestationClient struct{ *apiClient }
+
+// DirectAttestationClient fetches reports and signatures from one Direct endpoint.
+type DirectAttestationClient struct{ *apiClient }
+
+type apiClient struct {
 	base    *url.URL
 	headers http.Header
 	http    *http.Client
 	direct  bool
 }
 
-func NewAttestationClient(o ClientOptions) (*AttestationClient, error) { return newAPIClient(o, false) }
-
-func NewDirectAttestationClient(o ClientOptions) (*AttestationClient, error) {
-	return newAPIClient(o, true)
+func NewAttestationClient(o ClientOptions) (*AttestationClient, error) {
+	api, err := newAPIClient(o, false)
+	if err != nil {
+		return nil, err
+	}
+	return &AttestationClient{api}, nil
 }
 
-func newAPIClient(o ClientOptions, direct bool) (*AttestationClient, error) {
+func NewDirectAttestationClient(o ClientOptions) (*DirectAttestationClient, error) {
+	api, err := newAPIClient(o, true)
+	if err != nil {
+		return nil, err
+	}
+	return &DirectAttestationClient{api}, nil
+}
+
+func newAPIClient(o ClientOptions, direct bool) (*apiClient, error) {
 	if o.BaseURL == "" {
 		if direct {
 			return nil, failure("api.invalid_input", nil)
@@ -61,10 +76,10 @@ func newAPIClient(o ClientOptions, direct bool) (*AttestationClient, error) {
 		*client = *o.HTTPClient
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &AttestationClient{base: u, headers: h, http: client, direct: direct}, nil
+	return &apiClient{base: u, headers: h, http: client, direct: direct}, nil
 }
 
-func (c *AttestationClient) endpoint(path string, q url.Values) string {
+func (c *apiClient) endpoint(path string, q url.Values) string {
 	u := *c.base
 	unescaped, _ := url.PathUnescape(path)
 	u.Path += unescaped
@@ -126,7 +141,7 @@ func readResponseBounded(res *http.Response, limit int64) ([]byte, error) {
 	return readBounded(res.Body, limit)
 }
 
-func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
+func (c *apiClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
 	req, e := http.NewRequestWithContext(ctx, "GET", c.endpoint(path, q), nil)
 	if e != nil {
 		return nil, "", e
@@ -252,6 +267,14 @@ func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o Fetch
 }
 
 func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error) {
+	return c.fetchModelAttestations(ctx, model, o)
+}
+
+func (c *DirectAttestationClient) FetchModelAttestations(ctx context.Context, o FetchOptions) (FetchedModelAttestations, error) {
+	return c.fetchModelAttestations(ctx, "", o)
+}
+
+func (c *apiClient) fetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error) {
 	var out FetchedModelAttestations
 	q, e := optionsQuery(o)
 	if e != nil {
@@ -335,7 +358,7 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 	return out, nil
 }
 
-func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
+func (c *apiClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
 	var sig CompletionSignature
 	if id == "" || id == "." || id == ".." {
 		return sig, failure("api.invalid_input", nil)
@@ -468,6 +491,17 @@ func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Tra
 		return nil, failure("api.invalid_input", nil)
 	}
 	t := base.Clone()
+	// Proxy selection runs before dialing, including when a connection is reused.
+	proxy := t.Proxy
+	t.Proxy = func(req *http.Request) (*url.URL, error) {
+		if req.URL.Scheme != "https" {
+			return nil, detail("api.invalid_input", "expected", "HTTPS for pinned TLS")
+		}
+		if proxy == nil {
+			return nil, nil
+		}
+		return proxy(req)
+	}
 	if t.IdleConnTimeout == 0 {
 		t.IdleConnTimeout = 90 * time.Second
 	}

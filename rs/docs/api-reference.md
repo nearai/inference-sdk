@@ -527,9 +527,11 @@ DCAP constructs SGX and TDX collateral paths beneath the PCCS base URL. See
 |  | `tcb_status`, `advisory_ids` | Accepted quote TCB status and authenticated advisory IDs. |
 |  | `deployment` | `MeasuredDeployment` with `app_compose` and derived `RuntimeMeasurements`. |
 |  | `deployment_provenance` | `NotChecked` when no custom deployment verifier was supplied; `Verified` when it accepted the deployment. |
-| `VerifiedModelAttestation` | `evidence` | Shared verified evidence above. |
+| `VerifiedModelAttestation` | `report` | Original model report. |
+|  | `evidence` | Shared verified evidence above. |
 |  | `gpu_evidence` | `GpuEvidenceStatus::NotProvided` or `GpuEvidenceStatus::Verified`. |
-| `VerifiedGatewayAttestation` | `evidence` | Shared verified evidence above. |
+| `VerifiedGatewayAttestation` | `report` | Original gateway report. |
+|  | `evidence` | Shared verified evidence above. |
 |  | `tls_binding` | `GatewayTlsBinding::Attested { spki_fingerprint }` when the quote-bound fingerprint matched the observed peer, or `GatewayTlsBinding::None` when the attestation had no SPKI fingerprint. |
 
 ## Errors
