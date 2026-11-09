@@ -47,14 +47,14 @@ async fn verify_models(
     } else {
         models.iter().collect()
     };
-    for model in selected {
+    for (index, model) in selected.into_iter().enumerate() {
         println!(
             "integrated {}: {}, {signing_algo}, e2ee={e2ee}, ohttp={ohttp}",
             model.provider, model.id
         );
         tokio::time::timeout(
             Duration::from_secs(180),
-            verify_chat(model, e2ee, signing_algo, ohttp),
+            verify_chat(model, e2ee, signing_algo, ohttp, index == 0),
         )
         .await??;
     }
@@ -66,6 +66,7 @@ async fn verify_chat(
     e2ee: bool,
     signing_algo: SigningAlgo,
     ohttp: bool,
+    primary: bool,
 ) -> Result<(), Box<dyn Error>> {
     let client = InferenceClient::with_options(InferenceClientOptions {
         api_key: Some(required_env("NEARAI_API_KEY")?),
@@ -107,7 +108,12 @@ async fn verify_chat(
         let id = read_completion_id(&response, stream)?;
         let receipt = verify_receipt_with_retry(&client, &id).await?;
         assert_eq!(receipt.signature.signer.signing_algo, signing_algo);
-        if model.provider != "near" {
+        if primary && e2ee && signing_algo == SigningAlgo::Ed25519 && !ohttp {
+            assert_eq!(
+                receipt.signature_kind(),
+                CompletionSignatureKind::ProviderTee
+            );
+        } else if model.provider != "near" {
             assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
         }
         let cached_receipt = client.verify_response(&id).await?;
