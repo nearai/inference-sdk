@@ -293,8 +293,8 @@ dependencies = [
 
 [[package]]
 name = "dcap-qvl"
-version = "0.7.0"
-source = "git+https://github.com/Phala-Network/dcap-qvl?rev=94208e2753a854191759e493ca5892be482ad453#94208e2753a854191759e493ca5892be482ad453"
+version = "0.7.1"
+source = "git+https://github.com/Phala-Network/dcap-qvl?rev=05c200b752ecb824b73e5b1ae63cc047f1702ab2#05c200b752ecb824b73e5b1ae63cc047f1702ab2"
 dependencies = [
  "anyhow",
  "asn1_der",

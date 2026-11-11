@@ -1500,7 +1500,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.75,<1" },
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cryptography", specifier = ">=44.0.0" },
-    { name = "dcap-qvl", specifier = ">=0.7.0" },
+    { name = "dcap-qvl", specifier = ">=0.7.1" },
     { name = "eth-account", specifier = ">=0.10.0" },
     { name = "eth-utils", specifier = ">=2.0.0" },
     { name = "httpcore", specifier = "==1.0.9" },
