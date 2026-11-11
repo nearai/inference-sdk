@@ -107,6 +107,62 @@ describe('image provenance verification', () => {
     },
   );
 
+  test.each(['0.1', '0.2'])(
+    'verifies legacy v%s bundles and enforces signatures and log evidence',
+    async (version) => {
+      const bundle = JSON.parse(BUNDLE);
+      bundle.mediaType = `application/vnd.dev.sigstore.bundle+json;version=${version}`;
+      bundle.verificationMaterial.x509CertificateChain = {
+        certificates: [bundle.verificationMaterial.certificate],
+      };
+      delete bundle.verificationMaterial.certificate;
+      if (version === '0.1') {
+        for (const entry of bundle.verificationMaterial.tlogEntries) {
+          delete entry.inclusionProof;
+        }
+      }
+
+      await expect(
+        verifyImageProvenance({
+          bundles: [JSON.stringify(bundle)],
+          digest: DIGEST,
+          policy: POLICY,
+        }),
+      ).resolves.toMatchObject({ digest: DIGEST, ...POLICY });
+
+      const signature = bundle.dsseEnvelope.signatures[0].sig;
+      bundle.dsseEnvelope.signatures[0].sig =
+        Buffer.from('invalid-signature').toString('base64');
+      await expect(
+        verifyImageProvenance({
+          bundles: [JSON.stringify(bundle)],
+          digest: DIGEST,
+          policy: POLICY,
+        }),
+      ).rejects.toMatchObject({
+        failure: { code: 'provenance.image_verification_failed' },
+      });
+
+      bundle.dsseEnvelope.signatures[0].sig = signature;
+      for (const entry of bundle.verificationMaterial.tlogEntries) {
+        delete entry.inclusionProof;
+        if (version === '0.1') {
+          entry.inclusionPromise.signedEntryTimestamp =
+            Buffer.from('invalid-timestamp').toString('base64');
+        }
+      }
+      await expect(
+        verifyImageProvenance({
+          bundles: [JSON.stringify(bundle)],
+          digest: DIGEST,
+          policy: POLICY,
+        }),
+      ).rejects.toMatchObject({
+        failure: { code: 'provenance.image_verification_failed' },
+      });
+    },
+  );
+
   test('verifies a real cross-repository workflow and returns the caller source ref', async () => {
     const verified = await verifyImageProvenance({
       bundles: [REUSABLE_BUNDLE],
