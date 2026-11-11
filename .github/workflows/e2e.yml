@@ -47,6 +47,8 @@ jobs:
           : "${NEARAI_STG_API_KEY:?Set the NEARAI_STG_API_KEY repository secret}"
           : "${NEARAI_PRD_API_KEY:?Set the NEARAI_PRD_API_KEY repository secret}"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
@@ -69,6 +71,8 @@ jobs:
           printf 'models=%s\n' "$selection" >> "$GITHUB_OUTPUT"
           printf 'PRD models: %s\n' "$selection"
 
+  # The configuration job requires both keys before any matrix test starts.
+  # Name the two secrets explicitly; dynamic lookup sends the whole secrets context.
   javascript:
     name: JavaScript (${{ matrix.environment }})
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'javascript'
@@ -84,6 +88,8 @@ jobs:
         working-directory: js
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           version: 11.24.0
@@ -96,7 +102,7 @@ jobs:
       - name: Run live Gateway and System One tests
         env:
           NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
-          NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
+          NEARAI_API_KEY: ${{ matrix.environment == 'STG' && secrets.NEARAI_STG_API_KEY || secrets.NEARAI_PRD_API_KEY }}
           NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
         run: pnpm test:e2e
 
@@ -115,6 +121,8 @@ jobs:
         working-directory: py
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
@@ -123,7 +131,7 @@ jobs:
       - name: Run live Gateway tests
         env:
           NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
-          NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
+          NEARAI_API_KEY: ${{ matrix.environment == 'STG' && secrets.NEARAI_STG_API_KEY || secrets.NEARAI_PRD_API_KEY }}
           NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
         run: uv run --no-sync pytest e2e -v --tb=short
 
@@ -142,6 +150,8 @@ jobs:
         working-directory: rs
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - name: Compile live tests without credentials
         id: build
@@ -154,7 +164,7 @@ jobs:
         env:
           E2E_TEST_BINARY: ${{ steps.build.outputs.binary }}
           NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
-          NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
+          NEARAI_API_KEY: ${{ matrix.environment == 'STG' && secrets.NEARAI_STG_API_KEY || secrets.NEARAI_PRD_API_KEY }}
           NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
         run: '"$E2E_TEST_BINARY" --ignored --nocapture --test-threads=1'
 
@@ -172,6 +182,8 @@ jobs:
         environment: [STG, PRD]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go/go.mod
@@ -185,7 +197,7 @@ jobs:
       - name: Run live Gateway tests
         env:
           NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
-          NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
+          NEARAI_API_KEY: ${{ matrix.environment == 'STG' && secrets.NEARAI_STG_API_KEY || secrets.NEARAI_PRD_API_KEY }}
           NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
         run: |
           "$RUNNER_TEMP/e2e-go.test" -test.v -test.timeout=15m
