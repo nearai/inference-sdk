@@ -28,14 +28,15 @@ type inferenceOptions struct {
 type sessionPreflight func(context.Context, *inferenceCore, *session, string) (FetchedModelAttestations, error)
 
 type session struct {
-	gateway    *VerifiedAttestation
-	models     []VerifiedAttestation
-	verifiedAt time.Time
-	direct     *VerifiedDirectModelAttestations
-	selected   *VerifiedAttestation
-	api        *apiClient
-	transport  http.RoundTripper
-	expires    time.Time
+	gateway                    *VerifiedGatewayAttestation
+	models                     []VerifiedModelAttestation
+	verifiedAt                 time.Time
+	direct                     *VerifiedDirectModelAttestations
+	selectedDirectAttestations []VerifiedDirectModelAttestation
+	selected                   *VerifiedModelAttestation
+	api                        *apiClient
+	transport                  http.RoundTripper
+	expires                    time.Time
 }
 type pendingSession struct {
 	done  chan struct{}
@@ -57,10 +58,11 @@ type pendingResponse struct {
 
 // Cached verification outcomes are independent of either public client result.
 type verifiedResponse struct {
-	id           string
-	signature    CompletionSignature
-	attestation  *VerifiedAttestation
-	attestations []VerifiedAttestation
+	id                 string
+	signature          CompletionSignature
+	attestation        VerifiedCompletionAttestation
+	attestations       []VerifiedModelAttestation
+	directAttestations []VerifiedDirectModelAttestation
 }
 
 // inferenceCore owns shared transport, capture, cache, and cancellation.
@@ -259,43 +261,50 @@ func (c *inferenceCore) createSession(ctx context.Context, model string) (*sessi
 	if err != nil {
 		return nil, err
 	}
-	serving := fetchedModelAttestations.ServingAttestation
-	requiresServingSigner := serving != nil && (o.OHTTP || fetchedModelAttestations.ClientBinding.SPKIFingerprint != "")
-	for _, report := range fetchedModelAttestations.Attestations {
-		var verified VerifiedAttestation
-		var e error
-		if c.api.direct {
-			verified, e = VerifyDirectModelAttestation(ctx, report, fetchedModelAttestations.ClientBinding, opts)
-		} else {
-			verified, e = VerifyModelAttestation(ctx, report, fetchedModelAttestations.ClientBinding, opts)
-		}
-		if e != nil {
-			return nil, e
-		}
-		s.models = append(s.models, verified)
-		if serving != nil && sameAttestation(report, *serving) {
-			s.direct.ServingAttestation = verified
-		}
-		if s.selected == nil &&
-			verified.Signer.SigningAlgo == o.SigningAlgo &&
-			verified.SigningPublicKey != "" &&
-			(!requiresServingSigner || (verified.Signer.SigningAlgo == serving.Signer.SigningAlgo &&
-				sameHex(verified.Signer.SigningAddress, serving.Signer.SigningAddress))) {
-			copy := verified
-			s.selected = &copy
-		}
-	}
-	if len(s.models) > 0 && s.selected == nil {
-		return nil, failure("e2ee.model_public_key_required", nil)
-	}
-	if c.api.direct && len(s.models) == 0 {
-		return nil, failure("policy.model_attestation_required", nil)
-	}
 	if c.api.direct {
-		if e := c.configureDirectSession(s, fetchedModelAttestations); e != nil {
-			return nil, e
+		verified, err := VerifyDirectModelAttestations(ctx, fetchedModelAttestations, opts)
+		if err != nil {
+			return nil, err
+		}
+		s.direct = &verified
+		serving := verified.ServingAttestation
+		requiresServingSigner := o.OHTTP || serving.SPKIFingerprint != ""
+		for _, attestation := range verified.Attestations {
+			if attestation.Signer.SigningAlgo == o.SigningAlgo && attestation.SigningPublicKey != "" &&
+				(!requiresServingSigner || (attestation.Signer.SigningAlgo == serving.Signer.SigningAlgo && sameHex(attestation.Signer.SigningAddress, serving.Signer.SigningAddress))) {
+				selected := attestation.VerifiedModelAttestation
+				s.selected = &selected
+				break
+			}
+		}
+		if s.selected == nil {
+			return nil, failure("e2ee.model_public_key_required", nil)
+		}
+		for _, attestation := range verified.Attestations {
+			if attestation.Signer.SigningAlgo == s.selected.Signer.SigningAlgo && sameHex(attestation.Signer.SigningAddress, s.selected.Signer.SigningAddress) {
+				s.selectedDirectAttestations = append(s.selectedDirectAttestations, attestation)
+			}
+		}
+		if err := c.configureDirectSession(s, fetchedModelAttestations); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, report := range fetchedModelAttestations.Attestations {
+			verified, err := VerifyModelAttestation(ctx, report, fetchedModelAttestations.ClientBinding, opts)
+			if err != nil {
+				return nil, err
+			}
+			s.models = append(s.models, verified)
+			if s.selected == nil && verified.Signer.SigningAlgo == o.SigningAlgo && verified.SigningPublicKey != "" {
+				selected := verified
+				s.selected = &selected
+			}
+		}
+		if len(s.models) > 0 && s.selected == nil {
+			return nil, failure("e2ee.model_public_key_required", nil)
 		}
 	}
+
 	s.verifiedAt = time.Now()
 	return s, nil
 }
@@ -675,35 +684,37 @@ func (c *inferenceCore) verifyRecord(ctx context.Context, id string, r *response
 	if r.gatewayOnly && sig.Kind != "gateway" {
 		return verifiedResponse{}, failure("signature.kind_mismatch", nil)
 	}
-	var a *VerifiedAttestation
+	if r.session.direct != nil {
+		attestations, err := VerifyDirectModelResponse(r.request, r.response, sig, r.session.selectedDirectAttestations)
+		if err != nil {
+			return verifiedResponse{}, err
+		}
+		return verifiedResponse{id: id, signature: sig, directAttestations: attestations}, nil
+	}
+	var attestation VerifiedCompletionAttestation
+	var attestations []VerifiedModelAttestation
 	if sig.Kind == "gateway" {
-		a = r.session.gateway
-		if a != nil {
-			e = VerifyGatewayResponse(r.request, r.response, sig, *a)
+		if r.session.gateway == nil {
+			return verifiedResponse{}, failure("signature.kind_mismatch", nil)
 		}
+		if err := VerifyGatewayResponse(r.request, r.response, sig, *r.session.gateway); err != nil {
+			return verifiedResponse{}, err
+		}
+		attestation = r.session.gateway
 	} else {
-		a = r.session.selected
-		if a != nil {
-			e = VerifyModelResponse(r.request, r.response, sig, *a)
+		if r.session.selected == nil {
+			return verifiedResponse{}, failure("signature.kind_mismatch", nil)
 		}
-	}
-	if a == nil {
-		return verifiedResponse{}, failure("signature.kind_mismatch", nil)
-	}
-	if e != nil {
-		return verifiedResponse{}, e
-	}
-	var attestations []VerifiedAttestation
-	if sig.Kind == "provider_tee" {
-		// The selected-key check above still applies; a different preflight-verified
-		// signer must not satisfy a request routed to the selected key.
+		if err := VerifyModelResponse(r.request, r.response, sig, *r.session.selected); err != nil {
+			return verifiedResponse{}, err
+		}
 		attestations, e = FindModelAttestationsForSignature(r.session.models, sig)
 		if e != nil {
 			return verifiedResponse{}, e
 		}
+		attestation = r.session.selected
 	}
-	copy := *a
-	return verifiedResponse{id: id, signature: sig, attestation: &copy, attestations: attestations}, nil
+	return verifiedResponse{id: id, signature: sig, attestation: attestation, attestations: attestations}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.

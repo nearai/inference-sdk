@@ -94,26 +94,49 @@ type VerificationOptions struct {
 	DeploymentVerifier DeploymentVerifier
 }
 
-// VerifiedAttestation contains verified signer and deployment evidence.
-type VerifiedAttestation struct {
-	Report                *Attestation
-	Signer                SigningIdentity
-	TCBStatus             string
-	AdvisoryIDs           []string
-	Deployment            MeasuredDeployment
-	DeploymentProvenance  string
-	GPUEvidence           string
-	SigningPublicKey      string
-	SPKIFingerprint       string
+// VerifiedAttestationEvidence contains verified signer and deployment evidence.
+type VerifiedAttestationEvidence struct {
+	Signer               SigningIdentity
+	TCBStatus            string
+	AdvisoryIDs          []string
+	Deployment           MeasuredDeployment
+	DeploymentProvenance string
+}
+
+type VerifiedModelAttestation struct {
+	VerifiedAttestationEvidence
+	Report           *Attestation
+	GPUEvidence      string
+	SigningPublicKey string
+}
+
+type VerifiedGatewayAttestation struct {
+	VerifiedAttestationEvidence
+	Report          *Attestation
+	SPKIFingerprint string
+}
+
+type VerifiedDirectModelAttestation struct {
+	VerifiedModelAttestation
 	ModelName, InstanceID string
+	SPKIFingerprint       string
 }
 
 // AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
-	Gateway    *VerifiedAttestation
-	Models     []VerifiedAttestation
+	Gateway    *VerifiedGatewayAttestation
+	Models     []VerifiedModelAttestation
 	VerifiedAt time.Time
 }
+
+// VerifiedCompletionAttestation is Gateway evidence or a model representative.
+// Model receipts expose all matching reports in VerifiedCompletionResult.Attestations.
+type VerifiedCompletionAttestation interface {
+	verifiedCompletionAttestation()
+}
+
+func (*VerifiedGatewayAttestation) verifiedCompletionAttestation() {}
+func (*VerifiedModelAttestation) verifiedCompletionAttestation()   {}
 
 // VerifiedCompletionResult contains a response receipt verified by a Gateway client.
 type VerifiedCompletionResult struct {
@@ -125,10 +148,10 @@ type VerifiedCompletionResult struct {
 	// Attestation contains Gateway evidence for gateway receipts.
 	// For provider_tee it is the report used to select the model key;
 	// that singular model field is deprecated in favor of Attestations.
-	Attestation *VerifiedAttestation
+	Attestation VerifiedCompletionAttestation
 	// Attestations contains every matching verified model deployment for provider_tee
 	// receipts. It is empty for Gateway receipts.
-	Attestations []VerifiedAttestation
+	Attestations []VerifiedModelAttestation
 }
 
 // ClientOptions configures evidence retrieval.
@@ -175,8 +198,8 @@ type DirectInferenceOptions struct {
 	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
 }
 type VerifiedDirectModelAttestations struct {
-	ServingAttestation VerifiedAttestation
-	Attestations       []VerifiedAttestation
+	ServingAttestation VerifiedDirectModelAttestation
+	Attestations       []VerifiedDirectModelAttestation
 	SPKIFingerprints   []string
 }
 
@@ -194,5 +217,5 @@ type VerifiedDirectCompletionResult struct {
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	Attestations  []VerifiedAttestation
+	Attestations  []VerifiedDirectModelAttestation
 }

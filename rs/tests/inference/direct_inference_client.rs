@@ -149,3 +149,32 @@ async fn direct_rejects_invalid_nonserving_report_before_chat() {
     assert!(client.chat_completions(body()).await.is_err());
     assert_eq!(f.chat.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn direct_receipt_uses_only_the_selected_signer_group() {
+    for e2ee in [false, true] {
+        for wrong_signer in [false, true] {
+            let (_server, _, mut options) = setup(Fixture {
+                direct: true,
+                extra_model: true,
+                wrong_signer,
+                ..Default::default()
+            })
+            .await;
+            options.e2ee = e2ee;
+            let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
+            let verified = client.verify("vendor/model").await.unwrap();
+            assert_eq!(verified.attestations.len(), 3);
+            client.chat_completions(body()).await.unwrap();
+            let receipt = client.verify_response("chat-0").await;
+            if wrong_signer {
+                assert_eq!(receipt.unwrap_err().code(), "signature.signer_mismatch");
+            } else {
+                let attestations = receipt.unwrap().attestations;
+                assert_eq!(attestations.len(), 2);
+                assert_eq!(attestations[0].instance_id.as_deref(), Some("serving"));
+                assert_eq!(attestations[1].instance_id.as_deref(), Some("other"));
+            }
+        }
+    }
+}

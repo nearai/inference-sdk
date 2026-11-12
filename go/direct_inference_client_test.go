@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -16,11 +17,26 @@ import (
 	"github.com/cloudflare/circl/hpke"
 )
 
-func TestDirectOHTTPSelectsServingSigner(t *testing.T)           { testDirectRoute(t, true, false) }
-func TestDirectTLSSelectsServingSigner(t *testing.T)             { testDirectRoute(t, false, false) }
-func TestDirectDeploymentVerifierChecksEveryReport(t *testing.T) { testDirectRoute(t, false, true) }
-func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
-	a, qa, _ := attestationFixture(t, Ed25519)
+type directRouteCase struct {
+	ohttp, sharedSigner, e2ee, wrongSigner bool
+}
+
+func TestDirectReceiptRoute(t *testing.T) {
+	for _, e2ee := range []bool{false, true} {
+		for name, tc := range map[string]directRouteCase{
+			"selected signer":       {},
+			"other verified signer": {wrongSigner: true},
+			"shared signer":         {sharedSigner: true},
+			"OHTTP":                 {ohttp: true},
+		} {
+			tc.e2ee = e2ee
+			t.Run(fmt.Sprintf("%s/E2EE=%t", name, e2ee), func(t *testing.T) { testDirectRoute(t, tc) })
+		}
+	}
+}
+func testDirectRoute(t *testing.T, tc directRouteCase) {
+	ohttp, sharedSigner := tc.ohttp, tc.sharedSigner
+	a, qa, otherKey := attestationFixture(t, Ed25519)
 	b, qb, priv := attestationFixture(t, Ed25519)
 	a.InstanceID, b.InstanceID = "other", "serving"
 	if sharedSigner {
@@ -47,9 +63,13 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 			return
 		}
 		if r.URL.Path == "/v1/signature/chat" {
+			signingKey, signer := priv, b.Signer
+			if tc.wrongSigner {
+				signingKey, signer = otherKey, a.Signer
+			}
 			json.NewEncoder(w).Encode(map[string]any{
-				"text": text, "signature": hex.EncodeToString(ed25519.Sign(priv, []byte(text))),
-				"signing_algo": "ed25519", "signing_address": b.Signer.SigningAddress,
+				"text": text, "signature": hex.EncodeToString(ed25519.Sign(signingKey, []byte(text))),
+				"signing_algo": "ed25519", "signing_address": signer.SigningAddress,
 			})
 			return
 		}
@@ -109,7 +129,7 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	check := func(context.Context, MeasuredDeployment) error { calls++; return nil }
 	client, e := NewDirectInferenceClient(DirectInferenceOptions{
 		ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1", HTTPClient: server.Client()},
-		E2EE:              true,
+		E2EE:              tc.e2ee,
 		OHTTP:             ohttp,
 		ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote, DeploymentVerifier: check},
 	})
@@ -145,6 +165,10 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 		t.Fatal(err)
 	}
 	receipt, err := client.VerifyResponse(context.Background(), "chat")
+	if tc.wrongSigner {
+		requireCode(t, err, "signature.signer_mismatch")
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,10 +179,10 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	} else if len(receipt.Attestations) != 1 || receipt.Attestations[0].InstanceID != "serving" {
 		t.Fatal("receipt must only include reports matching the signer")
 	}
-	if len(session.models) != 2 || session.selected.Signer != b.Signer || !client.inferenceCore.options.E2EE {
+	if len(session.direct.Attestations) != 2 || session.selected.Signer != b.Signer || client.inferenceCore.options.E2EE != tc.e2ee {
 		t.Fatal("wrong routing or defaults")
 	}
-	if sharedSigner && session.selected.InstanceID != "other" {
+	if sharedSigner && session.selectedDirectAttestations[0].InstanceID != "other" {
 		t.Fatal("serving metadata must not change which key the original route selects")
 	}
 	cachedReceipt, err := client.VerifyResponse(context.Background(), "chat")
@@ -175,7 +199,8 @@ func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
 	response := []byte(`{"id":"chat"}`)
 	text := "canonical/model:" + hashText(request) + ":" + hashText(response)
 	sig := CompletionSignature{"provider_tee", text, hex.EncodeToString(ed25519.Sign(priv, []byte(text))), a.Signer}
-	items := []VerifiedAttestation{{Signer: a.Signer, InstanceID: "one"}, {Signer: a.Signer, InstanceID: "two"}}
+	base := VerifiedModelAttestation{VerifiedAttestationEvidence: VerifiedAttestationEvidence{Signer: a.Signer}}
+	items := []VerifiedDirectModelAttestation{{VerifiedModelAttestation: base, InstanceID: "one"}, {VerifiedModelAttestation: base, InstanceID: "two"}}
 	result, e := VerifyDirectModelResponse(request, response, sig, items)
 	if e != nil {
 		t.Fatal(e)
