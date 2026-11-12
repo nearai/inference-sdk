@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, call
+from unittest import mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -68,8 +69,10 @@ services:
     )
 
     assert fetch.await_args_list == [
-        call(POLICY.repository, DIGEST, 'github-token', github_api_url=github_api_url),
-        call(
+        mock.call(
+            POLICY.repository, DIGEST, 'github-token', github_api_url=github_api_url
+        ),
+        mock.call(
             worker_policy.repository,
             worker_digest,
             'github-token',
@@ -77,8 +80,8 @@ services:
         ),
     ]
     assert verify.await_args_list == [
-        call(['bundle'], DIGEST, POLICY),
-        call(['bundle'], worker_digest, worker_policy),
+        mock.call(['bundle'], DIGEST, POLICY),
+        mock.call(['bundle'], worker_digest, worker_policy),
     ]
 
 
