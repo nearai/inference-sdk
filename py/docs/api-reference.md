@@ -35,7 +35,7 @@ cleanup are synchronous.
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
 | `verify_direct_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestation` | Verifies one direct model report and its optional quote-bound fingerprint. |
 | `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding. |
-| `verify_direct_model_response` | `(request_body, response_body, signature, attestations)` | `tuple[VerifiedDirectModelAttestation, ...]` | Verifies exact bytes against all reports sharing the response signer. |
+| `verify_direct_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes against a verified Direct report. |
 | `prepare_e2ee_chat_request` | `(request, model_key)` | `PreparedE2eeChatRequest` | Encrypts supported Chat fields and returns the matching response decryptor. |
 | `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Creates an HTTPS client pinned to verified SPKI fingerprints. |
 | `verify_ohttp_key_config` | `(ohttp_attestation, signer)` | `bytes` | Authenticates the advertised OHTTP key configuration against a verified Ed25519 signer. |
@@ -275,7 +275,7 @@ the same policy/verifier options as `verify_model_attestation`.
 `verify_direct_model_attestations` accepts the fetched set and those options; a
 TLS-bound serving report requires an observed peer fingerprint.
 `verify_direct_model_response` accepts exact request and response bytes, the
-signature, and a sequence of verified direct reports.
+signature, and one verified Direct report.
 
 ## Standalone E2EE and pinned TLS
 

@@ -1,8 +1,10 @@
 mod support;
+#[allow(deprecated)]
+use nearai_inference_sdk::find_model_attestation_for_signature;
 use nearai_inference_sdk::{
-    find_model_attestation_for_signature, find_model_attestations_for_signature, ApiError,
-    ApiResource, AttestationClient, CompletionSignature, CompletionSignatureKind,
-    GatewayAttestationFetchOptions, SigningAlgo, SigningIdentity,
+    find_model_attestations_for_signature, ApiError, ApiResource, AttestationClient,
+    CompletionSignature, CompletionSignatureKind, GatewayAttestationFetchOptions, SigningAlgo,
+    SigningIdentity,
 };
 use serde_json::json;
 use std::sync::Once;
@@ -321,6 +323,7 @@ fn signature_for_evidence_selection(
 }
 
 #[test]
+#[allow(deprecated)]
 fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
     for (signing_algo, bytes) in [(SigningAlgo::Ed25519, 32), (SigningAlgo::Ecdsa, 20)] {
         let signature = signature_for_evidence_selection(
@@ -382,9 +385,9 @@ fn finds_a_signer_with_an_equivalent_hex_address() {
     });
     let candidates = [candidate];
 
-    let selected = find_model_attestation_for_signature(&candidates, &signature).unwrap();
+    let selected = find_model_attestations_for_signature(&candidates, &signature).unwrap();
 
-    assert_eq!(selected.evidence.signer.signing_address, "ab".repeat(20));
+    assert_eq!(selected[0].evidence.signer.signing_address, "ab".repeat(20));
 }
 
 #[test]
@@ -397,7 +400,7 @@ fn selection_rejects_a_non_provider_signature_as_api_input() {
         },
     );
 
-    let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
+    let error = find_model_attestations_for_signature(&[], &signature).unwrap_err();
 
     assert!(matches!(
         error,
@@ -423,7 +426,7 @@ fn selection_rejects_a_malformed_signer_as_api_input() {
         },
     );
 
-    let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
+    let error = find_model_attestations_for_signature(&[], &signature).unwrap_err();
 
     assert!(matches!(
         error,
@@ -451,7 +454,7 @@ fn selection_rejects_a_malformed_candidate_signer_as_api_input() {
         signing_address: "not hexadecimal".to_owned(),
     })];
 
-    let error = find_model_attestation_for_signature(&candidates, &signature).unwrap_err();
+    let error = find_model_attestations_for_signature(&candidates, &signature).unwrap_err();
 
     assert!(matches!(
         error,

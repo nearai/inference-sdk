@@ -531,7 +531,10 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		switch {
 		case direct:
 			var matching []nearai.VerifiedDirectModelAttestation
-			matching, err = nearai.VerifyDirectModelResponse(wireRequest, wire.Bytes(), sig, directAttestations)
+			matching, err = nearai.FindDirectModelAttestationsForSignature(directAttestations, sig)
+			if err == nil {
+				err = nearai.VerifyDirectModelResponse(wireRequest, wire.Bytes(), sig, matching[0])
+			}
 			matchingCount = len(matching)
 		case sig.Kind == "gateway":
 			err = nearai.VerifyGatewayResponse(wireRequest, wire.Bytes(), sig, gateway)

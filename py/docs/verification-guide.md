@@ -308,6 +308,7 @@ and `X-No-Aliasing: true`.
 from nearai_inference_sdk import (
     DirectAttestationClient,
     create_pinned_tls_client,
+    find_direct_model_attestations_for_signature,
     verify_direct_model_attestations,
     verify_direct_model_response,
 )
@@ -325,8 +326,11 @@ async with create_pinned_tls_client(verified.spki_fingerprints) as http:
     signature = await direct_client.fetch_completion_signature(
         response.json()['id'], signing_algo='ed25519'
     )
-matching = verify_direct_model_response(
-    chat_request.content, response.content, signature, verified.attestations
+matching_attestations = find_direct_model_attestations_for_signature(
+    verified.attestations, signature
+)
+verify_direct_model_response(
+    chat_request.content, response.content, signature, matching_attestations[0]
 )
 ```
 

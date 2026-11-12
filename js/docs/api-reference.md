@@ -35,7 +35,7 @@ the relevant `includeSpkiFingerprint` option to `false`.
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `verifyDirectModelAttestation` | `(params: VerifyDirectModelAttestationParams) => Promise<VerifiedDirectModelAttestation>` | Verifies one direct model attestation, including its quote-authenticated SPKI when present. |
 | `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and checks the serving attestation's observed TLS binding when SPKI evidence is supplied. |
-| `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => readonly VerifiedDirectModelAttestation[]` | Verifies exact completion bytes and returns the verified attestations sharing its model signer. |
+| `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => void` | Verifies exact completion bytes against a verified Direct report. |
 | `findDirectModelAttestationsForSignature` | `(params: FindDirectModelAttestationsForSignatureParams) => readonly VerifiedDirectModelAttestation[]` | Selects all verified Direct reports matching the signature signer; no match raises `VerificationError`. |
 | `findModelAttestationsForSignature` | `(params: FindModelAttestationsForSignatureParams) => readonly VerifiedModelAttestation[]` | Returns all verified reports matching a `provider_tee` signer. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Deprecated. Returns the first matching report. |
@@ -409,10 +409,12 @@ The Node client captures the attestation connection's TLS fingerprint by default
 |  | `clientBinding` | `ModelClientBinding` | Yes | Client nonce; this operation does not compare an observed TLS peer. |
 |  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
+| `FindDirectModelAttestationsForSignatureParams` | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Yes | Verified Direct reports to select from. |
+|  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer. |
 | `VerifyDirectModelResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact request bytes sent. |
 |  | `responseBody` | `Uint8Array` | Yes | Exact response bytes received, before E2EE decryption if applicable. |
 |  | `signature` | `CompletionSignature` | Yes | Direct model signature with `kind: 'provider_tee'`. |
-|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Yes | All verified reports returned by the endpoint. |
+|  | `attestation` | `VerifiedDirectModelAttestation` | Yes | Verified Direct report whose signer must match the signature. |
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |

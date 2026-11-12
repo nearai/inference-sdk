@@ -112,15 +112,15 @@ func TestFindModelAttestationsForSignature(t *testing.T) {
 				t.Fatalf("single match: %v", err)
 			}
 			_, err = FindModelAttestationsForSignature(nil, sig)
-			requireCode(t, err, "api.model_attestation_not_found")
+			requireCode(t, err, "api.model_attestation_signer_not_found")
 			for _, tc := range []struct {
 				name string
 				sig  CompletionSignature
 				code string
 			}{
 				{"wrong kind", CompletionSignature{Kind: "gateway", Signer: signer}, "api.invalid_input"},
-				{"missing signer", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ef", length)}}, "api.model_attestation_not_found"},
-				{"wrong algorithm", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: otherAlgo, SigningAddress: signer.SigningAddress}}, "api.model_attestation_not_found"},
+				{"missing signer", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ef", length)}}, "api.model_attestation_signer_not_found"},
+				{"wrong algorithm", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: otherAlgo, SigningAddress: signer.SigningAddress}}, "api.model_attestation_signer_not_found"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					_, err := FindModelAttestationForSignature(items, tc.sig)

@@ -126,8 +126,8 @@ See the [native image example](../../examples/example-rs/src/gateway/systemone.r
   to pin signature requests.
 - `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
   `verify_direct_model_response` validate individual reports, complete report
-  sets, and exact completion bytes respectively. The response verifier returns
-  every verified report sharing the signature's signer.
+  sets, and exact completion bytes respectively. Select matching reports with
+  `find_direct_model_attestations_for_signature` and pass one report to the response verifier.
 
 See the [Direct client guide](./verification-guide.md#experimental-direct-endpoints)
 for usage. Direct clients are experimental and use attested TLS by default.
@@ -198,7 +198,7 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 | --- | --- | --- | --- |
 | `find_direct_model_attestations_for_signature` | `attestations: &[VerifiedDirectModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedDirectModelAttestation>, VerificationError>` | Selects all verified Direct reports matching the signature signer, or an error when none match. |
 | `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Selects all verified reports sharing the model receipt's signer. |
-| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
+| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Deprecated. Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
 
 ### Cloud fetch results
 
@@ -235,10 +235,11 @@ observed by the matching fetch request.
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
+| `verify_direct_model_response` | `request: &[u8]`, `response: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedDirectModelAttestation` | `()` | Verifies exact bytes against a verified Direct report. |
 | `verify_model_response` | `request_body: &[u8]`, `response_body: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedModelAttestation` | `()` | Verifies a `ProviderTee` completion signature for exact bytes and matches its signer to verified model evidence. |
 | `verify_gateway_response` | `request_body: &[u8]`, `response_body: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedGatewayAttestation` | `()` | Verifies a `Gateway` completion signature for exact bytes and matches its signer to verified Gateway evidence. |
 
-Both functions return `Result<(), VerificationError>`. Use the verifier matching
+These functions return `Result<(), VerificationError>`. Use the verifier matching
 the receipt kind, with the preverified attestation and exact request/response bytes.
 
 For model receipts, `find_model_attestations_for_signature` selects all verified

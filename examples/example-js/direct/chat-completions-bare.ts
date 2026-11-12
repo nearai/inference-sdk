@@ -3,6 +3,7 @@ import type { SigningAlgo } from '@nearai/inference-sdk/node';
 import {
   createPinnedTlsFetch,
   DirectAttestationClient,
+  findDirectModelAttestationsForSignature,
   NO_ALIASING_HEADER,
   type VerifiedDirectModelAttestation,
   verifyDirectModelAttestations,
@@ -127,15 +128,19 @@ async function verifyResponse({
     completionId,
     signingAlgo: SIGNING_ALGO,
   });
-  const matching = verifyDirectModelResponse({
+  const matchingAttestations = findDirectModelAttestationsForSignature({
+    attestations,
+    signature,
+  });
+  verifyDirectModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestations,
+    attestation: matchingAttestations[0],
   });
   // Keep every verified attestation matching the response signer.
   console.log(
-    `Verified model response against ${matching.length} matching attestations.`,
+    `Verified model response against ${matchingAttestations.length} matching attestations.`,
   );
 }
 

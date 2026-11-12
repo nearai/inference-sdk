@@ -350,16 +350,14 @@ pub fn find_direct_model_attestations_for_signature<'a>(
     Ok(matching)
 }
 
-/// Verify exact completion bytes and return all matching verified Direct reports.
+/// Verify exact completion bytes against a verified Direct report.
 pub fn verify_direct_model_response(
     request: &[u8],
     response: &[u8],
     signature: &CompletionSignature,
-    attestations: &[VerifiedDirectModelAttestation],
-) -> Result<Vec<VerifiedDirectModelAttestation>, VerificationError> {
-    let matching = find_direct_model_attestations_for_signature(attestations, signature)?;
-    verify_model_response(request, response, signature, &matching[0].attestation)?;
-    Ok(matching.into_iter().cloned().collect())
+    attestation: &VerifiedDirectModelAttestation,
+) -> Result<(), VerificationError> {
+    verify_model_response(request, response, signature, &attestation.attestation)
 }
 #[derive(Clone)]
 pub struct DirectInferenceClientOptions {
