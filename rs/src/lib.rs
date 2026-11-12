@@ -62,11 +62,11 @@ mod inference_core;
 mod ohttp;
 mod sse;
 pub use direct::{
-    verify_direct_model_attestation, verify_direct_model_attestations,
-    verify_direct_model_response, DirectAttestationClient, DirectAttestationFetchOptions,
-    DirectAttestationVerificationResult, DirectClientBinding, DirectInferenceClient,
-    DirectInferenceClientOptions, DirectModelAttestation, FetchedDirectModelAttestations,
-    VerifiedDirectCompletionResult, VerifiedDirectModelAttestation,
+    find_direct_model_attestations_for_signature, verify_direct_model_attestation,
+    verify_direct_model_attestations, verify_direct_model_response, DirectAttestationClient,
+    DirectAttestationFetchOptions, DirectAttestationVerificationResult, DirectClientBinding,
+    DirectInferenceClient, DirectInferenceClientOptions, DirectModelAttestation,
+    FetchedDirectModelAttestations, VerifiedDirectCompletionResult, VerifiedDirectModelAttestation,
 };
 pub use inference::{
     AttestationVerificationResult, GatewayVerificationOptions, InferenceClient,
