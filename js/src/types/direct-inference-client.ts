@@ -47,7 +47,7 @@ export type VerifyDirectModelResponseParams = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
-  readonly attestations: readonly VerifiedDirectModelAttestation[];
+  readonly attestation: VerifiedDirectModelAttestation;
 };
 
 /** All verified direct reports and endpoint TLS binding, shared by verify() and Chat. */
