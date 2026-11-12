@@ -8,7 +8,7 @@ for signatures, options, and result fields.
 
 ## Install
 
-Requires Go 1.26.10 or later. In your Go module:
+Requires Go 1.27.0 or later. In your Go module:
 
 ```sh
 go get github.com/nearai/inference-sdk/go@v0.1.0
