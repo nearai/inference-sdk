@@ -379,8 +379,9 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 	var signatures interface {
 		FetchCompletionSignature(context.Context, string, nearai.SigningAlgo) (nearai.CompletionSignature, error)
 	}
-	var gateway nearai.VerifiedAttestation
-	var modelAttestations []nearai.VerifiedAttestation
+	var gateway nearai.VerifiedGatewayAttestation
+	var modelAttestations []nearai.VerifiedModelAttestation
+	var directAttestations []nearai.VerifiedDirectModelAttestation
 	transport := http.DefaultTransport.(*http.Transport)
 	if direct {
 		api, err := nearai.NewDirectAttestationClient(opts)
@@ -395,7 +396,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		if err != nil {
 			return err
 		}
-		modelAttestations = verified.Attestations
+		directAttestations = verified.Attestations
 		pinned, err := nearai.NewPinnedTransport(transport, verified.SPKIFingerprints...)
 		if err != nil {
 			return err
@@ -408,7 +409,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			return err
 		}
 		signatures = api
-		fmt.Printf("Verified %d model reports.\n", len(modelAttestations))
+		fmt.Printf("Verified %d model reports.\n", len(directAttestations))
 	} else {
 		api, err := nearai.NewAttestationClient(opts)
 		if err != nil {
@@ -454,7 +455,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		}
 		fmt.Printf("Verified %d model attestations.\n", len(modelAttestations))
 	}
-	var selectedModelAttestation *nearai.VerifiedAttestation
+	var selectedModelAttestation *nearai.VerifiedModelAttestation
 	if !direct {
 		for i := range modelAttestations {
 			if modelAttestations[i].Signer.SigningAlgo == c.Algo && modelAttestations[i].SigningPublicKey != "" {
@@ -526,23 +527,27 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		if err != nil {
 			return err
 		}
-		var matching []nearai.VerifiedAttestation
+		var matchingCount int
 		switch {
 		case direct:
-			matching, err = nearai.VerifyDirectModelResponse(wireRequest, wire.Bytes(), sig, modelAttestations)
+			var matching []nearai.VerifiedDirectModelAttestation
+			matching, err = nearai.VerifyDirectModelResponse(wireRequest, wire.Bytes(), sig, directAttestations)
+			matchingCount = len(matching)
 		case sig.Kind == "gateway":
 			err = nearai.VerifyGatewayResponse(wireRequest, wire.Bytes(), sig, gateway)
 		default:
 			err = nearai.VerifyModelResponse(wireRequest, wire.Bytes(), sig, *selectedModelAttestation)
 			if err == nil {
+				var matching []nearai.VerifiedModelAttestation
 				matching, err = nearai.FindModelAttestationsForSignature(modelAttestations, sig)
+				matchingCount = len(matching)
 			}
 		}
 		if err != nil {
 			return err
 		}
 		if sig.Kind == "provider_tee" {
-			fmt.Printf("Verified model response signature (%d matching reports).\n", len(matching))
+			fmt.Printf("Verified model response signature (%d matching reports).\n", matchingCount)
 		} else {
 			fmt.Println("Verified Gateway response signature.")
 		}

@@ -92,19 +92,19 @@ func TestFindModelAttestationsForSignature(t *testing.T) {
 				length, otherAlgo = 20, Ed25519
 			}
 			signer := SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("ab", length)}
-			items := []VerifiedAttestation{
-				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("cd", length)}, InstanceID: "other-key"},
-				{Signer: signer, InstanceID: "first", AdvisoryIDs: []string{"original"}, Deployment: MeasuredDeployment{AppCompose: "first-compose"}},
-				{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: "0X" + strings.Repeat("AB", length)}, InstanceID: "second", Deployment: MeasuredDeployment{AppCompose: "second-compose"}},
+			items := []VerifiedModelAttestation{
+				{VerifiedAttestationEvidence: VerifiedAttestationEvidence{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: strings.Repeat("cd", length)}}},
+				{VerifiedAttestationEvidence: VerifiedAttestationEvidence{Signer: signer, Deployment: MeasuredDeployment{AppCompose: "first-compose"}}},
+				{VerifiedAttestationEvidence: VerifiedAttestationEvidence{Signer: SigningIdentity{SigningAlgo: algo, SigningAddress: "0X" + strings.Repeat("AB", length)}, Deployment: MeasuredDeployment{AppCompose: "second-compose"}}},
 			}
 			items = append(items, items[2])
 			sig := CompletionSignature{Kind: "provider_tee", Signer: signer}
 			matchingAttestations, err := FindModelAttestationsForSignature(items, sig)
-			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].InstanceID != "first" || matchingAttestations[1].InstanceID != "second" || matchingAttestations[2].InstanceID != "second" {
+			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].Deployment.AppCompose != "first-compose" || matchingAttestations[1].Deployment.AppCompose != "second-compose" || matchingAttestations[2].Deployment.AppCompose != "second-compose" {
 				t.Fatalf("shared-signer reports and duplicates: %#v %v", matchingAttestations, err)
 			}
 			first, err := FindModelAttestationForSignature(items, sig)
-			if err != nil || first.InstanceID != "first" {
+			if err != nil || first.Deployment.AppCompose != "first-compose" {
 				t.Fatalf("first matching report: %#v %v", first, err)
 			}
 			one, err := FindModelAttestationsForSignature(items[1:2], sig)
