@@ -328,12 +328,11 @@ pub async fn verify_direct_model_attestations(
         verified_at: verified_at(),
     })
 }
-pub fn verify_direct_model_response(
-    request: &[u8],
-    response: &[u8],
+/// Select all verified Direct reports matching the signature's signer.
+pub fn find_direct_model_attestations_for_signature<'a>(
+    attestations: &'a [VerifiedDirectModelAttestation],
     signature: &CompletionSignature,
-    attestations: &[VerifiedDirectModelAttestation],
-) -> Result<Vec<VerifiedDirectModelAttestation>, VerificationError> {
+) -> Result<Vec<&'a VerifiedDirectModelAttestation>, VerificationError> {
     if signature.kind != CompletionSignatureKind::ProviderTee {
         return Err(VerificationError::SignatureKindMismatch {
             expected: CompletionSignatureKind::ProviderTee,
@@ -342,18 +341,24 @@ pub fn verify_direct_model_response(
     }
     let matching: Vec<_> = attestations
         .iter()
-        .filter(|a| {
-            a.attestation.evidence.signer.signing_algo == signature.signer.signing_algo
-                && decode_hex(&a.attestation.evidence.signer.signing_address).ok()
-                    == decode_hex(&signature.signer.signing_address).ok()
-        })
-        .cloned()
+        .filter(|a| same_signer(&a.attestation.evidence.signer, &signature.signer))
         .collect();
-    let first = matching
-        .first()
-        .ok_or(VerificationError::SignatureSignerMismatch)?;
-    verify_model_response(request, response, signature, &first.attestation)?;
+    if matching.is_empty() {
+        return Err(VerificationError::SignatureSignerMismatch);
+    }
     Ok(matching)
+}
+
+/// Verify exact completion bytes and return all matching verified Direct reports.
+pub fn verify_direct_model_response(
+    request: &[u8],
+    response: &[u8],
+    signature: &CompletionSignature,
+    attestations: &[VerifiedDirectModelAttestation],
+) -> Result<Vec<VerifiedDirectModelAttestation>, VerificationError> {
+    let matching = find_direct_model_attestations_for_signature(attestations, signature)?;
+    verify_model_response(request, response, signature, &matching[0].attestation)?;
+    Ok(matching.into_iter().cloned().collect())
 }
 #[derive(Clone)]
 pub struct DirectInferenceClientOptions {

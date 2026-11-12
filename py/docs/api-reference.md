@@ -49,6 +49,7 @@ cleanup are synchronous.
 | `client.fetch_model_metadata` | `(model)` | `ModelMetadata` | Reads catalog capabilities, without cryptographic verification. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
+| `find_direct_model_attestations_for_signature` | `(attestations, signature)` | `tuple[VerifiedDirectModelAttestation, ...]` | Selects all verified Direct reports matching the signature signer; no match raises `VerificationError`. |
 | `find_model_attestations_for_signature` | `(attestations, signature)` | `tuple[VerifiedModelAttestation, ...]` | Selects every preverified report matching a `provider_tee` signer. |
 | `find_model_attestation_for_signature` | `(attestations, signature)` | `VerifiedModelAttestation` | Deprecated. Returns the first matching report. |
 | `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies target-model deployment evidence. |

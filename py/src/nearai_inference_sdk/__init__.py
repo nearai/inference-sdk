@@ -18,6 +18,7 @@ from .core.compose_manager_provenance import (
 from .core.direct_api import DirectAttestationClient
 from .core.direct_inference_client import (
     DirectInferenceClient,
+    find_direct_model_attestations_for_signature,
     verify_direct_model_response,
 )
 from .core.e2ee_request import prepare_e2ee_chat_request
@@ -194,6 +195,7 @@ __all__ = [
     'create_pinned_tls_client',
     'create_tdx_quote_verifier',
     'fetch_image_provenance',
+    'find_direct_model_attestations_for_signature',
     'find_model_attestation_for_signature',
     'find_model_attestations_for_signature',
     'get_sdk_error',
