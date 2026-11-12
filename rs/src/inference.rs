@@ -455,6 +455,7 @@ pub(crate) async fn create_session(
         models: model_attestations,
         selected: selected_model_attestation,
         direct: None,
+        selected_direct_attestations: Vec::new(),
         verified_at: verified_at(),
         client,
         api: EvidenceApi::Gateway(api),

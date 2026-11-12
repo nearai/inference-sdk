@@ -33,7 +33,7 @@ func TestSystemOne(t *testing.T) {
 			if err = retry(ctx, func() error { var e error; receipt, e = client.VerifyResponse(ctx, result.DecisionID); return e }); err != nil {
 				t.Fatal(err)
 			}
-			if receipt.ID != result.DecisionID || receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != algo || receipt.Attestation == nil || receipt.Attestation.SPKIFingerprint == "" {
+			if receipt.ID != result.DecisionID || receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != algo || receipt.Attestation == nil || receipt.Attestation.(*nearai.VerifiedGatewayAttestation).SPKIFingerprint == "" {
 				t.Fatal("expected TLS-bound Gateway receipt")
 			}
 			team := result.Data.Answers["team"].Choice

@@ -194,7 +194,11 @@ impl Respond for Fixture {
                         other["report_data"] = json!("ff".repeat(64));
                     }
                     let mut value = root.clone();
-                    value["all_attestations"] = json!([root, other]);
+                    value["all_attestations"] = if self.extra_model {
+                        json!([root, self.report(nonce, 8), other])
+                    } else {
+                        json!([root, other])
+                    };
                     return ResponseTemplate::new(200).set_body_json(self.with_ohttp(value));
                 }
                 assert_eq!(q["include_tls_fingerprint"], "false");
@@ -242,7 +246,11 @@ impl Respond for Fixture {
                 assert_eq!(r.headers.get("accept-encoding").unwrap(), "identity");
                 assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
                 if self.metadata.lock().unwrap().is_none() {
-                    let seed = if self.extra_model { 8 } else { 7 };
+                    let seed = if self.extra_model && !self.direct {
+                        8
+                    } else {
+                        7
+                    };
                     let public = if self.ecdsa {
                         encryption::ecdsa_identity(seed).1
                     } else {
@@ -1203,6 +1211,35 @@ async fn zero_response_ttl_disables_retention() {
         "api.completion_not_found"
     );
 }
+#[tokio::test]
+async fn direct_receipt_uses_only_the_selected_signer_group() {
+    for e2ee in [false, true] {
+        for wrong_signer in [false, true] {
+            let (_server, _, mut options) = setup(Fixture {
+                direct: true,
+                extra_model: true,
+                wrong_signer,
+                ..Default::default()
+            })
+            .await;
+            options.e2ee = e2ee;
+            let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
+            let verified = client.verify("vendor/model").await.unwrap();
+            assert_eq!(verified.attestations.len(), 3);
+            client.chat_completions(body()).await.unwrap();
+            let receipt = client.verify_response("chat-0").await;
+            if wrong_signer {
+                assert_eq!(receipt.unwrap_err().code(), "signature.signer_mismatch");
+            } else {
+                let attestations = receipt.unwrap().attestations;
+                assert_eq!(attestations.len(), 2);
+                assert_eq!(attestations[0].instance_id.as_deref(), Some("serving"));
+                assert_eq!(attestations[1].instance_id.as_deref(), Some("other"));
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
     let (_server, f, options) = setup(Fixture {

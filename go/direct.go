@@ -37,15 +37,20 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 
 // VerifyDirectModelResponse returns all verified reports with the response's
 // signer. Shared signing keys cannot identify the individual serving instance.
-func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) ([]VerifiedAttestation, error) {
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedDirectModelAttestation) ([]VerifiedDirectModelAttestation, error) {
 	if sig.Kind != "provider_tee" {
 		return nil, failure("signature.kind_mismatch", nil)
 	}
-	matches, err := FindModelAttestationsForSignature(attestations, sig)
-	if err != nil {
+	var matches []VerifiedDirectModelAttestation
+	for _, attestation := range attestations {
+		if attestation.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(attestation.Signer.SigningAddress, sig.Signer.SigningAddress) {
+			matches = append(matches, attestation)
+		}
+	}
+	if len(matches) == 0 {
 		return nil, failure("signature.signer_mismatch", nil)
 	}
-	if err := VerifyModelResponse(request, response, sig, matches[0]); err != nil {
+	if err := VerifyModelResponse(request, response, sig, matches[0].VerifiedModelAttestation); err != nil {
 		return nil, err
 	}
 	return matches, nil

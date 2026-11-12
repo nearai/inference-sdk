@@ -668,7 +668,7 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 	if len(before.Models) != 3 || len(deployments) != 3 || deployments[0] == deployments[2] || before.Models[0].Signer == before.Models[1].Signer {
 		t.Fatalf("expected three verified reports with two keys and distinct deployments: %#v %v", before.Models, deployments)
 	}
-	expected := []VerifiedAttestation{before.Models[0], before.Models[2]}
+	expected := []VerifiedModelAttestation{before.Models[0], before.Models[2]}
 	if _, err = client.CreateChatCompletion(ctx, chatRequest()); err != nil {
 		t.Fatal(err)
 	}
@@ -688,10 +688,10 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Attestations) != 2 || first.Attestations[0].InstanceID != "instance-0" || first.Attestations[1].InstanceID != "instance-1" || first.Attestation == nil {
+	if len(first.Attestations) != 2 || first.Attestation == nil {
 		t.Fatalf("response lost shared-signer reports: %#v", first)
 	}
-	if !reflect.DeepEqual(first.Attestations, expected) || !reflect.DeepEqual(*first.Attestation, before.Models[0]) {
+	if !reflect.DeepEqual(first.Attestations, expected) || !reflect.DeepEqual(first.Attestation, &before.Models[0]) {
 		t.Fatal("response did not retain the preflight evidence and compatibility representative")
 	}
 	cached, err := client.VerifyResponse(ctx, "chat-1")
@@ -702,7 +702,7 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cached.Attestations, expected) || !reflect.DeepEqual(after.Models, refreshed.Models) || !reflect.DeepEqual(*cached.Attestation, before.Models[0]) {
+	if !reflect.DeepEqual(cached.Attestations, expected) || !reflect.DeepEqual(after.Models, refreshed.Models) || !reflect.DeepEqual(cached.Attestation, &before.Models[0]) {
 		t.Fatal("cached receipts must retain their original preflight evidence")
 	}
 	if f.attestations.Load() != 4 || f.signatureCalls.Load() != 1 || len(deployments) != 6 {
@@ -979,7 +979,7 @@ func TestSuccessfulE2EEInference(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if !reflect.DeepEqual(receipt.Attestations, []VerifiedAttestation{preflight.Models[0], preflight.Models[2]}) {
+			if !reflect.DeepEqual(receipt.Attestations, []VerifiedModelAttestation{preflight.Models[0], preflight.Models[2]}) {
 				t.Fatal("E2EE response did not retain every report for the selected signer")
 			}
 		})
