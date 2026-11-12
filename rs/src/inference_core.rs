@@ -116,6 +116,7 @@ pub(crate) struct Session {
     pub models: Vec<VerifiedModelAttestation>,
     pub selected: Option<VerifiedModelAttestation>,
     pub direct: Option<crate::direct::DirectAttestationVerificationResult>,
+    pub selected_direct_attestations: Vec<VerifiedDirectModelAttestation>,
     pub verified_at: u64,
     pub client: reqwest::Client,
     pub api: EvidenceApi,
@@ -577,6 +578,19 @@ impl InferenceCore {
                             }
                             .into());
                         }
+                        if session.direct.is_some() {
+                            let attestations = verify_direct_model_response(
+                                &request,
+                                &response,
+                                &signature,
+                                &session.selected_direct_attestations,
+                            )?;
+                            return Ok(VerifiedReceipt::Direct(VerifiedDirectCompletionResult {
+                                id,
+                                signature,
+                                attestations,
+                            }));
+                        }
                         let mut attestations = Vec::new();
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {
@@ -602,40 +616,19 @@ impl InferenceCore {
                                     &signature,
                                     selected_model_attestation,
                                 )?;
-                                if let Some(direct) = &session.direct {
-                                    let matching_attestations = direct
-                                        .attestations
-                                        .iter()
-                                        .filter(|a| {
-                                            crate::direct::same_signer(
-                                                &a.attestation.evidence.signer,
-                                                &selected_model_attestation.evidence.signer,
-                                            )
-                                        })
-                                        .cloned()
-                                        .collect();
-                                    return Ok(VerifiedReceipt::Direct(
-                                        VerifiedDirectCompletionResult {
-                                            id,
-                                            signature,
-                                            attestations: matching_attestations,
-                                        },
-                                    ));
-                                } else {
-                                    attestations = crate::find_model_attestations_for_signature(
-                                        &session.models,
-                                        &signature,
-                                    )?
-                                    .into_iter()
-                                    .cloned()
-                                    .collect();
-                                    // Preserve the deprecated representative for existing callers.
-                                    #[allow(deprecated)]
-                                    let representative = VerifiedCompletionAttestation::Model(
-                                        selected_model_attestation.clone(),
-                                    );
-                                    representative
-                                }
+                                attestations = crate::find_model_attestations_for_signature(
+                                    &session.models,
+                                    &signature,
+                                )?
+                                .into_iter()
+                                .cloned()
+                                .collect();
+                                // Preserve the deprecated representative for existing callers.
+                                #[allow(deprecated)]
+                                let representative = VerifiedCompletionAttestation::Model(
+                                    selected_model_attestation.clone(),
+                                );
+                                representative
                             }
                         };
                         Ok(VerifiedReceipt::Gateway(Box::new(
@@ -744,6 +737,7 @@ mod cache_tests {
             models: Vec::new(),
             selected: None,
             direct: None,
+            selected_direct_attestations: Vec::new(),
             verified_at: 0,
             client: reqwest::Client::new(),
             api: EvidenceApi::Gateway(AttestationClient::new(None)),

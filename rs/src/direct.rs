@@ -518,10 +518,14 @@ pub(crate) async fn create_session(
         })
         .cloned()
         .ok_or_else(|| protocol("e2ee.model_public_key_required", "no matching model key"))?;
-    let pins: Vec<_> = verified
+    let selected_direct_attestations: Vec<_> = verified
         .attestations
         .iter()
         .filter(|a| same_signer(&a.attestation.evidence.signer, &selected.evidence.signer))
+        .cloned()
+        .collect();
+    let pins: Vec<_> = selected_direct_attestations
+        .iter()
         .filter_map(|a| a.spki_fingerprint.clone())
         .collect();
     let client = if tls_bound {
@@ -548,11 +552,8 @@ pub(crate) async fn create_session(
     };
     Ok(Arc::new(Session {
         gateway: None,
-        models: verified
-            .attestations
-            .iter()
-            .map(|a| a.attestation.clone())
-            .collect(),
+        models: Vec::new(),
+        selected_direct_attestations,
         selected: Some(selected),
         verified_at: verified.verified_at,
         direct: Some(verified),
