@@ -6,7 +6,7 @@ from time import time
 import httpx
 
 from ..types.attestation_common import SigningAlgo
-from ..types.chat import CompletionSignature
+from ..types.chat import CompletionSignature, CompletionSignatureReference
 from ..types.direct import (
     DirectAttestationVerificationResult,
     VerifiedDirectCompletionResult,
@@ -178,13 +178,11 @@ class DirectInferenceClient(
         )
 
 
-def verify_direct_model_response(
-    request_body: bytes,
-    response_body: bytes,
-    signature: CompletionSignature,
+def find_direct_model_attestations_for_signature(
     attestations: Sequence[VerifiedDirectModelAttestation],
+    signature: CompletionSignatureReference,
 ) -> tuple[VerifiedDirectModelAttestation, ...]:
-    """Verify exact response bytes and return every verified report sharing its signer."""
+    """Select all verified Direct reports matching the signature's signer."""
 
     if signature.kind != 'provider_tee':
         raise verification_failure(
@@ -202,5 +200,16 @@ def verify_direct_model_response(
     )
     if not matching:
         raise verification_failure('signature.signer_mismatch')
+    return matching
+
+
+def verify_direct_model_response(
+    request_body: bytes,
+    response_body: bytes,
+    signature: CompletionSignature,
+    attestations: Sequence[VerifiedDirectModelAttestation],
+) -> tuple[VerifiedDirectModelAttestation, ...]:
+    """Verify exact response bytes and return all matching verified Direct reports."""
+    matching = find_direct_model_attestations_for_signature(attestations, signature)
     verify_model_response(request_body, response_body, signature, matching[0])
     return matching

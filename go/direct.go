@@ -35,9 +35,9 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 	return out, nil
 }
 
-// VerifyDirectModelResponse verifies the response signature and returns all
-// verified reports sharing its signer.
-func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedDirectModelAttestation) ([]VerifiedDirectModelAttestation, error) {
+// FindDirectModelAttestationsForSignature selects all verified Direct reports
+// matching the signature's signer.
+func FindDirectModelAttestationsForSignature(attestations []VerifiedDirectModelAttestation, sig CompletionSignature) ([]VerifiedDirectModelAttestation, error) {
 	if sig.Kind != "provider_tee" {
 		return nil, failure("signature.kind_mismatch", nil)
 	}
@@ -49,6 +49,16 @@ func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature
 	}
 	if len(matches) == 0 {
 		return nil, failure("signature.signer_mismatch", nil)
+	}
+	return matches, nil
+}
+
+// VerifyDirectModelResponse verifies exact completion bytes and returns all
+// matching verified Direct reports.
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedDirectModelAttestation) ([]VerifiedDirectModelAttestation, error) {
+	matches, err := FindDirectModelAttestationsForSignature(attestations, sig)
+	if err != nil {
+		return nil, err
 	}
 	if err := VerifyModelResponse(request, response, sig, matches[0].VerifiedModelAttestation); err != nil {
 		return nil, err

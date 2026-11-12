@@ -133,6 +133,7 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedModelAttestation) error
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedGatewayAttestation) error
 func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedDirectModelAttestation) ([]VerifiedDirectModelAttestation, error)
+func FindDirectModelAttestationsForSignature(attestations []VerifiedDirectModelAttestation, sig CompletionSignature) ([]VerifiedDirectModelAttestation, error)
 func FindModelAttestationsForSignature(items []VerifiedModelAttestation, sig CompletionSignature) ([]VerifiedModelAttestation, error)
 // Deprecated: use FindModelAttestationsForSignature for shared signers.
 func FindModelAttestationForSignature(items []VerifiedModelAttestation, sig CompletionSignature) (VerifiedModelAttestation, error)

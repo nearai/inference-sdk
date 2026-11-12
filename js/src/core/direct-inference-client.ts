@@ -4,6 +4,7 @@ import type {
   NodeDirectInferenceClientOptions,
   VerifiedDirectCompletionResult,
   DirectAttestationVerificationResult,
+  FindDirectModelAttestationsForSignatureParams,
   VerifyDirectModelResponseParams,
 } from '../types/direct-inference-client';
 import type {
@@ -155,16 +156,11 @@ export class DirectInferenceClient extends DirectInferenceClientBase {
   }
 }
 
-/**
- * Verify the exact completion bytes and return the verified attestations sharing
- * its signer.
- */
-export function verifyDirectModelResponse({
-  requestBody,
-  responseBody,
-  signature,
+/** Select all verified Direct reports matching the signature's signer. */
+export function findDirectModelAttestationsForSignature({
   attestations,
-}: VerifyDirectModelResponseParams): readonly VerifiedDirectModelAttestation[] {
+  signature,
+}: FindDirectModelAttestationsForSignatureParams): readonly VerifiedDirectModelAttestation[] {
   if (signature.kind !== 'provider_tee') {
     throw new VerificationError({
       code: 'signature.kind_mismatch',
@@ -180,10 +176,24 @@ export function verifyDirectModelResponse({
       candidate.signer.signingAlgo === signature.signer.signingAlgo &&
       hexToBuffer(candidate.signer.signingAddress).equals(signer),
   );
-  const attestation = matching[0];
-  if (attestation === undefined) {
+  if (matching.length === 0) {
     throw new VerificationError({ code: 'signature.signer_mismatch' });
   }
+  return matching;
+}
+
+/** Verify exact completion bytes and return all matching verified Direct reports. */
+export function verifyDirectModelResponse({
+  requestBody,
+  responseBody,
+  signature,
+  attestations,
+}: VerifyDirectModelResponseParams): readonly VerifiedDirectModelAttestation[] {
+  const matching = findDirectModelAttestationsForSignature({
+    attestations,
+    signature,
+  });
+  const attestation = matching[0];
   verifyModelResponse({ requestBody, responseBody, signature, attestation });
   return matching;
 }
