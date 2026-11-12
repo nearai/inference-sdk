@@ -187,7 +187,7 @@ func retry(ctx context.Context, check func() error) error {
 	}
 	return nil
 }
-func assertEvidence(t *testing.T, m liveModel, reports []nearai.VerifiedAttestation) {
+func assertEvidence(t *testing.T, m liveModel, reports []nearai.VerifiedModelAttestation) {
 	t.Helper()
 	if m.Provider != "near" {
 		if len(reports) != 0 {
@@ -258,7 +258,7 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				t.Fatal(err)
 			}
 
-			var reports []nearai.VerifiedAttestation
+			var reports []nearai.VerifiedModelAttestation
 			if m.Provider == "near" {
 				fetched, err := api.FetchModelAttestations(ctx, m.ID, nearai.FetchOptions{SigningAlgo: algo})
 				if err != nil {
@@ -273,7 +273,7 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				}
 			}
 			assertEvidence(t, m, reports)
-			var selected *nearai.VerifiedAttestation
+			var selected *nearai.VerifiedModelAttestation
 			for i := range reports {
 				if reports[i].Signer.SigningAlgo == algo && reports[i].SigningPublicKey != "" {
 					selected = &reports[i]
@@ -315,7 +315,7 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 						t.Fatal("expected a verified model key")
 					}
 					matches, err := nearai.FindModelAttestationsForSignature(reports, sig)
-					var expected []nearai.VerifiedAttestation
+					var expected []nearai.VerifiedModelAttestation
 					for _, report := range reports {
 						if sameSigner(report.Signer, selected.Signer) {
 							expected = append(expected, report)
@@ -408,7 +408,7 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 				}
 				assertEvidence(t, m, verified.Models)
 				if receipt.SignatureKind == "provider_tee" {
-					var selected *nearai.VerifiedAttestation
+					var selected *nearai.VerifiedModelAttestation
 					for i := range verified.Models {
 						if verified.Models[i].Signer.SigningAlgo == algo && verified.Models[i].SigningPublicKey != "" {
 							selected = &verified.Models[i]
@@ -418,7 +418,7 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 					if selected == nil || !sameSigner(receipt.Signature.Signer, selected.Signer) {
 						t.Fatal("receipt did not use the selected model key")
 					}
-					var expected []nearai.VerifiedAttestation
+					var expected []nearai.VerifiedModelAttestation
 					for _, report := range verified.Models {
 						if sameSigner(report.Signer, selected.Signer) {
 							expected = append(expected, report)

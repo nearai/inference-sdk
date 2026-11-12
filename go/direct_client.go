@@ -60,7 +60,7 @@ func (c *DirectInferenceClient) VerifyResponse(ctx context.Context, id string) (
 	return VerifiedDirectCompletionResult{
 		ID: result.id, CompletionID: result.id,
 		SignatureKind: result.signature.Kind, Signature: result.signature,
-		Attestations: result.attestations,
+		Attestations: result.directAttestations,
 	}, nil
 }
 
@@ -77,29 +77,20 @@ func directPreflight(ctx context.Context, c *inferenceCore, s *session, disableT
 	if err != nil {
 		return FetchedModelAttestations{}, err
 	}
-	s.direct = &VerifiedDirectModelAttestations{}
 	return fetched, nil
 }
 
 func (c *inferenceCore) configureDirectSession(s *session, fetched FetchedModelAttestations) error {
-	s.direct.Attestations = s.models
 	serving := s.direct.ServingAttestation
 	if serving.SPKIFingerprint != "" {
-		if !sameHex(serving.SPKIFingerprint, fetched.ClientBinding.SPKIFingerprint) {
-			return failure("binding.spki_fingerprint_mismatch", nil)
-		}
 		var pins []string
-		for _, report := range s.models {
-			if !slices.Contains(s.direct.SPKIFingerprints, report.SPKIFingerprint) {
-				s.direct.SPKIFingerprints = append(s.direct.SPKIFingerprints, report.SPKIFingerprint)
-			}
-			if report.Signer.SigningAlgo == s.selected.Signer.SigningAlgo && sameHex(report.Signer.SigningAddress, s.selected.Signer.SigningAddress) {
-				pins = append(pins, report.SPKIFingerprint)
-			}
+		for _, attestation := range s.selectedDirectAttestations {
+			pins = append(pins, attestation.SPKIFingerprint)
 		}
 		if err := c.pinSession(s, pins); err != nil {
 			return err
 		}
 	}
+
 	return c.configureOHTTP(s, fetched.OHTTPAttestation, serving.Signer)
 }
