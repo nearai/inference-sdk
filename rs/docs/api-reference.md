@@ -134,8 +134,8 @@ method while the response remains cached.
   to pin signature requests.
 - `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
   `verify_direct_model_response` validate individual reports, complete report
-  sets, and exact completion bytes respectively. The response verifier returns
-  every verified report sharing the signature's signer.
+  sets, and exact completion bytes respectively. Select matching reports with
+  `find_direct_model_attestations_for_signature` and pass one report to the response verifier.
 
 See the [Direct client guide](./verification-guide.md#experimental-direct-endpoints)
 for usage. Direct clients are experimental and use attested TLS by default.
@@ -222,7 +222,7 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 | --- | --- | --- | --- |
 | `find_direct_model_attestations_for_signature` | `attestations: &[VerifiedDirectModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedDirectModelAttestation>, VerificationError>` | Selects all verified Direct reports matching the signature signer, or an error when none match. |
 | `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Returns every verified report matching a `ProviderTee` signer, or an error when none match. Shared signers do not identify an individual instance. It does not verify the response signature. |
-| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
+| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Deprecated. Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS

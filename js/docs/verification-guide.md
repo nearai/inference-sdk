@@ -602,9 +602,9 @@ const verified = await verifyDirectModelAttestations(fetched);
 ```
 
 Send Chat with `fetch` and retain the exact request and response bytes.
-Then fetch its signature with `client.fetchCompletionSignature()` and pass the
-signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
-It returns all verified attestations sharing the response's signer.
+Then fetch its signature with `client.fetchCompletionSignature()`. Select matching
+reports with `findDirectModelAttestationsForSignature()` and pass one matching
+report, the signature, and the bytes to `verifyDirectModelResponse()`.
 
 `verifyDirectModelAttestation()` verifies one report;
 `verifyDirectModelAttestations()` verifies the returned set.

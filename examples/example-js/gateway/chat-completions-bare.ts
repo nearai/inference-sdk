@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     pinnedTlsFetch,
     modelKey,
   });
-  await verifyCompletionResponse({
+  await verifyResponse({
     client: attestationClient,
     completion: nonStreamingCompletion,
     gateway,
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
     pinnedTlsFetch,
     modelKey,
   });
-  await verifyCompletionResponse({
+  await verifyResponse({
     client: attestationClient,
     completion: streamingCompletion,
     gateway,
@@ -218,13 +218,13 @@ function createGatewayPinnedTlsFetch(
   return createPinnedTlsFetch(tlsBinding.spkiFingerprint);
 }
 
-async function verifyCompletionResponse({
+async function verifyResponse({
   client,
   completion,
   gateway,
   modelAttestations,
   selectedModelAttestation,
-}: VerifyCompletionResponseParams): Promise<void> {
+}: VerifyResponseParams): Promise<void> {
   // Retrieve the signature after the full response has been received. The ID is
   // only used for lookup; verification binds the saved bytes to an attested signer.
   const signature = await client.fetchCompletionSignature({
@@ -277,7 +277,7 @@ type SendCompletionParams = {
   readonly modelKey: E2eeModelKey;
 };
 
-type VerifyCompletionResponseParams = {
+type VerifyResponseParams = {
   readonly client: AttestationClient;
   readonly completion: Completion;
   readonly gateway: VerifiedGatewayAttestation;
