@@ -150,17 +150,17 @@ supported. Direct clients retrieve model evidence without a Gateway.
 ## Standalone verification
 
 ```go
-func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
-func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
-func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
+func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error)
+func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedModelAttestation, error)
+func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedDirectModelAttestation, error)
 func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAttestations, o VerificationOptions) (VerifiedDirectModelAttestations, error)
 
-func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
-func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
-func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) ([]VerifiedAttestation, error)
-func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error)
+func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedModelAttestation) error
+func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedGatewayAttestation) error
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedDirectModelAttestation) ([]VerifiedDirectModelAttestation, error)
+func FindModelAttestationsForSignature(items []VerifiedModelAttestation, sig CompletionSignature) ([]VerifiedModelAttestation, error)
 // Deprecated: use FindModelAttestationsForSignature for shared signers.
-func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
+func FindModelAttestationForSignature(items []VerifiedModelAttestation, sig CompletionSignature) (VerifiedModelAttestation, error)
 
 func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Transport, error)
 func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
@@ -240,7 +240,7 @@ repository names to policies and verifies every selected service image.
 
 These structures describe options, fetched evidence, verified results, and
 verification callbacks. A fetched `Attestation` is untrusted until verified.
-`VerifiedAttestation.Deployment` contains measured app-compose text and runtime
+`VerifiedAttestationEvidence.Deployment` contains measured app-compose text and runtime
 hashes; applications decide whether those measurements are acceptable.
 
 ```go
@@ -357,37 +357,63 @@ type VerificationOptions struct {
 	DeploymentVerifier DeploymentVerifier
 }
 
-type VerifiedAttestation struct {
-    Report *Attestation
-	Signer                SigningIdentity
-	TCBStatus             string
-	AdvisoryIDs           []string
-	Deployment            MeasuredDeployment
-	DeploymentProvenance  string
-	GPUEvidence           string
-	SigningPublicKey      string
-	SPKIFingerprint       string
-	ModelName, InstanceID string
+type VerifiedAttestationEvidence struct {
+	Signer               SigningIdentity
+	TCBStatus            string
+	AdvisoryIDs          []string
+	Deployment           MeasuredDeployment
+	DeploymentProvenance string
 }
 
+type VerifiedModelAttestation struct {
+	VerifiedAttestationEvidence
+	Report           *Attestation
+	GPUEvidence      string
+	SigningPublicKey string
+}
+
+type VerifiedGatewayAttestation struct {
+	VerifiedAttestationEvidence
+	Report          *Attestation
+	SPKIFingerprint string
+}
+
+type VerifiedDirectModelAttestation struct {
+	VerifiedModelAttestation
+	ModelName, InstanceID string
+	SPKIFingerprint       string
+}
+
+// AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
-	Gateway    *VerifiedAttestation
-	Models     []VerifiedAttestation
+	Gateway    *VerifiedGatewayAttestation
+	Models     []VerifiedModelAttestation
 	VerifiedAt time.Time
 }
 
+// VerifiedCompletionAttestation is Gateway evidence or a model representative.
+// Model receipts expose all matching reports in VerifiedCompletionResult.Attestations.
+type VerifiedCompletionAttestation interface {
+	verifiedCompletionAttestation()
+}
+
+func (*VerifiedGatewayAttestation) verifiedCompletionAttestation() {}
+func (*VerifiedModelAttestation) verifiedCompletionAttestation()   {}
+
+// VerifiedCompletionResult contains a response receipt verified by a Gateway client.
 type VerifiedCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
- // Gateway evidence for gateway receipts.
- // Deprecated for provider_tee receipts: use Attestations for all matching reports.
- // Holds the report selected for the request key.
- Attestation *VerifiedAttestation
- // Every matching verified model deployment for provider_tee receipts.
-	Attestations []VerifiedAttestation
+	// Attestation contains Gateway evidence for gateway receipts.
+	// For provider_tee it is the report used to select the model key;
+	// that singular model field is deprecated in favor of Attestations.
+	Attestation VerifiedCompletionAttestation
+	// Attestations contains every matching verified model deployment for provider_tee
+	// receipts. It is empty for Gateway receipts.
+	Attestations []VerifiedModelAttestation
 }
 
 // ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
@@ -435,23 +461,26 @@ type DirectInferenceOptions struct {
 }
 
 type VerifiedDirectModelAttestations struct {
-	ServingAttestation VerifiedAttestation
-	Attestations       []VerifiedAttestation
+	ServingAttestation VerifiedDirectModelAttestation
+	Attestations       []VerifiedDirectModelAttestation
 	SPKIFingerprints   []string
 }
 
+// DirectAttestationVerificationResult contains the verified Direct model reports.
 type DirectAttestationVerificationResult struct {
 	VerifiedDirectModelAttestations
 	VerifiedAt time.Time
 }
 
+// VerifiedDirectCompletionResult contains the complete preflight-verified signer
+// group for a Direct receipt.
 type VerifiedDirectCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	Attestations  []VerifiedAttestation
+	Attestations  []VerifiedDirectModelAttestation
 }
 ```
 

@@ -534,8 +534,8 @@ func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Tra
 
 // FindModelAttestationsForSignature returns every verified report sharing the
 // response signer. Use VerifyModelResponse to verify the response signature.
-func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error) {
-	var matches []VerifiedAttestation
+func FindModelAttestationsForSignature(items []VerifiedModelAttestation, sig CompletionSignature) ([]VerifiedModelAttestation, error) {
+	var matches []VerifiedModelAttestation
 	if sig.Kind != "provider_tee" {
 		return nil, failure("api.invalid_input", nil)
 	}
@@ -553,10 +553,10 @@ func FindModelAttestationsForSignature(items []VerifiedAttestation, sig Completi
 // FindModelAttestationForSignature returns the first report matching the response signer.
 //
 // Deprecated: use FindModelAttestationsForSignature to support shared signers.
-func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error) {
+func FindModelAttestationForSignature(items []VerifiedModelAttestation, sig CompletionSignature) (VerifiedModelAttestation, error) {
 	matches, err := FindModelAttestationsForSignature(items, sig)
 	if err != nil {
-		return VerifiedAttestation{}, err
+		return VerifiedModelAttestation{}, err
 	}
 	return matches[0], nil
 }

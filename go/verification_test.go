@@ -200,17 +200,19 @@ func TestSignaturesBindExactBytesAndKind(t *testing.T) {
 					compact := secpecdsa.SignCompact(priv, digest, false)
 					sig.Signature = hex.EncodeToString(append(compact[1:], compact[0]))
 				}
-				verify := VerifyGatewayResponse
-				if kind == "provider_tee" {
-					verify = VerifyModelResponse
+				evidence := VerifiedAttestationEvidence{Signer: sig.Signer}
+				verify := func(request, response []byte, sig CompletionSignature) error {
+					if kind == "provider_tee" {
+						return VerifyModelResponse(request, response, sig, VerifiedModelAttestation{VerifiedAttestationEvidence: evidence})
+					}
+					return VerifyGatewayResponse(request, response, sig, VerifiedGatewayAttestation{VerifiedAttestationEvidence: evidence})
 				}
-				att := VerifiedAttestation{Signer: sig.Signer}
-				if e := verify(request, response, sig, att); e != nil {
+				if e := verify(request, response, sig); e != nil {
 					t.Fatal(e)
 				}
-				requireCode(t, verify(request, append(response, ' '), sig, att), "signature.payload_mismatch")
+				requireCode(t, verify(request, append(response, ' '), sig), "signature.payload_mismatch")
 				sig.Kind = "other"
-				requireCode(t, verify(request, response, sig, att), "signature.kind_mismatch")
+				requireCode(t, verify(request, response, sig), "signature.kind_mismatch")
 			})
 		}
 	}

@@ -57,7 +57,7 @@ func keccak(b []byte) []byte { h := sha3.NewLegacyKeccak256(); h.Write(b); retur
 
 func hashText(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 
-func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error {
+func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedModelAttestation) error {
 	var body struct {
 		Model string `json:"model"`
 	}
@@ -67,7 +67,7 @@ func VerifyModelResponse(request, response []byte, signature CompletionSignature
 	return verifyResponse(signature, "provider_tee", body.Model+":"+hashText(request)+":"+hashText(response), attestation.Signer)
 }
 
-func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error {
+func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedGatewayAttestation) error {
 	return verifyResponse(signature, "gateway", hashText(request)+":"+hashText(response), attestation.Signer)
 }
 
@@ -114,32 +114,36 @@ func verifyResponse(sig CompletionSignature, kind, text string, signer SigningId
 
 // VerifyGatewayAttestation verifies quote, nonce, deployment measurements and
 // (when advertised) the observed TLS peer's SHA-256 SPKI fingerprint.
-func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error) {
-	v, e := verifyAttestation(ctx, a, b, o, true)
-	if e != nil {
-		return v, e
+func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error) {
+	v, err := verifyAttestation(ctx, a, b, o, true)
+	if err != nil {
+		return VerifiedGatewayAttestation{}, err
 	}
 	if a.SPKIFingerprint != "" && !sameHex(a.SPKIFingerprint, b.SPKIFingerprint) {
-		return VerifiedAttestation{}, failure("binding.spki_fingerprint_mismatch", nil)
+		return VerifiedGatewayAttestation{}, failure("binding.spki_fingerprint_mismatch", nil)
 	}
-	return v, nil
+	return VerifiedGatewayAttestation{VerifiedAttestationEvidence: v.VerifiedAttestationEvidence, Report: &a, SPKIFingerprint: a.SPKIFingerprint}, nil
 }
 
-func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error) {
+func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedModelAttestation, error) {
 	if a.SPKIFingerprint != "" {
-		return VerifiedAttestation{}, failure("input.invalid", nil)
+		return VerifiedModelAttestation{}, failure("input.invalid", nil)
 	}
 	return verifyAttestation(ctx, a, b, o, false)
 }
 
 // VerifyDirectModelAttestation authenticates an individual direct model report.
 // Its fingerprint is quote-bound but is not a claim about the observed TLS peer.
-func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error) {
-	return verifyAttestation(ctx, a, b, o, false)
+func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedDirectModelAttestation, error) {
+	verified, err := verifyAttestation(ctx, a, b, o, false)
+	if err != nil {
+		return VerifiedDirectModelAttestation{}, err
+	}
+	return VerifiedDirectModelAttestation{VerifiedModelAttestation: verified, ModelName: a.ModelName, InstanceID: a.InstanceID, SPKIFingerprint: a.SPKIFingerprint}, nil
 }
 
-func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, gateway bool) (VerifiedAttestation, error) {
-	var v VerifiedAttestation
+func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, gateway bool) (VerifiedModelAttestation, error) {
+	var v VerifiedModelAttestation
 	nonce, e := hexSize(b.Nonce, 32)
 	if e != nil {
 		return v, e
@@ -181,70 +185,70 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	if e != nil {
 		return v, e
 	}
-	v = VerifiedAttestation{
-		Report:               &a,
-		Signer:               a.Signer,
-		TCBStatus:            q.TCBStatus,
-		AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
-		Deployment:           deployment,
-		DeploymentProvenance: "not_checked",
-		SPKIFingerprint:      a.SPKIFingerprint,
-		ModelName:            a.ModelName,
-		InstanceID:           a.InstanceID,
+	v = VerifiedModelAttestation{
+		Report: &a,
+		VerifiedAttestationEvidence: VerifiedAttestationEvidence{
+			Signer:               a.Signer,
+			TCBStatus:            q.TCBStatus,
+			AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
+			Deployment:           deployment,
+			DeploymentProvenance: "not_checked",
+		},
 	}
+
 	if !gateway {
 		return verifyModelEvidence(ctx, a, b, o, v, signer)
 	}
 	v.DeploymentProvenance, e = runDeploymentVerifier(ctx, v.Deployment, o.DeploymentVerifier)
 	if e != nil {
-		return VerifiedAttestation{}, e
+		return VerifiedModelAttestation{}, e
 	}
 	return v, ctx.Err()
 }
 
-func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, v VerifiedAttestation, signer []byte) (VerifiedAttestation, error) {
+func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, v VerifiedModelAttestation, signer []byte) (VerifiedModelAttestation, error) {
 	if a.ComposeManagerAttestation != nil {
 		manager, err := verifyComposeManager(ctx, *a.ComposeManagerAttestation, a.AppCompose, b.Nonce, o)
 		if err != nil {
-			return VerifiedAttestation{}, err
+			return VerifiedModelAttestation{}, err
 		}
 		v.Deployment.ComposeManager = manager
 	}
 	provenance, e := runDeploymentVerifier(ctx, v.Deployment, o.DeploymentVerifier)
 	if e != nil {
-		return VerifiedAttestation{}, e
+		return VerifiedModelAttestation{}, e
 	}
 	v.DeploymentProvenance = provenance
 	v.GPUEvidence = "not_provided"
 	if a.NvidiaPayload == nil {
 		if o.Policy.RequireGPUEvidence {
-			return VerifiedAttestation{}, failure("policy.gpu_evidence_required", nil)
+			return VerifiedModelAttestation{}, failure("policy.gpu_evidence_required", nil)
 		}
 	} else {
 		var p struct {
 			Nonce string `json:"nonce"`
 		}
 		if json.Unmarshal([]byte(*a.NvidiaPayload), &p) != nil || !sameHex(p.Nonce, b.Nonce) {
-			return VerifiedAttestation{}, failure("binding.nonce_mismatch", nil)
+			return VerifiedModelAttestation{}, failure("binding.nonce_mismatch", nil)
 		}
 		gpu := o.GPUVerifier
 		if gpu == nil {
 			gpu = CreateGPUEvidenceVerifier(GPUVerifierOptions{})
 		}
 		if e = gpu(ctx, *a.NvidiaPayload); e != nil {
-			return VerifiedAttestation{}, e
+			return VerifiedModelAttestation{}, e
 		}
 		v.GPUEvidence = "verified"
 	}
 	if a.SigningPublicKey != "" {
 		pub, e := unhex(a.SigningPublicKey)
 		if e != nil {
-			return VerifiedAttestation{}, e
+			return VerifiedModelAttestation{}, e
 		}
 		switch a.Signer.SigningAlgo {
 		case Ed25519:
 			if !bytes.Equal(pub, signer) {
-				return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", nil)
+				return VerifiedModelAttestation{}, failure("binding.model_public_key_mismatch", nil)
 			}
 		case ECDSA:
 			if len(pub) == 64 {
@@ -252,7 +256,7 @@ func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o 
 			}
 			parsed, e := secp.ParsePubKey(pub)
 			if e != nil || len(pub) != 65 || !bytes.Equal(keccak(parsed.SerializeUncompressed()[1:])[12:], signer) {
-				return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", e)
+				return VerifiedModelAttestation{}, failure("binding.model_public_key_mismatch", e)
 			}
 			pub = pub[1:]
 		}
