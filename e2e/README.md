@@ -47,7 +47,7 @@ cargo test --locked --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
 ```sh
-# Go 1.26.10+
+# Go 1.27.0+
 export CGO_ENABLED=0
 go -C go test -tags=e2e ./e2e -v -timeout 15m
 go -C examples/example-go test -tags=e2e -run '^TestLive' -v -timeout 15m .

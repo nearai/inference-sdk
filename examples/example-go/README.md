@@ -1,6 +1,6 @@
 # Go examples
 
-Use Go 1.26.10+; the SDK embeds the DCAP verifier.
+Use Go 1.27.0+; the SDK embeds the DCAP verifier.
 Set `NEARAI_API_KEY` and run from this directory. The
 [shared example guide](../README.md) describes configuration, verification order,
 and the matching JavaScript, Python, and Rust examples.

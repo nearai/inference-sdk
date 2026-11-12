@@ -30,6 +30,8 @@ jobs:
         working-directory: ${{ matrix.directory }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
           package_json_file: js/package.json
@@ -61,6 +63,8 @@ jobs:
         working-directory: ${{ matrix.directory }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           python-version: "3.12"
@@ -96,6 +100,8 @@ jobs:
         directory: [rs, examples/example-rs, go/internal/dcap/wasm-src]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Audit locked dependencies against RustSec
         id: audit
         continue-on-error: true
@@ -118,9 +124,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.26.x'
+          go-version-file: go/go.mod
           cache-dependency-path: |
             go/go.sum
             examples/example-go/go.sum
