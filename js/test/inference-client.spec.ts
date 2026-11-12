@@ -1,6 +1,4 @@
 import { Buffer } from 'node:buffer';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import OpenAI from 'openai';
 import nacl from 'tweetnacl';
 import {
