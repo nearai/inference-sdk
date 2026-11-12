@@ -545,7 +545,7 @@ func FindModelAttestationsForSignature(items []VerifiedModelAttestation, sig Com
 		}
 	}
 	if len(matches) == 0 {
-		return nil, detail("api.model_attestation_not_found", "matches", 0)
+		return nil, detail("api.model_attestation_signer_not_found", "matches", 0)
 	}
 	return matches, nil
 }

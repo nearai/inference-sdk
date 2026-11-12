@@ -579,12 +579,19 @@ impl InferenceCore {
                             .into());
                         }
                         if session.direct.is_some() {
-                            let attestations = verify_direct_model_response(
+                            verify_direct_model_response(
                                 &request,
                                 &response,
                                 &signature,
-                                &session.selected_direct_attestations,
+                                &session.selected_direct_attestations[0],
                             )?;
+                            let attestations = find_direct_model_attestations_for_signature(
+                                &session.selected_direct_attestations,
+                                &signature,
+                            )?
+                            .into_iter()
+                            .cloned()
+                            .collect();
                             return Ok(VerifiedReceipt::Direct(VerifiedDirectCompletionResult {
                                 id,
                                 signature,

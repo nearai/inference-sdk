@@ -421,6 +421,7 @@ For a manual workflow:
 ```python
 from nearai_inference_sdk import (
     DirectAttestationClient,
+    find_direct_model_attestations_for_signature,
     verify_direct_model_attestations,
     verify_direct_model_response,
 )
@@ -435,11 +436,11 @@ verified = await verify_direct_model_attestations(fetched_attestations)
 signature = await direct_client.fetch_completion_signature(
     completion_id, signing_algo='ed25519'
 )
-matching = verify_direct_model_response(
-    request_body,
-    response_body,
-    signature,
-    verified.attestations,
+matching_attestations = find_direct_model_attestations_for_signature(
+    verified.attestations, signature
+)
+verify_direct_model_response(
+    request_body, response_body, signature, matching_attestations[0]
 )
 ```
 

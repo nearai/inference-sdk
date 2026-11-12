@@ -53,15 +53,7 @@ func FindDirectModelAttestationsForSignature(attestations []VerifiedDirectModelA
 	return matches, nil
 }
 
-// VerifyDirectModelResponse verifies exact completion bytes and returns all
-// matching verified Direct reports.
-func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestations []VerifiedDirectModelAttestation) ([]VerifiedDirectModelAttestation, error) {
-	matches, err := FindDirectModelAttestationsForSignature(attestations, sig)
-	if err != nil {
-		return nil, err
-	}
-	if err := VerifyModelResponse(request, response, sig, matches[0].VerifiedModelAttestation); err != nil {
-		return nil, err
-	}
-	return matches, nil
+// VerifyDirectModelResponse verifies exact completion bytes against a verified Direct report.
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestation VerifiedDirectModelAttestation) error {
+	return VerifyModelResponse(request, response, sig, attestation.VerifiedModelAttestation)
 }

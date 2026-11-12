@@ -685,7 +685,10 @@ func (c *inferenceCore) verifyRecord(ctx context.Context, id string, r *response
 		return verifiedResponse{}, failure("signature.kind_mismatch", nil)
 	}
 	if r.session.direct != nil {
-		attestations, err := VerifyDirectModelResponse(r.request, r.response, sig, r.session.selectedDirectAttestations)
+		if err := VerifyDirectModelResponse(r.request, r.response, sig, r.session.selectedDirectAttestations[0]); err != nil {
+			return verifiedResponse{}, err
+		}
+		attestations, err := FindDirectModelAttestationsForSignature(r.session.selectedDirectAttestations, sig)
 		if err != nil {
 			return verifiedResponse{}, err
 		}
