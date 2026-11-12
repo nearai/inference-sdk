@@ -111,7 +111,7 @@ cargo run --locked --bin gateway-chat-completions
 
 ### Go setup
 
-Requires Go 1.26.10+. The SDK embeds the DCAP verifier. The example module
+Requires Go 1.27.0+. The SDK embeds the DCAP verifier. The example module
 replaces the SDK dependency with the sibling source.
 
 ```sh

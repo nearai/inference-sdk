@@ -214,7 +214,10 @@ export async function verifyImageProvenance({
     });
   }
 
-  const verifier = new SigstoreVerifier();
+  // Preserve the formats accepted by ImageProvenanceBundleSchema, including v0.1.
+  const verifier = new SigstoreVerifier({
+    bundleVersions: ['0.1', '0.2', '0.3'],
+  });
   try {
     const trustedRoot = await getTrustedRoot();
     await verifier.loadSigstoreRoot(trustedRoot);

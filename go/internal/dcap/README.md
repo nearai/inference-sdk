@@ -12,8 +12,8 @@ The original binding source is pinned to
 Our default backend replaces the upstream native-library integration with
 embedded WASM; the upstream MIT license is retained in [LICENSE](./LICENSE).
 
-The artifact uses [DCAP QVL 0.7.0, revision
-94208e2753a854191759e493ca5892be482ad453](https://github.com/Phala-Network/dcap-qvl/tree/94208e2753a854191759e493ca5892be482ad453)
+The artifact uses [DCAP QVL 0.7.1, revision
+05c200b752ecb824b73e5b1ae63cc047f1702ab2](https://github.com/Phala-Network/dcap-qvl/tree/05c200b752ecb824b73e5b1ae63cc047f1702ab2)
 with the RustCrypto backend and Intel production root. The wrapper and flattened
 JSON serialization live in `wasm-src/`; the serialization is adapted from that
 revision's MIT-licensed FFI, under the accompanying upstream LICENSE. No quote

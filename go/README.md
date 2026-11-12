@@ -5,7 +5,7 @@ with deployment attestation, response signature verification, and optional encry
 
 ## Install
 
-Go 1.26.10+. The SDK includes the DCAP verifier and supports `CGO_ENABLED=0`.
+Go 1.27.0+. The SDK includes the DCAP verifier and supports `CGO_ENABLED=0`.
 
 ```sh
 go get github.com/nearai/inference-sdk/go
