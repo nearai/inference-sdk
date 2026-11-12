@@ -127,7 +127,7 @@ and integrated Chat. The Rust client exposes its reqwest transport directly.
 
 ### Go setup
 
-Requires Go 1.26.10+. The SDK embeds the DCAP verifier. The example module
+Requires Go 1.27.0+. The SDK embeds the DCAP verifier. The example module
 replaces the SDK dependency with the sibling source.
 
 ```sh
