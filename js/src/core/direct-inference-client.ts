@@ -108,11 +108,15 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
         fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
       },
       verifyResponse: ({ id, requestBody, responseBody, signature }) => {
-        const matchingAttestations = verifyDirectModelResponse({
+        verifyDirectModelResponse({
           requestBody,
           responseBody,
           signature,
+          attestation: attestations[0],
+        });
+        const matchingAttestations = findDirectModelAttestationsForSignature({
           attestations,
+          signature,
         });
         return {
           id,
@@ -182,18 +186,12 @@ export function findDirectModelAttestationsForSignature({
   return matching;
 }
 
-/** Verify exact completion bytes and return all matching verified Direct reports. */
+/** Verify exact completion bytes against a verified Direct report. */
 export function verifyDirectModelResponse({
   requestBody,
   responseBody,
   signature,
-  attestations,
-}: VerifyDirectModelResponseParams): readonly VerifiedDirectModelAttestation[] {
-  const matching = findDirectModelAttestationsForSignature({
-    attestations,
-    signature,
-  });
-  const attestation = matching[0];
+  attestation,
+}: VerifyDirectModelResponseParams): void {
   verifyModelResponse({ requestBody, responseBody, signature, attestation });
-  return matching;
 }

@@ -387,6 +387,7 @@ pub fn find_model_attestations_for_signature<'a>(
 
 /// Return the first verified report matching the response signer.
 /// Use [`find_model_attestations_for_signature`] for all matching reports.
+#[deprecated(note = "Use find_model_attestations_for_signature for all matching reports.")]
 pub fn find_model_attestation_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
