@@ -196,6 +196,7 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
+| `find_direct_model_attestations_for_signature` | `attestations: &[VerifiedDirectModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedDirectModelAttestation>, VerificationError>` | Selects all verified Direct reports matching the signature signer, or an error when none match. |
 | `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Selects all verified reports sharing the model receipt's signer. |
 | `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
 

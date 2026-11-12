@@ -1,4 +1,4 @@
-import type { CompletionSignature } from './chat';
+import type { CompletionSignature, CompletionSignatureReference } from './chat';
 import type { DirectAttestationClientOptions } from './direct-api';
 import type {
   VerifiedDirectModelAttestation,
@@ -37,6 +37,11 @@ export type NodeDirectInferenceClientOptions = Omit<
     readonly includeSpkiFingerprint?: boolean;
     readonly modelVerification?: NodeDirectModelVerificationOptions;
   };
+
+export type FindDirectModelAttestationsForSignatureParams = {
+  readonly attestations: readonly VerifiedDirectModelAttestation[];
+  readonly signature: CompletionSignatureReference;
+};
 
 export type VerifyDirectModelResponseParams = {
   readonly requestBody: Uint8Array;

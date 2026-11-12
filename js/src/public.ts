@@ -7,6 +7,7 @@ export {
 export { InferenceClient } from './core/inference-client';
 export {
   DirectInferenceClient,
+  findDirectModelAttestationsForSignature,
   verifyDirectModelResponse,
 } from './core/direct-inference-client';
 export {
@@ -32,6 +33,7 @@ export type {
   DirectModelVerificationOptions,
   VerifiedDirectCompletionResult,
   DirectAttestationVerificationResult,
+  FindDirectModelAttestationsForSignatureParams,
   VerifyDirectModelResponseParams,
 } from './types/direct-inference-client';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
