@@ -9,6 +9,7 @@ from nearai_inference_sdk import (
     DirectAttestationClient,
     VerifiedDirectModelAttestations,
     create_pinned_tls_client,
+    find_direct_model_attestations_for_signature,
     verify_direct_model_attestations,
     verify_direct_model_response,
 )
@@ -72,10 +73,13 @@ async def send_and_verify(
     signature = await attestation_client.fetch_completion_signature(
         completion_id, signing_algo=SIGNING_ALGO
     )
-    matching = verify_direct_model_response(
-        request.content, response_body, signature, verified.attestations
+    matching_attestations = find_direct_model_attestations_for_signature(
+        verified.attestations, signature
     )
-    print(f'Verified response against {len(matching)} model reports.')
+    verify_direct_model_response(
+        request.content, response_body, signature, matching_attestations[0]
+    )
+    print(f'Verified response against {len(matching_attestations)} model reports.')
     if not stream:
         print(text)
 

@@ -465,9 +465,9 @@ const client = new DirectAttestationClient({
 ```
 
 Send Chat with `pinnedFetch` and retain the exact request and response bytes.
-Use `client.fetchCompletionSignature({ completionId, signingAlgo: 'ed25519' })`
-and pass the signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
-It returns all verified attestations sharing the response's signer.
+Fetch its signature with `client.fetchCompletionSignature()`, select matching
+reports with `findDirectModelAttestationsForSignature()`, and pass one report,
+the signature, and the bytes to `verifyDirectModelResponse()`.
 
 `verifyDirectModelAttestation()` verifies one report;
 `verifyDirectModelAttestations()` verifies the returned set.

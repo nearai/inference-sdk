@@ -25,15 +25,12 @@ async fn main() -> Result<()> {
         };
         let id = completion_id(&bytes, stream)?;
         let signature = api.fetch_completion_signature(&id, Some(algo()?)).await?;
-        let matching = verify_direct_model_response(
-            &wire_request,
-            &bytes,
-            &signature,
-            &verified.attestations,
-        )?;
+        let matching_attestations =
+            find_direct_model_attestations_for_signature(&verified.attestations, &signature)?;
+        verify_direct_model_response(&wire_request, &bytes, &signature, matching_attestations[0])?;
         println!(
             "Verified receipt against {} matching reports",
-            matching.len()
+            matching_attestations.len()
         );
         display(&bytes, stream)?;
     }

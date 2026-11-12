@@ -147,8 +147,11 @@ class DirectInferenceClient(
             response_body: bytes,
             signature: CompletionSignature,
         ) -> VerifiedDirectCompletionResult:
-            matching = verify_direct_model_response(
-                request_body, response_body, signature, attestations
+            verify_direct_model_response(
+                request_body, response_body, signature, attestations[0]
+            )
+            matching = find_direct_model_attestations_for_signature(
+                attestations, signature
             )
             return VerifiedDirectCompletionResult(
                 id=id, signature=signature, attestations=matching
@@ -207,9 +210,7 @@ def verify_direct_model_response(
     request_body: bytes,
     response_body: bytes,
     signature: CompletionSignature,
-    attestations: Sequence[VerifiedDirectModelAttestation],
-) -> tuple[VerifiedDirectModelAttestation, ...]:
-    """Verify exact response bytes and return all matching verified Direct reports."""
-    matching = find_direct_model_attestations_for_signature(attestations, signature)
-    verify_model_response(request_body, response_body, signature, matching[0])
-    return matching
+    attestation: VerifiedDirectModelAttestation,
+) -> None:
+    """Verify exact response bytes against a verified Direct report."""
+    verify_model_response(request_body, response_body, signature, attestation)

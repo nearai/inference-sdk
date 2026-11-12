@@ -46,6 +46,11 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                 with (
                     contextlib.redirect_stdout(io.StringIO()),
                     patch.object(direct, 'verify_direct_model_response') as verify,
+                    patch.object(
+                        direct,
+                        'find_direct_model_attestations_for_signature',
+                        return_value=(object(),),
+                    ),
                     patch.object(gateway, 'prepare_e2ee_chat_request', prepare),
                 ):
                     await direct.send_and_verify(

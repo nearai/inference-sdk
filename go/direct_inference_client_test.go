@@ -201,12 +201,15 @@ func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
 	sig := CompletionSignature{"provider_tee", text, hex.EncodeToString(ed25519.Sign(priv, []byte(text))), a.Signer}
 	base := VerifiedModelAttestation{VerifiedAttestationEvidence: VerifiedAttestationEvidence{Signer: a.Signer}}
 	items := []VerifiedDirectModelAttestation{{VerifiedModelAttestation: base, InstanceID: "one"}, {VerifiedModelAttestation: base, InstanceID: "two"}}
-	result, e := VerifyDirectModelResponse(request, response, sig, items)
+	result, e := FindDirectModelAttestationsForSignature(items, sig)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if !reflect.DeepEqual(result, items) {
 		t.Fatal("ambiguous instance attribution")
+	}
+	if err := VerifyDirectModelResponse(request, response, sig, result[0]); err != nil {
+		t.Fatal(err)
 	}
 }
 
