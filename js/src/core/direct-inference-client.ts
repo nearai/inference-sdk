@@ -4,6 +4,7 @@ import type {
   NodeDirectInferenceClientOptions,
   VerifiedDirectCompletionResult,
   DirectAttestationVerificationResult,
+  FindDirectModelAttestationsForSignatureParams,
   VerifyDirectModelResponseParams,
 } from '../types/direct-inference-client';
 import type {
@@ -26,7 +27,7 @@ export type CreateDirectSessionTransportParams = {
   readonly tlsBinding: DirectTlsBinding;
 };
 
-/** Shared direct-endpoint preflight; Chat, E2EE and response caching reuse the Gateway transport core. */
+/** Direct-endpoint preflight over the shared Chat, E2EE and response-cache implementation. */
 export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<
   VerifiedDirectCompletionResult,
   DirectAttestationVerificationResult
@@ -66,15 +67,14 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       fetched.ohttpAttestation,
       servingSigner,
     );
-    // Every attestation is verified before choosing an encryption key. Entries
-    // sharing a key may still have different deployment measurements.
-    // OHTTP restricts Chat to the serving signer. Its public key
-    // may come from any verified report sharing that exact signing identity.
+    const requiresServingSigner =
+      this.ohttpEnabled ||
+      verifiedModelAttestations.tlsBinding.kind === 'attested';
     const modelAttestation = verifiedModelAttestations.attestations.find(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         candidate.signingPublicKey !== undefined &&
-        (!this.ohttpEnabled ||
+        (!requiresServingSigner ||
           (candidate.signer.signingAlgo === servingSigner.signingAlgo &&
             hexToBuffer(candidate.signer.signingAddress).equals(
               hexToBuffer(servingSigner.signingAddress),
@@ -108,11 +108,15 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
         fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
       },
       verifyResponse: ({ id, requestBody, responseBody, signature }) => {
-        const matchingAttestations = verifyDirectModelResponse({
+        verifyDirectModelResponse({
           requestBody,
           responseBody,
           signature,
+          attestation: attestations[0],
+        });
+        const matchingAttestations = findDirectModelAttestationsForSignature({
           attestations,
+          signature,
         });
         return {
           id,
@@ -129,8 +133,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
 /**
  * Browser-compatible direct model client without TLS fingerprint binding.
  *
- * @experimental Not recommended for production. Use `InferenceClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class DirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;
@@ -157,16 +160,11 @@ export class DirectInferenceClient extends DirectInferenceClientBase {
   }
 }
 
-/**
- * Verify the exact completion bytes and return the verified attestations sharing
- * its signer. A shared signing key does not identify an individual CVM.
- */
-export function verifyDirectModelResponse({
-  requestBody,
-  responseBody,
-  signature,
+/** Select all verified Direct reports matching the signature's signer. */
+export function findDirectModelAttestationsForSignature({
   attestations,
-}: VerifyDirectModelResponseParams): readonly VerifiedDirectModelAttestation[] {
+  signature,
+}: FindDirectModelAttestationsForSignatureParams): readonly VerifiedDirectModelAttestation[] {
   if (signature.kind !== 'provider_tee') {
     throw new VerificationError({
       code: 'signature.kind_mismatch',
@@ -182,10 +180,18 @@ export function verifyDirectModelResponse({
       candidate.signer.signingAlgo === signature.signer.signingAlgo &&
       hexToBuffer(candidate.signer.signingAddress).equals(signer),
   );
-  const attestation = matching[0];
-  if (attestation === undefined) {
+  if (matching.length === 0) {
     throw new VerificationError({ code: 'signature.signer_mismatch' });
   }
-  verifyModelResponse({ requestBody, responseBody, signature, attestation });
   return matching;
+}
+
+/** Verify exact completion bytes against a verified Direct report. */
+export function verifyDirectModelResponse({
+  requestBody,
+  responseBody,
+  signature,
+  attestation,
+}: VerifyDirectModelResponseParams): void {
+  verifyModelResponse({ requestBody, responseBody, signature, attestation });
 }

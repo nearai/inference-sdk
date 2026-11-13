@@ -27,7 +27,7 @@ from nearai_inference_sdk import (
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .fixtures import SIGNING_ADDRESS, cloud_attestation
+from .fixtures import SIGNING_ADDRESS, cloud_attestation, create_model_attestation
 
 API_KEY = 'test'
 BASE_URL = 'https://cloud.example/v1'
@@ -86,7 +86,8 @@ async def test_gateway_bootstrap_keeps_its_own_peer_capturing_transport(
         assert not http_client.is_closed
 
 
-async def test_borrowed_http_client_does_not_follow_evidence_redirects():
+@pytest.mark.parametrize('client_type', [AttestationClient, DirectAttestationClient])
+async def test_borrowed_http_client_does_not_follow_evidence_redirects(client_type):
     requested_urls = []
 
     async def redirect(request):
@@ -98,7 +99,7 @@ async def test_borrowed_http_client_does_not_follow_evidence_redirects():
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(redirect), follow_redirects=True
     ) as http_client:
-        client = AttestationClient(
+        client = client_type(
             api_key=API_KEY, base_url=BASE_URL, http_client=http_client
         )
         with pytest.raises(ApiError) as rejected:
@@ -300,7 +301,7 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
     )
     if direct:
         client = DirectAttestationClient(BASE_URL, api_key=api_key, headers=headers)
-        await client.fetch_model_attestations()
+        await client.fetch_model_attestations(include_spki_fingerprint=False)
     else:
         client = AttestationClient(api_key, base_url=BASE_URL, headers=headers)
         await client.fetch_gateway_attestation(include_spki_fingerprint=False)
@@ -362,6 +363,7 @@ def verified_model_attestation_for_signer(
     signer: SigningIdentity,
 ) -> VerifiedModelAttestation:
     return VerifiedModelAttestation(
+        report=create_model_attestation(signer=signer),
         signer=signer,
         tcb_status='UpToDate',
         advisory_ids=(),

@@ -32,33 +32,28 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 	if out.ServingAttestation.SPKIFingerprint != "" && !sameHex(out.ServingAttestation.SPKIFingerprint, fetched.ClientBinding.SPKIFingerprint) {
 		return VerifiedDirectModelAttestations{}, failure("binding.spki_fingerprint_mismatch", nil)
 	}
-	out.ServingAttestation = cloneAttestation(out.ServingAttestation)
 	return out, nil
 }
 
-// VerifyDirectModelResponse returns all verified reports with the response's
-// signer. Shared signing keys cannot identify the individual serving instance.
-func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedCompletionResult, error) {
-	var matches []VerifiedAttestation
+// FindDirectModelAttestationsForSignature selects all verified Direct reports
+// matching the signature's signer.
+func FindDirectModelAttestationsForSignature(attestations []VerifiedDirectModelAttestation, sig CompletionSignature) ([]VerifiedDirectModelAttestation, error) {
 	if sig.Kind != "provider_tee" {
-		return VerifiedCompletionResult{}, failure("signature.kind_mismatch", nil)
+		return nil, failure("signature.kind_mismatch", nil)
 	}
-	for _, a := range attestations {
-		if a.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(a.Signer.SigningAddress, sig.Signer.SigningAddress) {
-			matches = append(matches, a)
+	var matches []VerifiedDirectModelAttestation
+	for _, attestation := range attestations {
+		if attestation.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(attestation.Signer.SigningAddress, sig.Signer.SigningAddress) {
+			matches = append(matches, attestation)
 		}
 	}
 	if len(matches) == 0 {
-		return VerifiedCompletionResult{}, failure("signature.signer_mismatch", nil)
+		return nil, failure("signature.signer_mismatch", nil)
 	}
-	if e := VerifyModelResponse(request, response, sig, matches[0]); e != nil {
-		return VerifiedCompletionResult{}, e
-	}
-	return VerifiedCompletionResult{
-		ID:            id,
-		CompletionID:  id,
-		SignatureKind: sig.Kind,
-		Signature:     sig,
-		Attestations:  cloneResult(AttestationVerificationResult{Models: matches}).Models,
-	}, nil
+	return matches, nil
+}
+
+// VerifyDirectModelResponse verifies exact completion bytes against a verified Direct report.
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestation VerifiedDirectModelAttestation) error {
+	return VerifyModelResponse(request, response, sig, attestation.VerifiedModelAttestation)
 }

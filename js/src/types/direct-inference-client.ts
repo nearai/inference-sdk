@@ -1,4 +1,4 @@
-import type { CompletionSignature } from './chat';
+import type { CompletionSignature, CompletionSignatureReference } from './chat';
 import type { DirectAttestationClientOptions } from './direct-api';
 import type {
   VerifiedDirectModelAttestation,
@@ -15,32 +15,45 @@ export type NodeDirectModelVerificationOptions = DirectModelVerificationOptions;
 
 /**
  * Verified Chat requests to one direct model endpoint, without a Gateway.
- * @experimental Direct clients are not recommended for production.
+ * @experimental
  */
-export type DirectInferenceClientOptions = DirectAttestationClientOptions &
+export type DirectInferenceClientOptions = Omit<
+  DirectAttestationClientOptions,
+  'fetch'
+> &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
   InferenceEncryptionOptions & {
     readonly modelVerification?: DirectModelVerificationOptions;
   };
 
-/** @experimental Options for the Node direct client, which is not recommended for production. */
-export type NodeDirectInferenceClientOptions = DirectAttestationClientOptions &
+/** @experimental Options for the Node Direct client. */
+export type NodeDirectInferenceClientOptions = Omit<
+  DirectAttestationClientOptions,
+  'fetch'
+> &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
   InferenceEncryptionOptions & {
+    /** Verify and pin the Direct endpoint's TLS identity. Defaults to true. */
+    readonly includeSpkiFingerprint?: boolean;
     readonly modelVerification?: NodeDirectModelVerificationOptions;
   };
+
+export type FindDirectModelAttestationsForSignatureParams = {
+  readonly attestations: readonly VerifiedDirectModelAttestation[];
+  readonly signature: CompletionSignatureReference;
+};
 
 export type VerifyDirectModelResponseParams = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
-  readonly attestations: readonly VerifiedDirectModelAttestation[];
+  readonly attestation: VerifiedDirectModelAttestation;
 };
 
 /** All verified direct reports and endpoint TLS binding, shared by verify() and Chat. */
 export type DirectAttestationVerificationResult =
   VerifiedDirectModelAttestations & {
-    /** Unix time in milliseconds when verification completed, unchanged on cache hits. */
+    /** Unix time in milliseconds when verification completed. */
     readonly verifiedAt: number;
   };
 
@@ -51,6 +64,6 @@ export type VerifiedDirectCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  /** Eligible verified reports sharing this signer, not a claim identifying one CVM. */
+  /** Verified reports sharing the selected model signer. */
   readonly attestations: readonly VerifiedDirectModelAttestation[];
 };

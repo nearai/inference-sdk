@@ -49,6 +49,7 @@ async fn accepts_missing_gpu_evidence() {
     .await
     .unwrap();
 
+    assert_eq!(*verified.report, attestation);
     assert_eq!(verified.evidence.tcb_status, TcbStatus::OutOfDate);
     assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::NotProvided);
     assert_eq!(

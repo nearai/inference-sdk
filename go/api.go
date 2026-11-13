@@ -23,20 +23,35 @@ import (
 )
 
 // AttestationClient fetches evidence without making any claim that it is verified.
-type AttestationClient struct {
+type AttestationClient struct{ *apiClient }
+
+// DirectAttestationClient fetches reports and signatures from one Direct endpoint.
+type DirectAttestationClient struct{ *apiClient }
+
+type apiClient struct {
 	base    *url.URL
 	headers http.Header
 	http    *http.Client
 	direct  bool
 }
 
-func NewAttestationClient(o ClientOptions) (*AttestationClient, error) { return newAPIClient(o, false) }
-
-func NewDirectAttestationClient(o ClientOptions) (*AttestationClient, error) {
-	return newAPIClient(o, true)
+func NewAttestationClient(o ClientOptions) (*AttestationClient, error) {
+	api, err := newAPIClient(o, false)
+	if err != nil {
+		return nil, err
+	}
+	return &AttestationClient{api}, nil
 }
 
-func newAPIClient(o ClientOptions, direct bool) (*AttestationClient, error) {
+func NewDirectAttestationClient(o ClientOptions) (*DirectAttestationClient, error) {
+	api, err := newAPIClient(o, true)
+	if err != nil {
+		return nil, err
+	}
+	return &DirectAttestationClient{api}, nil
+}
+
+func newAPIClient(o ClientOptions, direct bool) (*apiClient, error) {
 	if o.BaseURL == "" {
 		if direct {
 			return nil, failure("api.invalid_input", nil)
@@ -61,10 +76,10 @@ func newAPIClient(o ClientOptions, direct bool) (*AttestationClient, error) {
 		*client = *o.HTTPClient
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &AttestationClient{base: u, headers: h, http: client, direct: direct}, nil
+	return &apiClient{base: u, headers: h, http: client, direct: direct}, nil
 }
 
-func (c *AttestationClient) endpoint(path string, q url.Values) string {
+func (c *apiClient) endpoint(path string, q url.Values) string {
 	u := *c.base
 	unescaped, _ := url.PathUnescape(path)
 	u.Path += unescaped
@@ -126,7 +141,7 @@ func readResponseBounded(res *http.Response, limit int64) ([]byte, error) {
 	return readBounded(res.Body, limit)
 }
 
-func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
+func (c *apiClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
 	req, e := http.NewRequestWithContext(ctx, "GET", c.endpoint(path, q), nil)
 	if e != nil {
 		return nil, "", e
@@ -252,6 +267,14 @@ func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o Fetch
 }
 
 func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error) {
+	return c.fetchModelAttestations(ctx, model, o)
+}
+
+func (c *DirectAttestationClient) FetchModelAttestations(ctx context.Context, o FetchOptions) (FetchedModelAttestations, error) {
+	return c.fetchModelAttestations(ctx, "", o)
+}
+
+func (c *apiClient) fetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error) {
 	var out FetchedModelAttestations
 	q, e := optionsQuery(o)
 	if e != nil {
@@ -259,7 +282,8 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 	}
 	n := nonce()
 	q.Set("nonce", n)
-	q.Set("include_tls_fingerprint", "false")
+	includeTLS := c.direct && !o.DisableTLSBinding
+	q.Set("include_tls_fingerprint", fmt.Sprint(includeTLS))
 	if !c.direct {
 		if model == "" {
 			return out, failure("api.invalid_input", nil)
@@ -267,7 +291,7 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		q.Set("model", model)
 		q.Set("provider", "near")
 	}
-	b, _, e := c.get(ctx, "attestation/report", q)
+	b, fp, e := c.get(ctx, "attestation/report", q)
 	if e != nil {
 		return out, e
 	}
@@ -286,24 +310,11 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 	}
 	for _, entry := range entries {
-		if c.direct {
-			// Only the serving envelope supplies manager evidence. Discard nested
-			// payloads before typed decoding, including unsupported future shapes.
-			var nested map[string]json.RawMessage
-			if e = json.Unmarshal(entry, &nested); e != nil || nested == nil {
-				return out, failure("api.invalid_response", e)
-			}
-			delete(nested, "compose_manager_attestation")
-			entry, e = json.Marshal(nested)
-			if e != nil {
-				return out, failure("api.invalid_response", e)
-			}
-		}
 		a, e := decodeAttestation(entry)
 		if e != nil {
 			return out, e
 		}
-		if !sameHex(a.Nonce, n) || a.SPKIFingerprint != "" || (c.direct && a.ModelName == "") {
+		if !sameHex(a.Nonce, n) || (a.SPKIFingerprint != "") != includeTLS || (c.direct && a.ModelName == "") {
 			return out, failure("api.invalid_response", nil)
 		}
 		out.Attestations = append(out.Attestations, a)
@@ -317,8 +328,12 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		for i := range out.Attestations {
 			candidate := a
 			candidate.ComposeManagerAttestation = nil
-			if sameAttestation(candidate, out.Attestations[i]) {
-				out.Attestations[i].ComposeManagerAttestation = a.ComposeManagerAttestation
+			report := out.Attestations[i]
+			report.ComposeManagerAttestation = nil
+			if sameAttestation(candidate, report) {
+				if out.Attestations[i].ComposeManagerAttestation == nil {
+					out.Attestations[i].ComposeManagerAttestation = a.ComposeManagerAttestation
+				}
 				out.ServingAttestation = &out.Attestations[i]
 				found = true
 				break
@@ -334,10 +349,16 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 	}
 	out.ClientBinding = ClientBinding{Nonce: n}
+	if includeTLS {
+		if fp == "" {
+			return out, failure("binding.spki_fingerprint_required", nil)
+		}
+		out.ClientBinding.SPKIFingerprint = fp
+	}
 	return out, nil
 }
 
-func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
+func (c *apiClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
 	var sig CompletionSignature
 	if id == "" || id == "." || id == ".." {
 		return sig, failure("api.invalid_input", nil)
@@ -449,12 +470,19 @@ func decodeAttestation(data []byte) (Attestation, error) {
 	return a, nil
 }
 
-// NewPinnedTransport clones a standard HTTP transport and enforces the quote-
-// authenticated SPKI pin during TLS handshake, before request bytes are sent.
-func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error) {
-	expected, e := hexSize(fingerprint, 32)
-	if e != nil {
-		return nil, e
+// NewPinnedTransport clones a standard HTTP transport and requires one of the
+// verified SPKI fingerprints during TLS handshake, before request bytes are sent.
+func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Transport, error) {
+	if len(fingerprints) == 0 {
+		return nil, failure("api.invalid_input", nil)
+	}
+	expected := make(map[string]bool, len(fingerprints))
+	for _, fingerprint := range fingerprints {
+		value, err := hexSize(fingerprint, 32)
+		if err != nil {
+			return nil, err
+		}
+		expected[hex.EncodeToString(value)] = true
 	}
 	if base == nil {
 		base = http.DefaultTransport.(*http.Transport)
@@ -463,6 +491,17 @@ func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transpo
 		return nil, failure("api.invalid_input", nil)
 	}
 	t := base.Clone()
+	// Proxy selection runs before dialing, including when a connection is reused.
+	proxy := t.Proxy
+	t.Proxy = func(req *http.Request) (*url.URL, error) {
+		if req.URL.Scheme != "https" {
+			return nil, detail("api.invalid_input", "expected", "HTTPS for pinned TLS")
+		}
+		if proxy == nil {
+			return nil, nil
+		}
+		return proxy(req)
+	}
 	if t.IdleConnTimeout == 0 {
 		t.IdleConnTimeout = 90 * time.Second
 	}
@@ -485,7 +524,7 @@ func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transpo
 			return failure("binding.spki_fingerprint_required", nil)
 		}
 		sum := sha256.Sum256(s.PeerCertificates[0].RawSubjectPublicKeyInfo)
-		if hex.EncodeToString(sum[:]) != hex.EncodeToString(expected) {
+		if !expected[hex.EncodeToString(sum[:])] {
 			return failure("binding.spki_fingerprint_mismatch", nil)
 		}
 		return nil
@@ -494,19 +533,19 @@ func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transpo
 }
 
 // FindModelAttestationsForSignature returns every verified report sharing the
-// response signer. Use VerifyModelResponse to verify the signature.
-func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error) {
-	var matches []VerifiedAttestation
+// response signer. Use VerifyModelResponse to verify the response signature.
+func FindModelAttestationsForSignature(items []VerifiedModelAttestation, sig CompletionSignature) ([]VerifiedModelAttestation, error) {
+	var matches []VerifiedModelAttestation
 	if sig.Kind != "provider_tee" {
 		return nil, failure("api.invalid_input", nil)
 	}
 	for _, a := range items {
 		if a.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(a.Signer.SigningAddress, sig.Signer.SigningAddress) {
-			matches = append(matches, cloneAttestation(a))
+			matches = append(matches, a)
 		}
 	}
 	if len(matches) == 0 {
-		return nil, detail("api.model_attestation_not_found", "matches", 0)
+		return nil, detail("api.model_attestation_signer_not_found", "matches", 0)
 	}
 	return matches, nil
 }
@@ -514,10 +553,10 @@ func FindModelAttestationsForSignature(items []VerifiedAttestation, sig Completi
 // FindModelAttestationForSignature returns the first report matching the response signer.
 //
 // Deprecated: use FindModelAttestationsForSignature to support shared signers.
-func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error) {
+func FindModelAttestationForSignature(items []VerifiedModelAttestation, sig CompletionSignature) (VerifiedModelAttestation, error) {
 	matches, err := FindModelAttestationsForSignature(items, sig)
 	if err != nil {
-		return VerifiedAttestation{}, err
+		return VerifiedModelAttestation{}, err
 	}
 	return matches[0], nil
 }

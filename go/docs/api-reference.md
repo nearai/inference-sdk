@@ -8,7 +8,7 @@ Import `nearai "github.com/nearai/inference-sdk/go"`. For walkthroughs, see the
 
 ```go
 func NewInferenceClient(o InferenceOptions) (*InferenceClient, error)
-func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error)
+func NewDirectInferenceClient(o DirectInferenceOptions) (*DirectInferenceClient, error)
 
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error)
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
@@ -20,6 +20,15 @@ func (c *InferenceClient) HTTPClient() *http.Client
 func (c *InferenceClient) BaseURL() string
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
 func (c *InferenceClient) Close() error
+
+func (c *DirectInferenceClient) Verify(ctx context.Context, model string) (DirectAttestationVerificationResult, error)
+func (c *DirectInferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
+func (c *DirectInferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedDirectCompletionResult, error)
+func (c *DirectInferenceClient) ClearResponseCache()
+func (c *DirectInferenceClient) HTTPClient() *http.Client
+func (c *DirectInferenceClient) BaseURL() string
+func (c *DirectInferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
+func (c *DirectInferenceClient) Close() error
 ```
 
 `CreateChatCompletion`, `CreateResponse`, and `CreateMessage` send non-streaming JSON requests.
@@ -27,6 +36,8 @@ Use `HTTPClient` for streaming or the official OpenAI Go SDK. `RoundTrip` accept
 POST requests at the configured Chat Completions, Gateway Responses, and Messages creation
 endpoints. It verifies deployments before transmission and retains the exact wire
 bytes after complete body consumption. It does not automatically verify receipts.
+`DirectInferenceClient` supports Chat Completions and its verification/transport
+lifecycle; Responses, Messages, and System One use `InferenceClient`.
 
 `HTTPClient` uses the inference client as its transport. `BaseURL` supplies the
 matching API URL for OpenAI client configuration. Close response bodies and the
@@ -51,7 +62,7 @@ semantics, streaming, and supported privacy options.
 | `SigningAlgo` | `Ed25519`; `ECDSA` is also supported. |
 | `E2EE` | `false` for Gateway and Direct; set it to `true` to enable encryption. |
 | `OHTTP` | `false`; requires Ed25519. Independent of E2EE. |
-| `DisableTLSBinding` | `false` for Gateway; direct clients disable attested TLS binding. |
+| `DisableTLSBinding` | `false` for both clients. Set `true` to disable attested TLS binding. |
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
@@ -118,12 +129,15 @@ its reports and pass both to the verification functions.
 
 ```go
 func NewAttestationClient(o ClientOptions) (*AttestationClient, error)
-func NewDirectAttestationClient(o ClientOptions) (*AttestationClient, error)
+func NewDirectAttestationClient(o ClientOptions) (*DirectAttestationClient, error)
 
 func (c *AttestationClient) FetchModelMetadata(ctx context.Context, model string) (ModelMetadata, error)
 func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o FetchOptions) (FetchedGatewayAttestation, error)
 func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error)
 func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error)
+
+func (c *DirectAttestationClient) FetchModelAttestations(ctx context.Context, o FetchOptions) (FetchedModelAttestations, error)
+func (c *DirectAttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error)
 ```
 
 `FetchOptions` selects the signing algorithm, optionally a signing address, and
@@ -136,19 +150,20 @@ supported. Direct clients retrieve model evidence without a Gateway.
 ## Standalone verification
 
 ```go
-func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
-func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
-func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
+func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error)
+func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedModelAttestation, error)
+func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedDirectModelAttestation, error)
 func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAttestations, o VerificationOptions) (VerifiedDirectModelAttestations, error)
 
-func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
-func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
-func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedCompletionResult, error)
-func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error)
+func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedModelAttestation) error
+func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedGatewayAttestation) error
+func VerifyDirectModelResponse(request, response []byte, sig CompletionSignature, attestation VerifiedDirectModelAttestation) error
+func FindDirectModelAttestationsForSignature(attestations []VerifiedDirectModelAttestation, sig CompletionSignature) ([]VerifiedDirectModelAttestation, error)
+func FindModelAttestationsForSignature(items []VerifiedModelAttestation, sig CompletionSignature) ([]VerifiedModelAttestation, error)
 // Deprecated: use FindModelAttestationsForSignature for shared signers.
-func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
+func FindModelAttestationForSignature(items []VerifiedModelAttestation, sig CompletionSignature) (VerifiedModelAttestation, error)
 
-func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
+func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Transport, error)
 func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
 func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 ```
@@ -226,7 +241,7 @@ repository names to policies and verifies every selected service image.
 
 These structures describe options, fetched evidence, verified results, and
 verification callbacks. A fetched `Attestation` is untrusted until verified.
-`VerifiedAttestation.Deployment` contains measured app-compose text and runtime
+`VerifiedAttestationEvidence.Deployment` contains measured app-compose text and runtime
 hashes; applications decide whether those measurements are acceptable.
 
 ```go
@@ -343,36 +358,63 @@ type VerificationOptions struct {
 	DeploymentVerifier DeploymentVerifier
 }
 
-type VerifiedAttestation struct {
-	Signer                SigningIdentity
-	TCBStatus             string
-	AdvisoryIDs           []string
-	Deployment            MeasuredDeployment
-	DeploymentProvenance  string
-	GPUEvidence           string
-	SigningPublicKey      string
-	SPKIFingerprint       string
-	ModelName, InstanceID string
+type VerifiedAttestationEvidence struct {
+	Signer               SigningIdentity
+	TCBStatus            string
+	AdvisoryIDs          []string
+	Deployment           MeasuredDeployment
+	DeploymentProvenance string
 }
 
+type VerifiedModelAttestation struct {
+	VerifiedAttestationEvidence
+	Report           *Attestation
+	GPUEvidence      string
+	SigningPublicKey string
+}
+
+type VerifiedGatewayAttestation struct {
+	VerifiedAttestationEvidence
+	Report          *Attestation
+	SPKIFingerprint string
+}
+
+type VerifiedDirectModelAttestation struct {
+	VerifiedModelAttestation
+	ModelName, InstanceID string
+	SPKIFingerprint       string
+}
+
+// AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
-	Gateway    *VerifiedAttestation
-	Models     []VerifiedAttestation
+	Gateway    *VerifiedGatewayAttestation
+	Models     []VerifiedModelAttestation
 	VerifiedAt time.Time
 }
 
+// VerifiedCompletionAttestation is Gateway evidence or a model representative.
+// Model receipts expose all matching reports in VerifiedCompletionResult.Attestations.
+type VerifiedCompletionAttestation interface {
+	verifiedCompletionAttestation()
+}
+
+func (*VerifiedGatewayAttestation) verifiedCompletionAttestation() {}
+func (*VerifiedModelAttestation) verifiedCompletionAttestation()   {}
+
+// VerifiedCompletionResult contains a response receipt verified by a Gateway client.
 type VerifiedCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
- // Gateway evidence for gateway receipts; nil for Direct.
- // Deprecated for provider_tee receipts: use Attestations for all matching reports.
- // Holds the report selected for the request key.
- Attestation *VerifiedAttestation
- // Every matching verified model deployment for provider_tee receipts.
-	Attestations []VerifiedAttestation
+	// Attestation contains Gateway evidence for gateway receipts.
+	// For provider_tee it is the report used to select the model key;
+	// that singular model field is deprecated in favor of Attestations.
+	Attestation VerifiedCompletionAttestation
+	// Attestations contains every matching verified model deployment for provider_tee
+	// receipts. It is empty for Gateway receipts.
+	Attestations []VerifiedModelAttestation
 }
 
 // ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
@@ -390,7 +432,7 @@ type FetchOptions struct {
 	DisableTLSBinding bool
 }
 
-// InferenceOptions applies to Gateway and experimental direct clients. Nil TTLs
+// InferenceOptions configures Gateway inference. Nil TTLs
 // default to one hour; a pointer to zero disables the corresponding cache.
 type InferenceOptions struct {
 	ClientOptions
@@ -406,29 +448,53 @@ type InferenceOptions struct {
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
-// Direct TLS identity binding is experimental and disabled in all clients.
+// Direct clients verify attested TLS identities by default.
 type DirectInferenceOptions struct {
-	InferenceOptions
-	// Deprecated: set InferenceOptions.E2EE to enable encryption.
-	// When true, DisableE2EE takes precedence over E2EE.
-	DisableE2EE bool
+	DisableTLSBinding bool
+	ClientOptions
+	SigningAlgo       SigningAlgo
+	E2EE              bool
+	OHTTP             bool
+	AttestationTTL    *time.Duration
+	ResponseTTL       *time.Duration
+	ModelVerification VerificationOptions
+	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
 }
 
 type VerifiedDirectModelAttestations struct {
-	ServingAttestation VerifiedAttestation
-	Attestations       []VerifiedAttestation
+	ServingAttestation VerifiedDirectModelAttestation
+	Attestations       []VerifiedDirectModelAttestation
 	SPKIFingerprints   []string
+}
+
+// DirectAttestationVerificationResult contains the verified Direct model reports.
+type DirectAttestationVerificationResult struct {
+	VerifiedDirectModelAttestations
+	VerifiedAt time.Time
+}
+
+// VerifiedDirectCompletionResult contains the complete preflight-verified signer
+// group for a Direct receipt.
+type VerifiedDirectCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
+	CompletionID  string
+	SignatureKind string
+	Signature     CompletionSignature
+	Attestations  []VerifiedDirectModelAttestation
 }
 ```
 
 ## Clients and lifecycle
 
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
-`NewDirectInferenceClient(DirectInferenceOptions)` requires an explicit base URL.
-Both clients leave E2EE disabled unless `InferenceOptions.E2EE` is set to `true`.
-Direct clients are experimental: they do not verify a Gateway, and direct TLS
-attestation binding is disabled, matching JavaScript/Python's current direct-endpoint limitation.
-Normal HTTPS verification still applies.
+`NewDirectInferenceClient(DirectInferenceOptions)` creates a `DirectInferenceClient`
+and requires an explicit base URL. Its options configure Direct inference without
+Gateway verification settings.
+Both clients leave E2EE disabled unless their `E2EE` option is set to `true`.
+Direct clients are experimental and verify the serving TLS peer and every returned
+report. Subsequent requests are pinned to the verified fingerprints sharing the
+selected model signer.
 
 Always close the client and each HTTP response body. `Close` cancels shared
 verification work and active requests, clears retained data, and closes owned
@@ -496,16 +562,15 @@ E2EE. It distinguishes:
 For model receipts, `Attestations` contains all verified reports sharing the selected signer.
 The model use of `Attestation` is deprecated. It holds the report selected for the request key.
 For Gateway receipts, `Attestation` contains the Gateway evidence.
-Direct receipts use `Attestations` and leave `Attestation` nil.
+Direct clients return matching reports in `VerifiedDirectCompletionResult.Attestations`.
 
 Signatures and independently verified deployments do not establish a complete
 cryptographic chain from model execution through Gateway rewriting.
 
 Manual workflow APIs:
 
-- `NewAttestationClient` / `NewDirectAttestationClient` retrieve metadata,
-  Gateway/model reports, and completion signatures. Only attestation-report
-  fetches generate fresh random nonces.
+- `NewAttestationClient` retrieves Gateway and model reports, metadata, and completion signatures.
+- `NewDirectAttestationClient` retrieves model reports and completion signatures from a Direct endpoint.
 - `VerifyGatewayAttestation`, `VerifyModelAttestation`,
   `VerifyDirectModelAttestation`, and `VerifyDirectModelAttestations` authenticate
   those reports. The plural direct helper checks serving-report membership and

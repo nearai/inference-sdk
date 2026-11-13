@@ -394,9 +394,9 @@ Set `stream=True` and use `async for` for typed Responses events. An external
 
 ## Direct model endpoints
 
-Experimental Direct clients use standard HTTPS. The inference request can reach a different instance
-from the one verified during preflight. With E2EE disabled, that instance receives
-the plaintext prompt.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. Direct clients are experimental and pin requests to the verified
+model TLS fingerprints by default.
 
 ```python
 from nearai_inference_sdk import DirectInferenceClient
@@ -413,17 +413,15 @@ async with DirectInferenceClient(
     verified = await direct_client.verify_response(completion.id)
 ```
 
-Every supplied report is verified before selecting a model key. E2EE is opt-in,
-as with the Gateway client. The example enables it explicitly. Ed25519/ECDSA,
-streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the same interfaces as
-Gateway Chat. Response verification returns every verified
-report sharing the selected signer, without identifying one particular CVM.
+Set `e2ee=True` to enable encryption. Streaming, OHTTP, and OpenAI integration
+use the same interfaces as Gateway Chat.
 
 For a manual workflow:
 
 ```python
 from nearai_inference_sdk import (
     DirectAttestationClient,
+    find_direct_model_attestations_for_signature,
     verify_direct_model_attestations,
     verify_direct_model_response,
 )
@@ -438,18 +436,18 @@ verified = await verify_direct_model_attestations(fetched_attestations)
 signature = await direct_client.fetch_completion_signature(
     completion_id, signing_algo='ed25519'
 )
-matching = verify_direct_model_response(
-    request_body,
-    response_body,
-    signature,
-    verified.attestations,
+matching_attestations = find_direct_model_attestations_for_signature(
+    verified.attestations, signature
+)
+verify_direct_model_response(
+    request_body, response_body, signature, matching_attestations[0]
 )
 ```
 
 The top-level serving report must also occur in `all_attestations`. Direct fetch
-currently requests `include_tls_fingerprint=false`, matching JavaScript. When
-verifying caller-supplied TLS-bound evidence, every fingerprint is authenticated
-by its own quote and the serving fingerprint must match the observed TLS peer.
+requests `include_tls_fingerprint=true` by default. Each fingerprint is
+authenticated by its own quote, and the serving fingerprint must match the
+observed TLS peer. Pass `include_spki_fingerprint=False` to fetch without TLS evidence.
 The returned `spki_fingerprints` can be used with `create_pinned_tls_client`.
 
 ## Standalone workflow

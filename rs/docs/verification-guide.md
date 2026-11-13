@@ -145,21 +145,16 @@ origin; supply a client with redirects disabled (or a pinned client).
 
 ### Experimental direct endpoints
 
-`DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
-Gateway client. Its `verify(model)` returns the complete verified report set,
-serving report, TLS binding, and verification timestamp. `with_options` accepts
-`DirectInferenceClientOptions`. Set `e2ee: true` to enable encryption.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. Use `DirectInferenceClientOptions` with `e2ee: true` for encryption.
 
-Direct clients verify every supplied instance, require the serving report to be
-in that set, and retain the selected signer group for receipt verification.
-OHTTP is bound to the serving signer. `DirectAttestationClient` and the standalone
-`verify_direct_model_attestation(s)` / `verify_direct_model_response` functions
-support manual flows. Model names and instance IDs are endpoint metadata, not
-quote-authenticated model identity claims.
+`verify_response(id)` returns `VerifiedDirectCompletionResult` with all matching
+model reports in `attestations`.
 
-Direct uses standard HTTPS. The inference request can reach a different instance
-from the one verified during preflight. With E2EE disabled, that instance receives
-the plaintext prompt.
+For manual workflows, use `DirectAttestationClient` and
+`verify_direct_model_attestation(s)` / `verify_direct_model_response`.
+
+Requests use the verified model TLS fingerprints by default.
 
 ### Existing Rust callers
 
