@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn decrypts_python_wire_vectors_and_rejects_tampering() {
         let fixtures: Value =
-            serde_json::from_str(include_str!("../tests/fixtures/e2ee-python.json")).unwrap();
+            serde_json::from_str(include_str!("../test-fixtures/e2ee-python.json")).unwrap();
         for case in fixtures["cases"].as_array().unwrap() {
             let algo = if case["algorithm"] == "ed25519" {
                 SigningAlgo::Ed25519
@@ -876,9 +876,9 @@ mod tests {
         }
     }
     #[test]
-    fn v3_shared_vectors_and_strict_responses() {
+    fn v3_vectors_and_strict_responses() {
         let fixture: Value =
-            serde_json::from_str(include_str!("../../test-fixtures/e2ee-v3.json")).unwrap();
+            serde_json::from_str(include_str!("../test-fixtures/e2ee-v3.json")).unwrap();
         for vector in fixture["vectors"].as_array().unwrap() {
             let algo = if vector["signing_algo"] == "ecdsa" {
                 SigningAlgo::Ecdsa

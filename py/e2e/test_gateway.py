@@ -41,7 +41,7 @@ from nearai_inference_sdk import (
 async def test_inference_client_verifies_json_and_streams(
     e2ee: bool, signing_algo: SigningAlgo, ohttp: bool, official: bool
 ) -> None:
-    for model in selected_models('chat', 'near'):
+    for index, model in enumerate(selected_models('chat', 'near')):
         async with (
             asyncio.timeout(180),
             InferenceClient(
@@ -64,7 +64,7 @@ async def test_inference_client_verifies_json_and_streams(
             # Explicit preflight shares its verified session with both Chat calls.
             preflight = await inference_client.verify(model)
             for stream in (False, True):
-                await verify_client_chat(
+                receipt = await verify_client_chat(
                     inference_client,
                     external.chat if official else inference_client.chat,
                     model,
@@ -72,6 +72,13 @@ async def test_inference_client_verifies_json_and_streams(
                     stream,
                     preflight=preflight,
                 )
+                if (
+                    index == 0
+                    and e2ee
+                    and signing_algo == 'ed25519'
+                    and not (official or ohttp)
+                ):
+                    assert receipt.signature_kind == 'provider_tee'
 
 
 @pytest.mark.asyncio

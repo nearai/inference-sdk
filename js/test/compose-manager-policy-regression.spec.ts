@@ -5,7 +5,7 @@ import { verifyComposeManagerDeploymentImageProvenance } from '../src/core/compo
 import type { MeasuredDeployment } from '../src/types/verification';
 import { sha256 } from './fixtures';
 
-const fixtureDir = resolve(__dirname, '../../test-fixtures');
+const fixtureDir = resolve(__dirname, './fixtures');
 const fixture = JSON.parse(
   readFileSync(resolve(fixtureDir, 'compose-manager/deployment.json'), 'utf8'),
 );

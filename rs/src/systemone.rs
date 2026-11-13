@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_response_vectors() {
+    fn response_vectors() {
         let fixture: Value =
             serde_json::from_str(include_str!("../test-fixtures/systemone-responses.json"))
                 .unwrap();

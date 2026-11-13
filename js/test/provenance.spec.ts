@@ -20,7 +20,7 @@ import { verifyImageProvenanceSource } from '../src/core/provenance';
 import { ImageProvenanceStatementSchema } from '../src/schemas';
 import { createDeferred } from './fixtures';
 
-const FIXTURES = resolve(__dirname, '../../test-fixtures/provenance');
+const FIXTURES = resolve(__dirname, './fixtures/provenance');
 const BUNDLE = readFileSync(
   resolve(FIXTURES, 'compose-manager-launcher.bundle.json'),
   'utf8',

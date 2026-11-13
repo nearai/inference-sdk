@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use support::{model_attestation, model_quote, NONCE};
 
-const FIXTURE: &str = include_str!("../../test-fixtures/compose-manager/deployment.json");
+const FIXTURE: &str = include_str!("fixtures/compose-manager/deployment.json");
 
 fn manager_report() -> ComposeManagerAttestation {
     let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
@@ -240,7 +240,7 @@ async fn independently_verifies_current_manager_and_proxy_requests() {
         .mount(&server)
         .await;
     let bundle: Value = serde_json::from_str(include_str!(
-        "../../test-fixtures/provenance/compose-manager-launcher.bundle.json"
+        "fixtures/provenance/compose-manager-launcher.bundle.json"
     ))
     .unwrap();
     Mock::given(method("GET"))

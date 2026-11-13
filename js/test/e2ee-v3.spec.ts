@@ -27,10 +27,10 @@ type Vector = {
   ciphertext: string;
 };
 const { vectors } = JSON.parse(
-  readFileSync(resolve(__dirname, '../../test-fixtures/e2ee-v3.json'), 'utf8'),
+  readFileSync(resolve(__dirname, './fixtures/e2ee-v3.json'), 'utf8'),
 ) as { vectors: Vector[] };
 
-describe.each(vectors)('v3 $signing_algo shared vectors', (vector) => {
+describe.each(vectors)('v3 $signing_algo vectors', (vector) => {
   const seed = Buffer.from(vector.model_secret, 'hex');
   const clientKeyPair: E2eeClientKeyPair =
     vector.signing_algo === 'ecdsa'

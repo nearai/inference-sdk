@@ -69,11 +69,14 @@ function modelQuoteForSigner(signingAddress: string) {
   });
 }
 
-async function verifiedModelAttestation(signingAddress: string) {
+async function verifiedModelAttestation(
+  signingAddress: string,
+  signingAlgo: CompletionSignature['signer']['signingAlgo'] = 'ecdsa',
+) {
   const quote = modelQuoteForSigner(signingAddress);
   return verifyModelAttestation({
     attestation: createModelAttestation({
-      signer: { signingAlgo: 'ecdsa', signingAddress },
+      signer: { signingAlgo, signingAddress },
     }),
     clientBinding: { nonce },
     verifiers: { tdxQuote: async () => quote },
@@ -99,35 +102,6 @@ async function verifiedGatewayAttestation(
 }
 
 describe('response signature verification', () => {
-  test('verifies an unprefixed ECDSA model signature when signer encodings differ', async () => {
-    const wallet = new ethers.Wallet(
-      '0x0123456789012345678901234567890123456789012345678901234567890123',
-    );
-    const signedText = modelSignedText({
-      model: 'canonical-model',
-      request: requestBody,
-      response: responseBody,
-    });
-    const signature: CompletionSignature = {
-      kind: 'provider_tee',
-      signedText,
-      signature: (await wallet.signMessage(signedText)).slice(2),
-      signer: {
-        signingAlgo: 'ecdsa',
-        signingAddress: wallet.address.slice(2).toUpperCase(),
-      },
-    };
-
-    const attestation = await verifiedModelAttestation(wallet.address);
-
-    verifyModelResponse({
-      requestBody,
-      responseBody,
-      signature,
-      attestation,
-    });
-  });
-
   test('rejects a model signature that names a different model', async () => {
     const wallet = new ethers.Wallet(
       '0x0123456789012345678901234567890123456789012345678901234567890123',
@@ -211,111 +185,119 @@ describe('response signature verification', () => {
     },
   );
 
-  test('verifies an Ed25519 gateway response signature', async () => {
-    const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
-    const signedText = gatewaySignedText(requestBody, responseBody);
-    const signingAddress = Buffer.from(keyPair.publicKey).toString('hex');
-    const signature: CompletionSignature = {
-      kind: 'gateway',
-      signedText,
-      signature: Buffer.from(
-        nacl.sign.detached(Buffer.from(signedText), keyPair.secretKey),
-      ).toString('hex'),
-      signer: { signingAlgo: 'ed25519', signingAddress },
-    };
-
-    const attestation = await verifiedGatewayAttestation(signingAddress);
-
-    verifyGatewayResponse({
-      requestBody,
-      responseBody,
-      signature,
-      attestation,
-    });
-  });
-
-  test('verifies a prefixed ECDSA gateway response signature', async () => {
-    const wallet = new ethers.Wallet(
-      '0x0123456789012345678901234567890123456789012345678901234567890123',
-    );
-    const signedText = gatewaySignedText(requestBody, responseBody);
-    const signature: CompletionSignature = {
-      kind: 'gateway',
-      signedText,
-      signature: await wallet.signMessage(signedText),
-      signer: { signingAlgo: 'ecdsa', signingAddress: wallet.address },
-    };
-
-    const attestation = await verifiedGatewayAttestation(
-      wallet.address,
-      'ecdsa',
-    );
-
-    verifyGatewayResponse({
-      requestBody,
-      responseBody,
-      signature,
-      attestation,
-    });
-  });
-
-  test('rejects a gateway response signed by a different gateway identity', async () => {
-    const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
-    const signedText = gatewaySignedText(requestBody, responseBody);
-    const signingAddress = Buffer.from(keyPair.publicKey).toString('hex');
-    const signature: CompletionSignature = {
-      kind: 'gateway',
-      signedText,
-      signature: Buffer.from(
-        nacl.sign.detached(Buffer.from(signedText), keyPair.secretKey),
-      ).toString('hex'),
-      signer: { signingAlgo: 'ed25519', signingAddress },
-    };
-    const otherKeyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 8));
-    const otherSigningAddress = Buffer.from(otherKeyPair.publicKey).toString(
-      'hex',
-    );
-    const attestation = await verifiedGatewayAttestation(otherSigningAddress);
-
-    expect(() =>
-      verifyGatewayResponse({
-        requestBody,
-        responseBody,
-        signature,
-        attestation,
-      }),
-    ).toThrow(
-      expect.objectContaining({
-        failure: { code: 'signature.signer_mismatch' },
-      }),
-    );
-  });
-
-  test('rejects an explicit signature kind for the other claim', async () => {
-    const signature: CompletionSignature = {
-      kind: 'gateway',
-      signedText: 'request:response',
-      signature: 'aa',
-      signer: { signingAlgo: 'ecdsa', signingAddress: '11'.repeat(20) },
-    };
-    const attestation = await verifiedModelAttestation(
-      signature.signer.signingAddress,
-    );
-
-    expect(() =>
-      verifyModelResponse({
-        requestBody,
-        responseBody,
-        signature,
-        attestation,
-      }),
-    ).toThrow(
-      expect.objectContaining({
-        failure: {
-          code: 'signature.kind_mismatch',
-          details: { expected: 'provider_tee', actual: 'gateway' },
+  describe.each(['ed25519', 'ecdsa'] as const)('%s', (signingAlgo) => {
+    describe.each(['provider_tee', 'gateway'] as const)('%s', (kind) => {
+      test.each([
+        { change: 'none', code: undefined },
+        { change: 'request bytes', code: 'signature.payload_mismatch' },
+        { change: 'response bytes', code: 'signature.payload_mismatch' },
+        { change: 'signature bytes', code: 'signature.invalid' },
+        { change: 'signer', code: 'signature.signer_mismatch' },
+        { change: 'kind', code: 'signature.kind_mismatch' },
+      ])(
+        'binds exact bytes, signer and kind: change=$change',
+        async ({ change, code }) => {
+          const wallet = new ethers.Wallet(
+            '0x0123456789012345678901234567890123456789012345678901234567890123',
+          );
+          const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
+          const signingAddress =
+            signingAlgo === 'ecdsa'
+              ? wallet.address
+              : Buffer.from(keyPair.publicKey).toString('hex');
+          const signedText =
+            kind === 'provider_tee'
+              ? modelSignedText({
+                  model: 'canonical-model',
+                  request: requestBody,
+                  response: responseBody,
+                })
+              : gatewaySignedText(requestBody, responseBody);
+          const signatureHex =
+            signingAlgo === 'ecdsa'
+              ? await wallet.signMessage(signedText)
+              : Buffer.from(
+                  nacl.sign.detached(
+                    Buffer.from(signedText),
+                    keyPair.secretKey,
+                  ),
+                ).toString('hex');
+          const signature: CompletionSignature = {
+            kind,
+            signedText,
+            signature:
+              kind === 'provider_tee'
+                ? signatureHex.replace(/^0x/, '')
+                : signatureHex,
+            signer: {
+              signingAlgo,
+              signingAddress: `0X${signingAddress.replace(/^0x/i, '').toUpperCase()}`,
+            },
+          };
+          // Signature and evidence use equivalent, differently spelled signer bytes.
+          const attestedSigningAddress =
+            change === 'signer'
+              ? '11'.repeat(signingAlgo === 'ecdsa' ? 20 : 32)
+              : signingAddress;
+          const modelAttestation = await verifiedModelAttestation(
+            attestedSigningAddress,
+            signingAlgo,
+          );
+          const gatewayAttestation = await verifiedGatewayAttestation(
+            attestedSigningAddress,
+            signingAlgo,
+          );
+          let request = requestBody;
+          let response = responseBody;
+          if (change === 'request bytes')
+            request = Buffer.concat([request, Buffer.from(' ')]);
+          if (change === 'response bytes')
+            response = Buffer.concat([response, Buffer.from(' ')]);
+          const alteredSignature = { ...signature };
+          if (change === 'signature bytes') {
+            const bytes = Buffer.from(
+              signature.signature.replace(/^0x/, ''),
+              'hex',
+            );
+            bytes[0] ^= 1;
+            alteredSignature.signature = bytes.toString('hex');
+          }
+          if (change === 'kind')
+            alteredSignature.kind =
+              kind === 'gateway' ? 'provider_tee' : 'gateway';
+          const verify = () => {
+            const params = {
+              requestBody: request,
+              responseBody: response,
+              signature: alteredSignature,
+            };
+            if (kind === 'provider_tee')
+              verifyModelResponse({ ...params, attestation: modelAttestation });
+            else
+              verifyGatewayResponse({
+                ...params,
+                attestation: gatewayAttestation,
+              });
+          };
+          if (code === undefined) expect(verify).not.toThrow();
+          else
+            expect(verify).toThrow(
+              expect.objectContaining({
+                failure: expect.objectContaining({
+                  code,
+                  ...(change === 'kind'
+                    ? {
+                        details: {
+                          expected: kind,
+                          actual: alteredSignature.kind,
+                        },
+                      }
+                    : {}),
+                }),
+              }),
+            );
         },
-      }),
-    );
+      );
+    });
   });
 });
