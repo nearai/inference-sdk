@@ -118,6 +118,7 @@ type VerifiedGatewayAttestation struct {
 
 type VerifiedDirectModelAttestation struct {
 	VerifiedModelAttestation
+	// The quote does not authenticate the endpoint's ModelName or InstanceID.
 	ModelName, InstanceID string
 	SPKIFingerprint       string
 }

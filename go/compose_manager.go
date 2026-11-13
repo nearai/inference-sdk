@@ -22,8 +22,8 @@ type ComposeManagerAttestation struct {
 	ReportedQuoteData string                 `json:"report_data"`
 }
 
-// VerifiedComposeManagerAttestation authenticates recorded deployment intent,
-// not successful execution, current containers, or a unique CVM identity.
+// VerifiedComposeManagerAttestation contains actions authenticated under the
+// model's measured app-compose configuration.
 type VerifiedComposeManagerAttestation struct {
 	Actions             []ComposeManagerAction
 	TCBStatus           string

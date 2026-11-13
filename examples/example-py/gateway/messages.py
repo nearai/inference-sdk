@@ -6,6 +6,7 @@ from nearai_inference_sdk import InferenceClient
 BASE_URL = os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/')
 MODEL = os.environ.get('NEARAI_MODEL', 'anthropic/claude-haiku-4-5')
 SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
+OHTTP = os.environ.get('NEARAI_OHTTP') == 'true'
 
 
 async def run_non_streaming_example(inference_client: InferenceClient) -> None:
@@ -49,7 +50,7 @@ async def main() -> None:
             api_key,
             base_url=BASE_URL,
             signing_algo=SIGNING_ALGO,
-            ohttp=os.environ.get('NEARAI_OHTTP') == 'true',
+            ohttp=OHTTP,
         ) as inference_client,
     ):
         await run_non_streaming_example(inference_client)

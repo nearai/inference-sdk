@@ -1,31 +1,28 @@
-import type { SigningAlgo } from '@nearai/inference-sdk/node';
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 // Experimental direct-endpoint example.
 import OpenAI from 'openai';
 import { transportOptions } from '../utils/transport-options.ts';
 
+const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL =
   process.env.NEARAI_BASE_URL ?? 'https://glm-5-3-flash.completions.near.ai/v1';
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
-const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
-  'ed25519') as SigningAlgo;
 
 async function main(): Promise<void> {
-  const apiKey = process.env.NEARAI_API_KEY;
-  if (!apiKey) throw new Error('NEARAI_API_KEY is required');
+  if (!API_KEY) throw new Error('NEARAI_API_KEY is required');
 
   // Verify model reports and enable E2EE.
   const directClient = new DirectInferenceClient({
     baseUrl: BASE_URL,
-    apiKey,
-    ...transportOptions(SIGNING_ALGO),
+    apiKey: API_KEY,
+    ...transportOptions(),
     e2ee: true,
   });
 
   // The OpenAI client uses DirectInferenceClient's verified transport.
   const openai = new OpenAI({
     maxRetries: 0,
-    apiKey,
+    apiKey: API_KEY,
     baseURL: BASE_URL,
     fetch: directClient.fetch,
   });

@@ -22,7 +22,7 @@ use std::{
 use tokio::sync::Mutex;
 
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, InferenceError>> + Send>>;
-/// Consume the entire response body before verification.
+/// Verify after reading the response body or receiving its terminal SSE event.
 pub struct InferenceResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,

@@ -13,6 +13,7 @@ import { readChatOutput } from '../utils/chat-output.ts';
 
 // Standalone verification of plaintext Chat bodies over HTTPS.
 // See chat-completions.ts for E2EE.
+const API_KEY = process.env.NEARAI_API_KEY;
 const BASE_URL = `${(
   process.env.NEARAI_BASE_URL ?? 'https://glm-5-3-flash.completions.near.ai/v1/'
 ).replace(/\/+$/, '')}/`;
@@ -21,11 +22,10 @@ const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
 
 async function main(): Promise<void> {
-  const apiKey = process.env.NEARAI_API_KEY;
-  if (!apiKey) throw new Error('NEARAI_API_KEY is required');
+  if (!API_KEY) throw new Error('NEARAI_API_KEY is required');
 
   const bootstrapClient = new DirectAttestationClient({
-    apiKey,
+    apiKey: API_KEY,
     baseUrl: BASE_URL,
   });
   const fetched = await bootstrapClient.fetchModelAttestations({
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const verified = await verifyDirectModelAttestations(fetched);
   const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
   const client = new DirectAttestationClient({
-    apiKey,
+    apiKey: API_KEY,
     baseUrl: BASE_URL,
     fetch: pinnedTlsFetch,
   });
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   );
 
   const params: CompletionExampleParams = {
-    apiKey,
+    apiKey: API_KEY,
     client,
     pinnedTlsFetch,
     attestations: verified.attestations,

@@ -29,6 +29,7 @@ pub struct FetchedDirectModelAttestations {
     pub client_binding: DirectClientBinding,
     pub ohttp_attestation: Option<OhttpAttestation>,
 }
+/// The quote does not authenticate the endpoint's `model_name` or `instance_id`.
 #[derive(Clone, Debug)]
 pub struct VerifiedDirectModelAttestation {
     pub attestation: VerifiedModelAttestation,

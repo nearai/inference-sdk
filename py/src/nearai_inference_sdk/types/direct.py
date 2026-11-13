@@ -38,8 +38,9 @@ class FetchedDirectModelAttestations:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedDirectModelAttestation(VerifiedModelAttestation):
+    """The quote does not authenticate the endpoint's model_name or instance_id."""
+
     report: DirectModelAttestation
-    # Endpoint metadata is not a model-name claim authenticated by the quote.
     model_name: str
     instance_id: str | None = None
     spki_fingerprint: str | None = None
@@ -60,7 +61,7 @@ class VerifiedDirectModelAttestations:
 class DirectAttestationVerificationResult(VerifiedDirectModelAttestations):
     """All verified direct reports shared by verify() and Chat."""
 
-    # Unix milliseconds when verification completed; unchanged on cache hits.
+    # Unix milliseconds when verification completed.
     verified_at: int
 
 

@@ -31,13 +31,9 @@ func (c *DirectInferenceClient) RoundTrip(req *http.Request) (*http.Response, er
 func (c *DirectInferenceClient) Close() error
 ```
 
-`CreateChatCompletion`, `CreateResponse`, and `CreateMessage` send non-streaming JSON requests.
-Use `HTTPClient` for streaming or the official OpenAI Go SDK. `RoundTrip` accepts
-POST requests at the configured Chat Completions, Gateway Responses, and Messages creation
-endpoints. It verifies deployments before transmission and retains the exact wire
-bytes after complete body consumption. It does not automatically verify receipts.
-`DirectInferenceClient` supports Chat Completions and its verification/transport
-lifecycle; Responses, Messages, and System One use `InferenceClient`.
+`CreateChatCompletion`, `CreateResponse`, and `CreateMessage` send JSON requests.
+Use `HTTPClient()` for streaming or official SDK integration.
+Direct clients support Chat; Responses, Messages, and System One use Gateway clients.
 
 `HTTPClient` uses the inference client as its transport. `BaseURL` supplies the
 matching API URL for OpenAI client configuration. Close response bodies and the
@@ -55,33 +51,23 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default and behavior |
 | --- | --- |
-| `ClientOptions.APIKey` | Optional application credential; the empty string omits it. The library does not read environment variables. |
+| `ClientOptions.APIKey` | Optional bearer credential. |
 | `ClientOptions.BaseURL` | `DefaultBaseURL` (`https://cloud-api.near.ai/v1`) for Gateway; required for direct. |
 | `ClientOptions.Headers` | Additional request headers. |
-| `ClientOptions.HTTPClient` | Optional borrowed HTTP client; custom transports are trusted application code. |
+| `ClientOptions.HTTPClient` | Optional HTTP transport. |
 | `SigningAlgo` | `Ed25519`; `ECDSA` is also supported. |
 | `E2EE` | `false` for Gateway and Direct; set it to `true` to enable encryption. |
 | `OHTTP` | `false`; requires Ed25519. Independent of E2EE. |
-| `DisableTLSBinding` | `false` for both clients. Set `true` to disable attested TLS binding. |
+| `DisableTLSBinding` | `false` for both clients. Set `true` for an application proxy or HTTP endpoint. |
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
 
-Use `NewAttestationClient(ClientOptions{})` to fetch attestation without credentials.
-Gateway and direct attestation requests omit `Authorization`, `api-key`, and
-`x-api-key`, including values supplied in `Headers`. Other custom headers are
-preserved. Metadata, inference, and signature requests use configured authentication.
+Gateway and Direct attestation report requests omit `Authorization`, `api-key`,
+and `x-api-key`. Model reports fetched through the Gateway, model metadata,
+inference, and response signatures use the configured credentials.
 
-Model reports through the Gateway use the client's configured API key or authentication
-headers. Listed models can be queried without credentials; unlisted models require a
-key for an organization granted access. With standalone evidence clients, verify the
-Gateway before fetching an authenticated model report. Integrated clients perform
-this ordering automatically.
-
-See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
-
-Consume the stream before calling `VerifyResponse`. After a valid response ID, Chat and Responses
-streams can end with `[DONE]` or normal EOF. Messages require `message_stop`.
+Consume the response body before calling `VerifyResponse`.
 
 ## System One decisions
 
@@ -115,17 +101,10 @@ and Box coordinates/confidence use finite `float64` values.
 See the [native image example](../../examples/example-go/gateway/systemone/main.go) and
 [run instructions](../../examples/README.md#system-one-images).
 
-System One shares Chat's per-model session and the client's
-receipt retention and verification.
-Cancellation uses `ctx`, and `Close` cancels outstanding operations.
-
-Inference is sent once. Retry transient receipt lookups through the verification
-method while the response remains cached.
-
 ## Evidence retrieval
 
-Fetching reports does not verify them. Keep the returned `ClientBinding` with
-its reports and pass both to the verification functions.
+Pass each fetched report and its matching `ClientBinding` to the corresponding
+verification function.
 
 ```go
 func NewAttestationClient(o ClientOptions) (*AttestationClient, error)
@@ -140,12 +119,8 @@ func (c *DirectAttestationClient) FetchModelAttestations(ctx context.Context, o 
 func (c *DirectAttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error)
 ```
 
-`FetchOptions` selects the signing algorithm, optionally a signing address, and
-whether to disable TLS binding. `FetchGatewayAttestation` and
-`FetchModelAttestations` generate fresh nonces; metadata and completion-signature
-retrieval do not. Model metadata
-reports the canonical model ID, provider type, and whether model attestation is
-supported. Direct clients retrieve model evidence without a Gateway.
+`FetchOptions` selects the signing algorithm, signer filter, and Gateway TLS
+binding. `FetchModelMetadata` returns the model ID, provider, and attestation support listed in the model catalog.
 
 ## Standalone verification
 
@@ -168,14 +143,12 @@ func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
 func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 ```
 
-Response verification takes exact transmitted bytes, including ciphertext when
-E2EE is enabled. Do not reserialize parsed JSON. Authenticate the attestation
-before passing it to a response helper. The direct plural helpers preserve all
-matching instances; a shared signer does not uniquely identify an instance.
+Pass the verified evidence and exact request/response bytes, before decryption
+when E2EE is enabled. Direct response verification returns all matching reports.
 
-`NewPinnedTransport` clones a standard HTTP transport and checks the attested
-SPKI fingerprint in addition to normal TLS validation. Close its idle connections
-when finished.
+`NewPinnedTransport` accepts HTTPS requests and requires one of the verified
+SPKI fingerprints in addition to normal TLS validation. Close its idle
+connections when finished.
 
 | Factory | Parameter or field | Default | Description |
 | --- | --- | --- | --- |
@@ -203,7 +176,7 @@ func NewOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, fo
 `PreparedE2EEChatRequest.Request` is the encrypted HTTP request. Preparation
 consumes the original body. Authenticate `E2EEModelKey` against verified evidence
 first. `DecryptSSE` wraps a streaming body; consume it completely and close it.
-These helpers decrypt content but do not verify response signatures.
+Use the original encrypted bytes for response signature verification.
 
 Authenticate OHTTP configuration with `VerifyOHTTPKeyConfig` and an already
 verified signer before constructing a transport. A nil base transport uses
@@ -239,10 +212,7 @@ repository names to policies and verifies every selected service image.
 
 ## Public data types
 
-These structures describe options, fetched evidence, verified results, and
-verification callbacks. A fetched `Attestation` is untrusted until verified.
-`VerifiedAttestationEvidence.Deployment` contains measured app-compose text and runtime
-hashes; applications decide whether those measurements are acceptable.
+Public options, evidence, results, and verification callbacks:
 
 ```go
 const DefaultBaseURL = "https://cloud-api.near.ai/v1"
@@ -381,6 +351,7 @@ type VerifiedGatewayAttestation struct {
 
 type VerifiedDirectModelAttestation struct {
 	VerifiedModelAttestation
+	// The quote does not authenticate the endpoint's ModelName or InstanceID.
 	ModelName, InstanceID string
 	SPKIFingerprint       string
 }
@@ -417,7 +388,7 @@ type VerifiedCompletionResult struct {
 	Attestations []VerifiedModelAttestation
 }
 
-// ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
+// ClientOptions configures evidence retrieval.
 // A custom transport is part of the trust boundary and must perform normal TLS verification.
 type ClientOptions struct {
 	APIKey     string
@@ -448,13 +419,12 @@ type InferenceOptions struct {
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
-// Direct clients verify attested TLS identities by default.
 type DirectInferenceOptions struct {
-	DisableTLSBinding bool
 	ClientOptions
 	SigningAlgo       SigningAlgo
 	E2EE              bool
 	OHTTP             bool
+	DisableTLSBinding bool
 	AttestationTTL    *time.Duration
 	ResponseTTL       *time.Duration
 	ModelVerification VerificationOptions
@@ -488,65 +458,32 @@ type VerifiedDirectCompletionResult struct {
 ## Clients and lifecycle
 
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
-`NewDirectInferenceClient(DirectInferenceOptions)` creates a `DirectInferenceClient`
-and requires an explicit base URL. Its options configure Direct inference without
-Gateway verification settings.
-Both clients leave E2EE disabled unless their `E2EE` option is set to `true`.
-Direct clients are experimental and verify the serving TLS peer and every returned
-report. Subsequent requests are pinned to the verified fingerprints sharing the
-selected model signer.
+`NewDirectInferenceClient(DirectInferenceOptions)` requires an explicit base URL.
+Direct clients verify all returned model attestations and pin requests to the
+selected signer group's TLS fingerprints. E2EE defaults to `false` for both clients.
 
-Always close the client and each HTTP response body. `Close` cancels shared
-verification work and active requests, clears retained data, and closes owned
-idle connections. Caller-supplied HTTP clients/transports are borrowed.
+Close the client and HTTP response bodies when finished.
 
-`Verify(ctx, model)` returns verified model reports and `VerifiedAt`.
-Gateway clients also return Gateway evidence.
+`Verify(ctx, model)` verifies deployments before inference. Gateway clients
+return `AttestationVerificationResult`; Direct clients return
+`DirectAttestationVerificationResult`. Both include all verified model reports.
 
 `AttestationTTL` and `ResponseTTL` default to one hour. A pointer to zero disables
-that cache. Verify receipts before `ResponseTTL` expires.
+the corresponding cache. Verify responses before `ResponseTTL` expires;
+`ClearResponseCache()` discards retained responses.
 
-Streaming is incremental, but signature verification requires retaining the wire body.
-Once verification caches a success or a failure that cannot be retried, it releases
-the captured request and response bytes. Subsequent calls reuse that outcome until
-the original TTL expires. Unverified records and retryable failures retain their
-bytes until expiry or explicit cleanup. A duplicate
-retained ID fails with `api.duplicate_completion_id` and preserves the original
-receipt. An expired ID can be reused.
+## Attestation verification
 
-Call `ClearResponseCache()` when discarding a conversation. It clears captured
-request/response bytes and cached receipt results while keeping the client and
-attestation sessions reusable. Cleared IDs become unavailable to `VerifyResponse`.
-Ongoing response captures stay discarded when they finish.
-To end active work and release its buffers, also cancel the requests and finish
-any ongoing verification. Direct clients support the same cleanup method.
+All returned model reports must pass verification. Configure `AcceptedTCBStatuses`
+to select accepted TCB states and `RequireGPUEvidence` to require GPU evidence.
 
-## Verification guarantees
+Use `QuoteVerifier`, `GPUVerifier`, and `DeploymentVerifier` for custom verification.
 
-All returned model reports must verify, including instances sharing a signer.
-By default, `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised` TCB states are accepted. An explicitly
-empty `AcceptedTCBStatuses` rejects all states. Debug-enabled quotes are rejected.
-Quote report data binds the client nonce and signer, plus the Gateway's SPKI
-fingerprint when requested. The SDK replays RTMR3 events and checks the hash of
-the exact app-compose text against MRCONFIGID.
+Gateway requests use attested TLS pinning by default. Set `DisableTLSBinding`
+for an application proxy whose TLS certificate belongs to the proxy.
 
-GPU evidence, when supplied, must carry the same nonce and an NVIDIA-signed
-ES384 overall verdict with the expected issuer and valid timestamps. Set
-`RequireGPUEvidence` to reject missing evidence. `QuoteVerifier`, `GPUVerifier`,
-and `DeploymentVerifier` hooks are trusted application code: custom verifiers
-must authenticate their inputs, not merely parse them.
-
-Gateway pinning checks the observed peer during the TLS handshake before sending
-Chat, model-evidence, or signature requests. It supports the default transport
-or a caller's `*http.Transport` with normal TLS verification and no custom
-`DialTLS`/`DialTLSContext`. `DisableTLSBinding: true` is an explicit opt-out for
-application proxies; it no longer establishes the attested Gateway's TLS identity.
-Requests do not follow redirects. The configured credentials take precedence over
-credentials supplied by an external OpenAI client.
-
-Model metadata uses the canonical request model ID with aliasing disabled. Models
-without supported NEAR model attestation use Gateway-only verification. E2EE and
-model deployment policies reject that flow before transmitting Chat.
+Models without NEAR model attestation use Gateway-only (Incognito) verification.
+E2EE and model deployment policies require model attestation.
 
 ## Response verification
 
@@ -555,17 +492,14 @@ bytes against evidence saved before transmission, including ciphertext under
 E2EE. It distinguishes:
 
 - `provider_tee`: a verified model signer signed the exact bytes and canonical
-  model ID. This does not authenticate the Gateway's handling of them.
+  model ID.
 - `gateway`: a verified Gateway signer signed the exact client-visible bytes.
-  This does not prove execution in a model TEE.
 
-For model receipts, `Attestations` contains all verified reports sharing the selected signer.
-The model use of `Attestation` is deprecated. It holds the report selected for the request key.
-For Gateway receipts, `Attestation` contains the Gateway evidence.
-Direct clients return matching reports in `VerifiedDirectCompletionResult.Attestations`.
-
-Signatures and independently verified deployments do not establish a complete
-cryptographic chain from model execution through Gateway rewriting.
+`VerifiedCompletionResult.Attestations` contains all reports sharing the selected
+model signer. For Gateway receipts, `Attestation` contains Gateway evidence.
+The singular `Attestation` is deprecated for model receipts: it holds the report
+selected for the request key; use `Attestations` for model evidence.
+`VerifiedDirectCompletionResult` contains the matching reports in `Attestations`.
 
 Manual workflow APIs:
 
@@ -578,86 +512,44 @@ Manual workflow APIs:
 - `VerifyGatewayResponse`, `VerifyModelResponse`, `VerifyDirectModelResponse`
   verify exact bytes using already authenticated evidence.
 - `FindModelAttestationsForSignature` selects all matching reports from already
-  verified inputs. Verify the signature with `VerifyModelResponse` and the report
-  selected for the request key.
+  verified inputs. Use `VerifyModelResponse` to verify the signature.
 - The deprecated `FindModelAttestationForSignature` returns the first matching
   report in input order. An absent signer returns an error.
 
 ## Encryption
 
-E2EE uses Ed25519-to-X25519 / HKDF-SHA256 / XChaCha20-Poly1305 or the legacy
-secp256k1 / HKDF-SHA256 / AES-GCM protocol. Each request gets a fresh response key.
-The model key is bound to its quote-authenticated signer before use.
+E2EE encrypts supported Chat fields to the verified model key.
 
-Protected request fields include message content (including serialized multimodal
-content), reasoning, name, refusal, audio data, tool/function names and arguments,
-tool descriptions/parameters, and selected function names. Protected response
-fields include message/delta content, reasoning, refusal, audio data, tool/function
-names and arguments, logprobs, and streaming tool-result output. Other fields,
-including model IDs, roles and tool-call IDs, remain visible. The standalone
-`PrepareE2EEChatRequest` consumes the supplied body and returns a new request plus
-`DecryptJSON`/`DecryptSSE` helpers; it does not attest the supplied model key or
-verify response signatures.
+Protected fields include message content, reasoning, audio, tool definitions and
+calls, logprobs, and streaming tool-result output. Use `PrepareE2EEChatRequest`
+with a verified model key for standalone encryption.
 
-OHTTP protects the whole Chat HTTP exchange to the Gateway (or experimental
-direct endpoint). Authorization and explicitly forwarded application headers are
-visible to that endpoint; content and E2EE headers are inside the encrypted
-exchange. It is independent of field E2EE and works with Gateway-only models.
-`NewOHTTPTransport` requires an already authenticated key configuration.
-OHTTP/BHTTP responses authenticate the final encrypted frame, including trailing
-padding after SSE `[DONE]`; missing, truncated or corrupt frames fail. All decrypted
-bytes, including headers and padding, count toward 1 GiB. Header sections are
-bounded to 1 MiB and at most 32 informational responses precede the final response.
+OHTTP encrypts encapsulated requests and responses to the Gateway or Direct
+endpoint. It is independent of E2EE and also supports Gateway-only models.
+Authenticate the key configuration before using `NewOHTTPTransport`.
 
 ## Deployment and image policies
 
-`DeploymentPolicy(ctx, model, deployment)` runs after the model's configured
-`DeploymentVerifier`. Verification alone does not approve a publisher, image,
-measurement or release version. Supply policies for those decisions.
-Deployment callbacks inspect the verified evidence as read-only input.
+`DeploymentPolicy(ctx, model, deployment)` applies application-specific model
+deployment checks. Use image policies to require particular GitHub builds.
 
-`VerifyDeploymentImageProvenance` selects digest-pinned images from measured
-app-compose JSON's `docker_compose_file`. Every configured image repository must
-occur, and every matching service must pin a digest. Unresolved image variables
-and malformed Compose are rejected before fetching evidence.
+`VerifyDeploymentImageProvenance` checks required images against their GitHub
+build policies. Pass `AppCompose` from the deployment callback or from an
+already verified deployment.
+Each configured image repository is required, with a literal SHA-256 digest.
 
-`FetchImageProvenance` retrieves inline GitHub bundles, including pagination.
-Provenance fetch limits:
-
-| Resource | Limit |
-| --- | --- |
-| Response page | 16 MiB and 100 attestations |
-| Entire fetch | 32 pages and 64 MiB |
-| Combined `Link` headers per page | 8 KiB |
-| Encoded `before`/`after` query | 4 KiB |
-
-Body limits apply while reading, including responses without `Content-Length`,
-and fail with `api.body_too_large`. Other limits fail with `api.invalid_response`.
-Limit failures are non-retryable and return no partial bundles.
-
-Pagination contributes only a cursor; supplied origins/paths and bundle URLs are
-never followed. `ProvenanceOptions.GitHubToken` is separate from the Gateway key.
-`VerifyImageProvenance` checks Sigstore signatures, certificate transparency,
-transparency logs, the artifact digest, GitHub build identity, source ref/commit,
-and SLSA provenance. `SignerIdentity` supports explicitly trusted reusable
-workflows. `Commit` optionally pins reviewed source. The default Sigstore root
-uses authenticated production TUF updates; `TrustedRoot` supports offline trusted
-material. Trust-root refresh uses the upstream synchronous API; cancellation is
-checked before and after it, not during its network operation.
+`FetchImageProvenance` retrieves Sigstore bundles. `VerifyImageProvenance` checks
+them against the artifact digest and GitHub build policy. Use `Commit` to pin
+a source version and `SignerIdentity` for a reusable signing workflow.
 
 ### Compose Manager deployment provenance
 
-`Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
-When present in a model report, verification checks its quote/TCB, nonce, canonical
-action hash, event log, and binding to the model's measured app-compose. The
-callback receives `MeasuredDeployment.ComposeManager`, including authenticated
-actions, TCB status, advisory IDs and runtime measurements.
+Authenticated Compose Manager evidence is available as `MeasuredDeployment.ComposeManager`.
 
 `VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, imagePolicies, options)`
-requires manager evidence, selects the latest matching `compose_up`, fetches its
-recorded file at its commit, verifies exact SHA-256 and UTF-8, and verifies images
-in the action's named `services`. An absent/empty service list selects the entire
-file; unknown services fail. Unselected images cannot satisfy a required policy.
+verifies the recorded Compose file and selected container images, including the
+Compose Manager startup image, against the supplied policies. Use in a model
+deployment callback.
 
 | Option | Meaning |
 | --- | --- |
@@ -666,10 +558,8 @@ file; unknown services fail. Unselected images cannot satisfy a required policy.
 | `ComposeManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
 | `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubAPIURL`. |
 
-Compose files are limited to 8 MiB before hashing or parsing. Missing evidence,
-hash mismatches, and rejected image policies fail verification. See the
-[guide](./verification-guide.md#images-deployed-by-compose-manager) for usage
-and evidence scope.
+See the [model image guide](./verification-guide.md#images-deployed-by-compose-manager)
+for a complete example.
 
 `GitHubAPIURL` sets the GitHub API base URL for compose files and image proofs;
 it defaults to `https://api.github.com`. When using a GitHub token in a frontend
@@ -692,20 +582,7 @@ func (e *Error) Error() string
 func (e *Error) Unwrap() error
 ```
 
-Use `errors.As(err, &sdkError)` for `*nearai.Error`. Branch on `Code`, inspect
-`Details`, and use `errors.Is` for wrapped context cancellation. `Retryable`
-indicates a failed external operation may succeed on another attempt; it never
-authorizes automatic replay of inference. The SDK does not retry completions.
+Use `errors.As(err, &sdkError)` for `*nearai.Error`, and handle failures by `Code`.
+`Retryable` indicates whether retrying the failed operation may succeed.
 
-From `go/` (no native library setup required):
-
-```sh
-gofmt -w *.go internal/dcap/*.go
-go vet ./...
-go test -race -cover ./...
-```
-
-The test suite includes cross-language E2EE vectors, signed provenance fixtures,
-embedded DCAP verification, admission and exact signatures, shared cancellation,
-stream failures, TLS rejection, and chunked OHTTP authentication. It does not
-make paid inference calls.
+For development commands, see [Testing](../../TESTING.md#validation).

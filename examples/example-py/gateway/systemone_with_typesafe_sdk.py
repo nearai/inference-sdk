@@ -10,6 +10,7 @@ from utils.systemone import receipt_id, verified_systemone_clients
 
 async def main() -> None:
     api_key = os.environ['NEARAI_API_KEY']
+    base_url = os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/')
     model = os.environ['NEARAI_MODEL']
     signing_algo = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
     expected_kind = os.environ.get('NEARAI_EXPECT_SIGNATURE_KIND', 'gateway')
@@ -22,7 +23,7 @@ async def main() -> None:
         asyncio.timeout(120),
         verified_systemone_clients(
             api_key,
-            base_url=os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/'),
+            base_url=base_url,
             signing_algo=signing_algo,
             expected_kind=expected_kind,
         ) as (inference, typesafe),

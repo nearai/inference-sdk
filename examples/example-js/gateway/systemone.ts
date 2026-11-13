@@ -6,17 +6,20 @@ import {
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
+  const baseUrl = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1';
   const model = process.env.NEARAI_MODEL;
+  const signingAlgo = process.env.NEARAI_SIGNING_ALGO ?? 'ed25519';
+  const expectedKind = process.env.NEARAI_EXPECT_SIGNATURE_KIND ?? 'gateway';
+  const imagePath = process.env.NEARAI_IMAGE_PATH;
+
   if (!apiKey || !model) {
     throw new Error(
       'Set NEARAI_API_KEY and NEARAI_MODEL to your registered canonical System One model ID.',
     );
   }
-  const signingAlgo = process.env.NEARAI_SIGNING_ALGO ?? 'ed25519';
   if (signingAlgo !== 'ed25519' && signingAlgo !== 'ecdsa') {
     throw new Error('NEARAI_SIGNING_ALGO must be ed25519 or ecdsa.');
   }
-  const expectedKind = process.env.NEARAI_EXPECT_SIGNATURE_KIND ?? 'gateway';
   if (expectedKind !== 'gateway' && expectedKind !== 'provider_tee') {
     throw new Error(
       'NEARAI_EXPECT_SIGNATURE_KIND must be gateway or provider_tee.',
@@ -27,7 +30,7 @@ async function main(): Promise<void> {
   // requests to its attested TLS key. System One does not support E2EE or OHTTP.
   const client = new InferenceClient({
     apiKey,
-    baseUrl: process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1',
+    baseUrl,
     signingAlgo,
     e2ee: false,
     ohttp: false,
@@ -57,7 +60,6 @@ async function main(): Promise<void> {
       },
     },
   };
-  const imagePath = process.env.NEARAI_IMAGE_PATH;
   if (imagePath) {
     const imageBase64 = (await readFile(imagePath)).toString('base64');
     request = {

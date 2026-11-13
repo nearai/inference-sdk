@@ -16,6 +16,7 @@ from nearai_inference_sdk import (
 
 from utils.chat_output import RecordingStream, read_stream
 
+API_KEY = os.environ.get('NEARAI_API_KEY')
 BASE_URL = (
     os.environ.get(
         'NEARAI_BASE_URL', 'https://glm-5-3-flash.completions.near.ai/v1/'
@@ -84,20 +85,19 @@ async def send_and_verify(
 
 
 async def main() -> None:
-    api_key = os.environ.get('NEARAI_API_KEY')
-    attestation_client = DirectAttestationClient(BASE_URL, api_key=api_key)
+    attestation_client = DirectAttestationClient(BASE_URL, api_key=API_KEY)
     fetched_attestations = await attestation_client.fetch_model_attestations(
         signing_algo=SIGNING_ALGO
     )
     verified = await verify_direct_model_attestations(fetched_attestations)
     print(f'Verified {len(verified.attestations)} model reports.')
     headers = {'Accept-Encoding': 'identity', 'X-No-Aliasing': 'true'}
-    if api_key is not None:
-        headers['Authorization'] = f'Bearer {api_key}'
+    if API_KEY is not None:
+        headers['Authorization'] = f'Bearer {API_KEY}'
     async with create_pinned_tls_client(verified.spki_fingerprints) as client:
         client.headers.update(headers)
         attestation_client = DirectAttestationClient(
-            BASE_URL, api_key=api_key, http_client=client
+            BASE_URL, api_key=API_KEY, http_client=client
         )
         await send_and_verify(client, attestation_client, verified, stream=False)
         await send_and_verify(client, attestation_client, verified, stream=True)
