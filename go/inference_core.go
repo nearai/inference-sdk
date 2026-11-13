@@ -669,6 +669,7 @@ func (c *inferenceCore) verifyResponse(ctx context.Context, id string) (verified
 	case <-p.done:
 		result := p.value
 		result.attestations = slices.Clone(result.attestations)
+		result.directAttestations = slices.Clone(result.directAttestations)
 		return result, p.err
 	}
 }
