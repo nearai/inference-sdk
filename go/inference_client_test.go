@@ -148,6 +148,7 @@ func TestClientPreflightAndSignature(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
+				first.Gateway.Signer = SigningIdentity{}
 				second, e := c.Verify(context.Background(), "canonical/model")
 				if e != nil || !first.VerifiedAt.Equal(second.VerifiedAt) {
 					t.Fatal("cache not reused")

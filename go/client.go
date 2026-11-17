@@ -41,13 +41,19 @@ func (c *InferenceClient) Verify(ctx context.Context, model string) (Attestation
 	if e != nil {
 		return AttestationVerificationResult{}, e
 	}
-	return AttestationVerificationResult{Gateway: s.gateway, Models: slices.Clone(s.models), VerifiedAt: s.verifiedAt}, nil
+	return AttestationVerificationResult{Gateway: new(*s.gateway), Models: slices.Clone(s.models), VerifiedAt: s.verifiedAt}, nil
 }
 
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
 	result, err := c.verifyResponse(ctx, id)
 	if err != nil {
 		return VerifiedCompletionResult{}, err
+	}
+	switch a := result.attestation.(type) {
+	case *VerifiedGatewayAttestation:
+		result.attestation = new(*a)
+	case *VerifiedModelAttestation:
+		result.attestation = new(*a)
 	}
 	return VerifiedCompletionResult{
 		ID: result.id, CompletionID: result.id,
