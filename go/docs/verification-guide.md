@@ -512,6 +512,10 @@ leave `Attestation` nil.
 
 ## Manual verification
 
+Set `opts.APIKey` before using the example below for Gateway signature lookup.
+For workspace-scoped lookup, use a key from the completion's organization and
+workspace, even when inference uses a separate client.
+
 For applications that own HTTP requests, use the standalone APIs in this order:
 
 1. Create an `AttestationClient` and fetch Gateway evidence with a fresh binding.
@@ -609,11 +613,17 @@ verification. Expired receipts cannot be verified. See
 
 ## Signature lookup access and retries
 
-For workspace-scoped Gateway signature lookup, authenticate with an API key from
-the organization and workspace that created the completion. A different key in
-that same workspace is sufficient. Configure separate inference and attestation
-clients with credentials from the same workspace; the SDK cannot infer a
-workspace from a completion ID or check key ownership locally.
+**An API key is required for the Gateway signature API.** Configure the
+attestation client with `ClientOptions.APIKey`; the SDK sends the key in
+the `Authorization` header using Bearer authentication. The constructor accepts
+omitted credentials for unauthenticated attestation report retrieval, but this
+does not make Gateway signature lookup anonymous.
+
+For workspace-scoped lookup, use a key from the organization and workspace that
+created the completion. A different key in that same workspace is sufficient.
+When inference and attestation use separate clients, configure credentials on
+both; the attestation client does not inherit the inference client's key. The
+SDK cannot infer a workspace from a completion ID or check key ownership locally.
 
 A signature HTTP 404 can mean that the signature is not ready, the ID is unknown,
 the caller is outside its owning workspace, or the stored signature has no owner

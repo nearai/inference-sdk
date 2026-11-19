@@ -912,6 +912,10 @@ hashes are verified locally by the SDK.
 
 ### Verify the response signature
 
+The `client` below must have `apiKey` configured for Gateway signature lookup.
+For workspace-scoped lookup, use a key from the completion's organization and
+workspace, even when inference uses a separate client.
+
 `signature.kind` identifies the signer and therefore the proof made by a
 successful verification:
 
@@ -976,11 +980,17 @@ It does not consume detached per-device claims. See [NVIDIA's claims reference](
 
 ## Signature lookup access and retries
 
-For workspace-scoped Gateway signature lookup, authenticate with an API key from
-the organization and workspace that created the completion. A different key in
-that same workspace is sufficient. Configure separate inference and attestation
-clients with credentials from the same workspace; the SDK cannot infer a
-workspace from a completion ID or check key ownership locally.
+**An API key is required for the Gateway signature API.** Configure the
+attestation client with `apiKey`; the SDK sends the key in
+the `Authorization` header using Bearer authentication. The constructor accepts
+omitted credentials for unauthenticated attestation report retrieval, but this
+does not make Gateway signature lookup anonymous.
+
+For workspace-scoped lookup, use a key from the organization and workspace that
+created the completion. A different key in that same workspace is sufficient.
+When inference and attestation use separate clients, configure credentials on
+both; the attestation client does not inherit the inference client's key. The
+SDK cannot infer a workspace from a completion ID or check key ownership locally.
 
 A signature HTTP 404 can mean that the signature is not ready, the ID is unknown,
 the caller is outside its owning workspace, or the stored signature has no owner

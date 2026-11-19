@@ -113,6 +113,14 @@ method while the response remains cached.
 
 ## Evidence retrieval
 
+**Gateway signature requests require an API key.** Configure
+`ClientOptions.APIKey` when creating the attestation client; the SDK sends it as
+Bearer authentication in the `Authorization` header. An empty key supports
+unauthenticated attestation report retrieval, not anonymous Gateway signature
+lookup. For workspace-scoped lookup, use a key from the completion's organization
+and workspace, and configure a separate attestation client explicitly. See
+[signature lookup access](./verification-guide.md#signature-lookup-access-and-retries).
+
 Fetching reports does not verify them. Keep the returned `ClientBinding` with
 its reports and pass both to the verification functions.
 
