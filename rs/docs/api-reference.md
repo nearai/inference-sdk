@@ -176,12 +176,13 @@ key for an organization granted access. With standalone evidence clients, verify
 Gateway before fetching an authenticated model report. Integrated clients perform
 this ordering automatically.
 
-**Gateway signature requests require an API key.** Supply it to
-`AttestationClient::new(Some(api_key))`; the SDK sends it as Bearer authentication
-in the `Authorization` header. `None` supports unauthenticated attestation report
-retrieval, not anonymous Gateway signature lookup. For workspace-scoped lookup,
-use a key from the completion's organization and workspace, and configure a
-separate attestation client explicitly. See
+**Gateway signature requests require a bearer credential.** Configure
+`AttestationClient::new(Some(api_key))`, or supply an `Authorization` header
+through `with_headers` while leaving the API key option unset. A configured API key takes precedence
+over the supplied header. Optional constructor credentials allow unauthenticated
+attestation report retrieval; signature lookup requires authentication. For
+workspace-scoped lookup, use credentials from the completion's organization and
+workspace, and configure a separate attestation client explicitly. See
 [signature lookup access](./verification-guide.md#signature-lookup-access-and-retries).
 
 All client methods below are asynchronous and return `Result<_, ApiError>`.

@@ -396,12 +396,14 @@ verification failures raise `VerificationError`.
 
 ### Completion-signature methods
 
-**Gateway signature requests require an API key.** Set `api_key` on this
-client; the SDK sends it as Bearer authentication in the `Authorization` header.
-The constructor argument is optional because attestation reports can be fetched
-without credentials. For workspace-scoped signature lookup, use a key from the
-completion's organization and workspace, and configure a separate attestation
-client explicitly. See [signature lookup access](./verification-guide.md#signature-lookup-access-and-retries).
+**Gateway signature requests require a bearer credential.** Configure
+`api_key`, or supply an `Authorization` header through `headers["Authorization"]`
+while leaving the API key option unset. A configured API key takes precedence
+over the supplied header. Optional constructor credentials allow unauthenticated
+attestation report retrieval; signature lookup requires authentication. For
+workspace-scoped lookup, use credentials from the completion's organization and
+workspace, and configure a separate attestation client explicitly. See
+[signature lookup access](./verification-guide.md#signature-lookup-access-and-retries).
 
 | API | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |

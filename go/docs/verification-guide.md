@@ -512,7 +512,8 @@ leave `Attestation` nil.
 
 ## Manual verification
 
-Set `opts.APIKey` before using the example below for Gateway signature lookup.
+Set `opts.APIKey`, or leave it empty and supply an `Authorization` header in
+`opts.Headers`, before using the example below for Gateway signature lookup.
 For workspace-scoped lookup, use a key from the completion's organization and
 workspace, even when inference uses a separate client.
 
@@ -613,11 +614,12 @@ verification. Expired receipts cannot be verified. See
 
 ## Signature lookup access and retries
 
-**An API key is required for the Gateway signature API.** Configure the
-attestation client with `ClientOptions.APIKey`; the SDK sends the key in
-the `Authorization` header using Bearer authentication. The constructor accepts
-omitted credentials for unauthenticated attestation report retrieval, but this
-does not make Gateway signature lookup anonymous.
+**A bearer credential is required for the Gateway signature API.** Configure
+`ClientOptions.APIKey`, or supply an `Authorization` header through
+`ClientOptions.Headers` while leaving the API key option unset. Both paths authenticate signature
+requests; a configured API key takes precedence over the supplied header. The
+constructor permits omitted credentials for unauthenticated attestation report
+retrieval, but Gateway signature lookup requires authentication.
 
 For workspace-scoped lookup, use a key from the organization and workspace that
 created the completion. A different key in that same workspace is sufficient.
