@@ -592,6 +592,29 @@ for file selection, GitHub access, and standalone verification options.
 The evidence covers recorded deployment actions and the configured image builds.
 Current runtime state requires separate evidence.
 
+## Signature lookup access and retries
+
+For workspace-scoped Gateway signature lookup, authenticate with an API key from
+the organization and workspace that created the completion. A different key in
+that same workspace is sufficient. Configure separate inference and attestation
+clients with credentials from the same workspace; the SDK cannot infer a
+workspace from a completion ID or check key ownership locally.
+
+A signature HTTP 404 can mean that the signature is not ready, the ID is unknown,
+the caller is outside its owning workspace, or the stored signature has no owner
+metadata. These cases are indistinguishable to the SDK. The existing retryable
+classification permits another attempt; it does not promise eventual success.
+Signature fetch methods make one request per call and do not switch credentials
+or automatically retry a 404. Bound application retries by both attempt count
+and a deadline, and retry only when a signature is reasonably expected to become
+available. Do not repeat inference to recover a missing receipt.
+
+Use the original workspace's credentials for later retrieval, including after
+switching workspaces. Historical signatures without recorded ownership may remain
+unavailable regardless of retries. Already retrieved signatures can still be
+verified locally with the corresponding bytes and attestation evidence. These
+Gateway access rules do not change the Direct endpoint's authentication policy.
+
 ## Handle errors
 
 Cloud client methods and evidence selection return `Result<T, ApiError>`.
@@ -643,7 +666,7 @@ async fn fetch_completion_signature(
 
 A completion-signature HTTP 404 is classified as retryable because it can be
 observed before a completion reaches its terminal state. It can also mean an
-unknown completion ID, so retry only when the application knows that the
-completion may still be finishing. A valid 2xx unavailable envelope is not
+inaccessible or unknown signature, including an unowned historical row. Follow
+the access and bounded-retry rules above. A valid 2xx unavailable envelope is not
 retryable: it reports that the Gateway cannot provide a usable signature for that
 completion.

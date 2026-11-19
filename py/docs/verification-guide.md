@@ -937,6 +937,29 @@ DCAP builds the SGX and TDX collateral paths beneath `pccs_url`. `nras_url` is t
 complete GPU evidence POST URL. Signing keys come from NVIDIA; set `jwks_url`
 separately to use another trusted key source.
 
+## Signature lookup access and retries
+
+For workspace-scoped Gateway signature lookup, authenticate with an API key from
+the organization and workspace that created the completion. A different key in
+that same workspace is sufficient. Configure separate inference and attestation
+clients with credentials from the same workspace; the SDK cannot infer a
+workspace from a completion ID or check key ownership locally.
+
+A signature HTTP 404 can mean that the signature is not ready, the ID is unknown,
+the caller is outside its owning workspace, or the stored signature has no owner
+metadata. These cases are indistinguishable to the SDK. The existing retryable
+classification permits another attempt; it does not promise eventual success.
+Signature fetch methods make one request per call and do not switch credentials
+or automatically retry a 404. Bound application retries by both attempt count
+and a deadline, and retry only when a signature is reasonably expected to become
+available. Do not repeat inference to recover a missing receipt.
+
+Use the original workspace's credentials for later retrieval, including after
+switching workspaces. Historical signatures without recorded ownership may remain
+unavailable regardless of retries. Already retrieved signatures can still be
+verified locally with the corresponding bytes and attestation evidence. These
+Gateway access rules do not change the Direct endpoint's authentication policy.
+
 ## Handle retrieval and verification errors
 
 For integrated Chat, OpenAI wraps transport errors in `APIConnectionError`;
@@ -949,10 +972,9 @@ structured error. A 2xx unavailable envelope raises `ApiError` with
 `api.completion_signature_unavailable`; its details contain the service's
 `providerErrorCode` and `providerMessage`.
 
-An HTTP 404 raises `api.http_status` and remains retryable. It means the Gateway
-has no stored signature for that ID at that time. Retry only when the
-application has reason to expect a later signature, such as before the
-completion has reached its terminal state.
+An HTTP 404 raises `api.http_status` and remains retryable. It means no signature is
+available to this caller for that ID. See the access and retry rules above; a
+404 alone does not establish whether a signature exists or will become available.
 
 `AttestationClient` methods and evidence selection raise `ApiError` for
 request, HTTP, response-format, nonce, unavailable-signature,
