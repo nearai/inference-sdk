@@ -119,7 +119,7 @@ func (c *DirectAttestationClient) FetchModelAttestations(ctx context.Context, o 
 func (c *DirectAttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error)
 ```
 
-`FetchOptions` selects the signing algorithm, signer filter, and Gateway TLS
+`FetchOptions` selects the signing algorithm, signer filter, and TLS
 binding. `FetchModelMetadata` returns the model ID, provider, and attestation support listed in the model catalog.
 
 ## Standalone verification

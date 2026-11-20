@@ -450,7 +450,9 @@ reports in `Attestations`. After `VerifyDirectModelAttestations`, create a pinne
 transport with `NewPinnedTransport(transport, verified.SPKIFingerprints...)`.
 Wrap it in `httpClient := &http.Client{Transport: pinned}`. Use that client for
 Chat and pass it to `NewDirectAttestationClient` via `ClientOptions.HTTPClient`
-to fetch the response signature.
+to fetch the response signature. Select matching reports with
+`FindDirectModelAttestationsForSignature` and pass one match to
+`VerifyDirectModelResponse`.
 
 ## Manual verification
 

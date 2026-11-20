@@ -99,7 +99,9 @@ model reports in `attestations`.
 
 For manual verification, pass the fingerprints from `verify_direct_model_attestations`
 to `create_pinned_tls_client`. Send Chat with that client and reuse it with
-`DirectAttestationClient::with_http_client` to fetch the signature for `verify_direct_model_response`.
+`DirectAttestationClient::with_http_client` to fetch the signature. Select matching
+reports with `find_direct_model_attestations_for_signature` and pass one match to
+`verify_direct_model_response`.
 
 Requests use the verified model TLS fingerprints by default.
 
@@ -265,7 +267,7 @@ use nearai_inference_sdk::{
     VerifiedModelAttestation,
 };
 
-async fn verify_completion_response(
+async fn verify_response(
     client: &AttestationClient,
     completion_id: &str,
     request_body: &[u8],

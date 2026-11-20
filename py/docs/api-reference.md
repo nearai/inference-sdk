@@ -32,7 +32,7 @@ cleanup are synchronous.
 | `inference_client.clear_response_cache` | `()` | `None` | Discards retained responses and their verification results. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
-| `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
+| `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None, http_client=None)` | client | Experimental retrieval of direct reports and signatures. |
 | `verify_direct_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestation` | Verifies one direct model report and its optional quote-bound fingerprint. |
 | `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding. |
 | `verify_direct_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes against a verified Direct report. |
@@ -40,7 +40,7 @@ cleanup are synchronous.
 | `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Creates an HTTPS client pinned to verified SPKI fingerprints. |
 | `verify_ohttp_key_config` | `(ohttp_attestation, signer)` | `bytes` | Authenticates the advertised OHTTP key configuration against a verified Ed25519 signer. |
 | `create_ohttp_client` | `(key_config, *, base_url, http_client=None, forwarded_headers=())` | `httpx.AsyncClient` | Encapsulates HTTP requests with OHTTP and returns decoded inner responses. |
-| `AttestationClient` | `(api_key=None, *, base_url=..., headers=None)` | client | Owns Gateway credentials and retrieves deployment evidence and completion signatures. |
+| `AttestationClient` | `(api_key=None, *, base_url=..., headers=None, http_client=None)` | client | Owns Gateway credentials and retrieves deployment evidence and completion signatures. |
 | `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature after a completion. |
 | `client.fetch_model_metadata` | `(model)` | `ModelMetadata` | Returns the provider and attestation support listed in the model catalog. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
