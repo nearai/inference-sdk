@@ -143,19 +143,6 @@ signer. `create_ohttp_client` wraps a caller-supplied reqwest client and an
 already-authenticated configuration. The wrapper limits requests to its configured
 origin; supply a client with redirects disabled (or a pinned client).
 
-### Experimental direct endpoints
-
-`DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. Use `DirectInferenceClientOptions` with `e2ee: true` for encryption.
-
-`verify_response(id)` returns `VerifiedDirectCompletionResult` with all matching
-model reports in `attestations`.
-
-For manual workflows, use `DirectAttestationClient` and
-`verify_direct_model_attestation(s)` / `verify_direct_model_response`.
-
-Requests use the verified model TLS fingerprints by default.
-
 ### Existing Rust callers
 
 Existing fetch and standalone verification methods remain available. Struct
@@ -197,7 +184,7 @@ Anthropic model execution inside a TEE. Failed, incomplete, and cancelled stream
 cannot yield a verified complete response. If receipt lookup is temporarily
 unavailable, retry verification without sending inference again.
 
-Messages field-level E2EE and Direct clients are rejected before network I/O,
+Messages field-level E2EE is rejected before network I/O,
 matching the server's supported contract. Only Messages creation is supported.
 
 ```rust
@@ -230,7 +217,7 @@ still have an unavailable receipt; retry receipt lookup when appropriate without
 repeating inference. Consume the entire SSE stream before verifying its nested
 `event.response.id`; output item IDs are not receipt IDs.
 
-Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+Field-level E2EE is rejected before network I/O. OHTTP is
 supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
 as opaque data and is separate from NEAR field encryption. Only creation is
 supported; response retrieval, cancellation, deletion, and history endpoints are
@@ -579,7 +566,7 @@ For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
 `ModelAttestationVerifiers.deployment`. Keep the manager repository and build
 identity in `ComposeManagerImagePolicy`, separate from the compose image map.
 
-On Gateway or Direct inference clients, set `model_verification.deployment`.
+On Gateway inference clients, set `model_verification.deployment`.
 The policy runs for every model report and requires Compose Manager evidence in
 each one. See the [API reference](./api-reference.md#compose-manager-deployment-images)
 for file selection, GitHub access, and standalone verification options.

@@ -5,7 +5,7 @@ import { VerificationError } from '../utils/errors';
 
 /**
  * Authenticate the advertised OHTTP configuration against a verified signer.
- * The caller must first verify the Gateway or direct model attestation that
+ * The caller must first verify the Gateway attestation that
  * supplied this signer. The returned bytes still need protocol parsing before use.
  */
 export function verifyOhttpKeyConfig({

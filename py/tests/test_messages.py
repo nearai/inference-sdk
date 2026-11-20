@@ -12,7 +12,6 @@ from eth_account.messages import encode_defunct
 
 from nearai_inference_sdk import (
     ApiError,
-    DirectInferenceClient,
     InferenceClient,
     VerificationError,
 )
@@ -271,11 +270,9 @@ async def test_messages_reject_unsupported_paths_and_e2ee_before_io(monkeypatch)
     async with (
         gateway.client(e2ee=True) as encrypted,
         gateway.client(e2ee=False) as plain,
-        DirectInferenceClient(base_url=BASE_URL, e2ee=False) as direct,
     ):
         for client, url in [
             (encrypted, BASE_URL + 'messages'),
-            (direct, BASE_URL + 'messages'),
             (plain, BASE_URL + 'messages/msg_fixture'),
             (plain, 'https://other.test/v1/messages'),
         ]:

@@ -10,7 +10,7 @@ import pytest
 from eth_account.messages import encode_defunct
 from openai import AsyncOpenAI
 
-from nearai_inference_sdk import ApiError, DirectInferenceClient, VerificationError
+from nearai_inference_sdk import ApiError, VerificationError
 
 from .support.gateway import BASE_URL, MODEL, ChunkStream, Gateway
 from .support.ohttp import OhttpGateway
@@ -334,11 +334,9 @@ async def test_responses_reject_unsupported_paths_and_e2ee_before_io(monkeypatch
     async with (
         gateway.client(e2ee=True) as encrypted,
         gateway.client(e2ee=False) as plain,
-        DirectInferenceClient(base_url=BASE_URL, e2ee=False) as direct,
     ):
         for client, url in [
             (encrypted, BASE_URL + 'responses'),
-            (direct, BASE_URL + 'responses'),
             (plain, BASE_URL + 'responses/resp_fixture'),
             (plain, 'https://other.test/v1/responses'),
         ]:

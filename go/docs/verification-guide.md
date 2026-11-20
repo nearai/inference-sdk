@@ -3,7 +3,7 @@
 Use the Go SDK to verify deployments before sending a prompt and explicitly
 verify response signatures after receiving a completion. This guide covers
 Gateway clients, the official OpenAI Go client, streaming, policies, encryption,
-and experimental direct endpoints. See the [API reference](./api-reference.md)
+and response verification. See the [API reference](./api-reference.md)
 for signatures, options, and result fields.
 
 ## Install
@@ -258,7 +258,7 @@ Anthropic model execution inside a TEE. Failed, incomplete, and cancelled stream
 cannot yield a verified complete response. If receipt lookup is temporarily
 unavailable, retry verification without sending inference again.
 
-Messages field-level E2EE and Direct clients are rejected before network I/O,
+Messages field-level E2EE is rejected before network I/O,
 matching the server's supported contract. Only Messages creation is supported.
 
 ```go
@@ -301,7 +301,7 @@ still have an unavailable receipt; retry receipt lookup when appropriate without
 repeating inference. Consume the entire SSE stream before verifying its nested
 `event.response.id`; output item IDs are not receipt IDs.
 
-Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+Field-level E2EE is rejected before network I/O. OHTTP is
 supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
 as opaque data and is separate from NEAR field encryption. Only creation is
 supported; response retrieval, cancellation, deletion, and history endpoints are
@@ -415,7 +415,7 @@ check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
             },
         })
 }
-// Gateway and Direct: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
+// Gateway: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
 ```
 
 The policy runs for every model report and requires Compose Manager evidence in
@@ -478,32 +478,6 @@ Gateway clients bind TLS to the attested Gateway identity before sending prompts
 and subsequent evidence/signature requests. Keep normal TLS validation enabled.
 `DisableTLSBinding: true` opts out of this attested identity check for an
 application proxy; consider that changed trust boundary before using it.
-
-## Experimental direct endpoints
-
-Direct clients require an explicit model endpoint URL. E2EE is disabled by
-default; this example enables it:
-
-```go
-client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-	ClientOptions: nearai.ClientOptions{
-		APIKey:  apiKey,
-		BaseURL: directBaseURL,
-	},
-	E2EE: true,
-})
-if err != nil {
-	return err
-}
-defer client.Close()
-```
-
-`DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. It supports Chat, streaming, OHTTP, and OpenAI integration.
-Requests use the verified model TLS fingerprints by default.
-
-`VerifyResponse` returns `VerifiedDirectCompletionResult` with all matching model
-reports in `Attestations`. Use `VerifyDirectModelResponse` for manual verification.
 
 ## Manual verification
 
@@ -581,8 +555,7 @@ This preflight demonstrates transport setup; the bare examples include Chat,
 encryption, response signatures, and application deployment policies.
 
 Fetching evidence and decrypting output alone do not verify a receipt. Do not
-reserialize JSON for signature checking. For direct endpoints, use the direct
-attestation client and plural direct verification helpers. The
+reserialize JSON for signature checking. The
 [bare examples](../../examples/example-go/README.md) implement the full flows,
 including streaming and exact ciphertext retention.
 

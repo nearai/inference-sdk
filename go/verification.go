@@ -132,16 +132,6 @@ func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding,
 	return verifyAttestation(ctx, a, b, o, false)
 }
 
-// VerifyDirectModelAttestation authenticates an individual direct model report.
-// Its fingerprint is quote-bound but is not a claim about the observed TLS peer.
-func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedDirectModelAttestation, error) {
-	verified, err := verifyAttestation(ctx, a, b, o, false)
-	if err != nil {
-		return VerifiedDirectModelAttestation{}, err
-	}
-	return VerifiedDirectModelAttestation{VerifiedModelAttestation: verified, ModelName: a.ModelName, InstanceID: a.InstanceID, SPKIFingerprint: a.SPKIFingerprint}, nil
-}
-
 func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, gateway bool) (VerifiedModelAttestation, error) {
 	var v VerifiedModelAttestation
 	nonce, e := hexSize(b.Nonce, 32)

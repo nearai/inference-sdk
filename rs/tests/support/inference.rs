@@ -6,7 +6,6 @@ use ed25519_dalek::Signer;
 use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use nearai_inference_sdk::*;
 use serde_json::{json, Value};
-use sha2::Digest;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -58,7 +57,6 @@ pub(super) struct Fixture {
     pub(super) retry_signature: bool,
     pub(super) wrong_signer: bool,
     pub(super) wrong_algo: bool,
-    pub(super) direct: bool,
     pub(super) header_auth: bool,
     pub(super) ecdsa: bool,
     pub(super) ohttp: Option<ohttp::KeyConfig>,
@@ -66,7 +64,6 @@ pub(super) struct Fixture {
     pub(super) bad_ohttp_signature: bool,
     pub(super) bad_ohttp_config: bool,
     pub(super) tampered_ohttp_response: bool,
-    pub(super) alternate_direct_signer: bool,
     pub(super) response_body: Option<Vec<u8>>,
     pub(super) response_provider_receipt: bool,
     pub(super) response_tamper: bool,
@@ -126,13 +123,7 @@ impl Fixture {
             } else {
                 config.encode().unwrap()
             };
-            let signer = key(if self.wrong_ohttp_signer {
-                8
-            } else if self.direct {
-                7
-            } else {
-                9
-            });
+            let signer = key(if self.wrong_ohttp_signer { 8 } else { 9 });
             value["ohttp_attestation"] = json!({"signing_algo":"ed25519","signing_key":hex::encode(signer.verifying_key().as_bytes()),"key_config":hex::encode(&bytes),"signature":hex::encode(signer.sign(&bytes).to_bytes())});
             if self.bad_ohttp_signature {
                 value["ohttp_attestation"]["signature"] = json!("00".repeat(64));
@@ -144,7 +135,7 @@ impl Fixture {
 impl Respond for Fixture {
     fn respond(&self, r: &Request) -> ResponseTemplate {
         if r.url.path() == "/v1/attestation/report"
-            && (self.direct || !r.url.query_pairs().any(|(name, _)| name == "model"))
+            && !r.url.query_pairs().any(|(name, _)| name == "model")
         {
             for name in ["authorization", "api-key", "x-api-key"] {
                 assert!(r.headers.get(name).is_none(), "attestation sent {name}");
@@ -165,51 +156,7 @@ impl Respond for Fixture {
             "/v1/attestation/report" => {
                 let q: std::collections::HashMap<_, _> = r.url.query_pairs().collect();
                 let nonce = &q["nonce"];
-                if self.direct {
-                    self.model.fetch_add(1, Ordering::SeqCst);
-                    let mut root = self.report(nonce, 7);
-                    root["info"]["instance_id"] = json!("serving");
-                    if self.alternate_direct_signer {
-                        root.as_object_mut().unwrap().remove("signing_public_key");
-                    }
-                    let mut other = self.report(nonce, 7);
-                    other["info"]["instance_id"] = json!("other");
-                    if self.alternate_direct_signer {
-                        other["signing_address"] = json!(format!(
-                            "0X{}",
-                            other["signing_address"].as_str().unwrap().to_uppercase()
-                        ));
-                    }
-                    if q["include_tls_fingerprint"] == "true" {
-                        for (report, pin) in
-                            [(&mut root, "11".repeat(32)), (&mut other, "22".repeat(32))]
-                        {
-                            let signer = hex::decode(
-                                report["signing_address"]
-                                    .as_str()
-                                    .unwrap()
-                                    .trim_start_matches("0X"),
-                            )
-                            .unwrap();
-                            let binding =
-                                sha2::Sha256::digest([signer, hex::decode(&pin).unwrap()].concat());
-                            let data = format!("{}{nonce}", hex::encode(binding));
-                            report["report_data"] = json!(data);
-                            report["intel_quote"] = json!(data);
-                            report["tls_cert_fingerprint"] = json!(pin);
-                        }
-                    }
-                    if self.bad_model {
-                        other["report_data"] = json!("ff".repeat(64));
-                    }
-                    let mut value = root.clone();
-                    value["all_attestations"] = if self.extra_model {
-                        json!([root, self.report(nonce, 8), other])
-                    } else {
-                        json!([root, other])
-                    };
-                    return ResponseTemplate::new(200).set_body_json(self.with_ohttp(value));
-                }
+
                 assert_eq!(q["include_tls_fingerprint"], "false");
                 if q.contains_key("model") {
                     let generation = self.model.fetch_add(1, Ordering::SeqCst);
@@ -260,11 +207,7 @@ impl Respond for Fixture {
                 assert_eq!(r.headers.get("accept-encoding").unwrap(), "identity");
                 assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
                 if self.metadata.lock().unwrap().is_none() {
-                    let seed = if self.extra_model && !self.direct {
-                        8
-                    } else {
-                        7
-                    };
+                    let seed = if self.extra_model { 8 } else { 7 };
                     let public = if self.ecdsa {
                         encryption::ecdsa_identity(seed).1
                     } else {
@@ -505,9 +448,9 @@ impl Respond for Fixture {
                     value["signing_address"] = json!(encryption::ecdsa_identity(seed).0);
                     value["signature"] = json!(encryption::ecdsa_signature(&text, seed));
                 }
-                if !self.direct {
-                    value["signature_kind"] = json!(kind);
-                }
+
+                value["signature_kind"] = json!(kind);
+
                 if self.wrong_algo {
                     value["signing_algo"] = json!("ecdsa");
                     value["signing_address"] = json!("00".repeat(20));
@@ -605,22 +548,6 @@ pub(super) async fn setup(fixture: Fixture) -> (MockServer, Arc<Fixture>, Infere
         ..Default::default()
     };
     (server, fixture, options)
-}
-
-pub(super) fn direct_options(options: InferenceClientOptions) -> DirectInferenceClientOptions {
-    DirectInferenceClientOptions {
-        include_spki_fingerprint: false,
-        api_key: options.api_key,
-        base_url: options.base_url,
-        headers: options.headers,
-        e2ee: options.e2ee,
-        ohttp: options.ohttp,
-        signing_algo: options.signing_algo,
-        attestation_cache_ttl: options.attestation_cache_ttl,
-        response_cache_ttl: options.response_cache_ttl,
-        model_verification: options.model_verification,
-        deployment_policy: options.deployment_policy,
-    }
 }
 
 pub(super) fn body() -> Value {

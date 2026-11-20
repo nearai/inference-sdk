@@ -204,9 +204,6 @@ async fn messages_unsupported_modes_are_rejected_before_preflight() {
     );
 
     options.e2ee = false;
-    let direct =
-        DirectInferenceClient::with_options(super::fixture::direct_options(options.clone()))
-            .unwrap();
     let client = InferenceClient::with_options(options).unwrap();
 
     assert_eq!(
@@ -214,15 +211,6 @@ async fn messages_unsupported_modes_are_rejected_before_preflight() {
             .create_message(message_request_body(true))
             .await
             .unwrap_err()
-            .code(),
-        "api.invalid_input"
-    );
-    assert_eq!(
-        direct
-            .send(client.message_request(message_request_body(false)).unwrap())
-            .await
-            .err()
-            .unwrap()
             .code(),
         "api.invalid_input"
     );

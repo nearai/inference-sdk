@@ -10,7 +10,7 @@ import httpx
 import httpx2
 
 if TYPE_CHECKING:
-    from ..core.inference_client import _VerifiedInferenceClient
+    from ..core.inference_client import InferenceClient
 
 
 @contextmanager
@@ -53,7 +53,7 @@ class _ResponseStream(httpx2.AsyncByteStream):
 
 
 class _InferenceTransport(httpx2.AsyncBaseTransport):
-    def __init__(self, owner: _VerifiedInferenceClient) -> None:
+    def __init__(self, owner: InferenceClient) -> None:
         self._owner = owner
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
@@ -97,5 +97,5 @@ class _InferenceTransport(httpx2.AsyncBaseTransport):
                     await response.aclose()
 
 
-def _create_httpx2_client(owner: _VerifiedInferenceClient) -> httpx2.AsyncClient:
+def _create_httpx2_client(owner: InferenceClient) -> httpx2.AsyncClient:
     return httpx2.AsyncClient(transport=_InferenceTransport(owner), timeout=None)

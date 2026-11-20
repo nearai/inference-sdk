@@ -3,11 +3,10 @@ import gzip
 import io
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 
-from direct import chat_completions_bare as direct
 from gateway import chat_completions_bare as gateway
 from utils.chat_output import read_stream
 
@@ -45,22 +44,8 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
             ) as client:
                 with (
                     contextlib.redirect_stdout(io.StringIO()),
-                    patch.object(direct, 'verify_direct_model_response') as verify,
-                    patch.object(
-                        direct,
-                        'find_direct_model_attestations_for_signature',
-                        return_value=(object(),),
-                    ),
                     patch.object(gateway, 'prepare_e2ee_chat_request', prepare),
                 ):
-                    await direct.send_and_verify(
-                        client,
-                        AsyncMock(),
-                        SimpleNamespace(attestations=[]),
-                        stream=streaming,
-                    )
-                    self.assertEqual(verify.call_args.args[1], body)
-
                     completion = await gateway.send_completion(
                         client, 'test', None, stream=streaming
                     )

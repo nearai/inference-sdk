@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,23 +31,16 @@ import (
 // Exercise the official SDK's JSON and SSE consumption, including its early
 // [DONE] handling, against the real verified transport and signed wire bytes.
 func TestOpenAIClientIntegration(t *testing.T) {
-	for _, direct := range []bool{false, true} {
-		name := "gateway"
-		if direct {
-			name = "direct"
-		}
-		t.Run(name, func(t *testing.T) { testOpenAIClientIntegration(t, direct, "chat", nearai.Ed25519) })
-	}
+	testOpenAIClientIntegration(t, "chat", nearai.Ed25519)
 }
 
-func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, algo nearai.SigningAlgo) {
+func testOpenAIClientIntegration(t *testing.T, protocol string, algo nearai.SigningAlgo) {
 	pub, priv, e := ed25519.GenerateKey(rand.Reader)
 	if e != nil {
 		t.Fatal(e)
 	}
 	address := hex.EncodeToString(pub)
 	binding := []byte(pub)
-	publicKey := address
 	sign := func(text string) string { return hex.EncodeToString(ed25519.Sign(priv, []byte(text))) }
 	if algo == nearai.ECDSA {
 		key, err := secp.GeneratePrivateKey()
@@ -58,7 +50,6 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		public := key.PubKey().SerializeUncompressed()[1:]
 		keccak := func(data []byte) []byte { h := sha3.NewLegacyKeccak256(); h.Write(data); return h.Sum(nil) }
 		address = hex.EncodeToString(keccak(public)[12:])
-		publicKey = hex.EncodeToString(public)
 		binding = make([]byte, 32)
 		decoded, _ := hex.DecodeString(address)
 		copy(binding, decoded)
@@ -107,23 +98,8 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 			if includeTLS {
 				report["tls_cert_fingerprint"] = fingerprint
 			}
-			if direct {
-				if !includeTLS {
-					t.Error("Direct client must request TLS evidence")
-				}
-				report["model_name"] = "model"
-				report["signing_public_key"] = publicKey
-				response := map[string]any{}
-				for key, value := range report {
-					response[key] = value
-				}
-				sibling := maps.Clone(report)
-				sibling["info"] = map[string]any{"instance_id": "second", "tcb_info": map[string]any{"app_compose": compose}}
-				response["all_attestations"] = []any{report, sibling}
-				json.NewEncoder(w).Encode(response)
-			} else {
-				json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": report})
-			}
+			json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": report})
+
 		case strings.HasSuffix(r.URL.Path, "/chat/completions"), strings.HasSuffix(r.URL.Path, "/messages"), strings.HasSuffix(r.URL.Path, "/responses"):
 			body, _ := io.ReadAll(r.Body)
 			var parsed struct {
@@ -154,10 +130,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 			reqHash, resHash := sha256.Sum256(body), sha256.Sum256([]byte(reply))
 			text := fmt.Sprintf("%x:%x", reqHash, resHash)
 			kind := "gateway"
-			if direct {
-				kind = "provider_tee"
-				text = "model:" + text
-			}
+
 			sig := map[string]any{
 				"signature_kind":  kind,
 				"signing_algo":    algo,
@@ -200,24 +173,13 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		Close() error
 	}
 	var verifyResponse func(context.Context, string) error
-	if direct {
-		// These adapter fixtures are plaintext; E2EE has dedicated SDK coverage.
-		owner, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-			ClientOptions: opts.ClientOptions, SigningAlgo: algo, ModelVerification: opts.ModelVerification,
-		})
-		c, e = owner, err
-		verifyResponse = func(ctx context.Context, id string) error {
-			_, err := owner.VerifyResponse(ctx, id)
-			return err
-		}
-	} else {
-		owner, err := nearai.NewInferenceClient(opts)
-		c, e = owner, err
-		verifyResponse = func(ctx context.Context, id string) error {
-			_, err := owner.VerifyResponse(ctx, id)
-			return err
-		}
+	owner, err := nearai.NewInferenceClient(opts)
+	c, e = owner, err
+	verifyResponse = func(ctx context.Context, id string) error {
+		_, err := owner.VerifyResponse(ctx, id)
+		return err
 	}
+
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -331,7 +293,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 func TestOfficialGatewayEndpoints(t *testing.T) {
 	for _, protocol := range []string{"messages", "responses"} {
 		for _, algo := range []nearai.SigningAlgo{nearai.Ed25519, nearai.ECDSA} {
-			t.Run(protocol+"/"+string(algo), func(t *testing.T) { testOpenAIClientIntegration(t, false, protocol, algo) })
+			t.Run(protocol+"/"+string(algo), func(t *testing.T) { testOpenAIClientIntegration(t, protocol, algo) })
 		}
 	}
 }

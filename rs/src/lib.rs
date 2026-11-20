@@ -58,18 +58,10 @@ mod e2ee;
 mod pinned_tls;
 pub use e2ee::{prepare_e2ee_chat_request, E2eeModelKey, PreparedE2eeChatRequest};
 pub use pinned_tls::create_pinned_tls_client;
-mod direct;
 mod inference;
 mod inference_core;
 mod ohttp;
 mod sse;
-pub use direct::{
-    find_direct_model_attestations_for_signature, verify_direct_model_attestation,
-    verify_direct_model_attestations, verify_direct_model_response, DirectAttestationClient,
-    DirectAttestationFetchOptions, DirectAttestationVerificationResult, DirectClientBinding,
-    DirectInferenceClient, DirectInferenceClientOptions, DirectModelAttestation,
-    FetchedDirectModelAttestations, VerifiedDirectCompletionResult, VerifiedDirectModelAttestation,
-};
 pub use inference::{
     AttestationVerificationResult, GatewayVerificationOptions, InferenceClient,
     InferenceClientOptions, VerifiedCompletionAttestation, VerifiedCompletionResult,

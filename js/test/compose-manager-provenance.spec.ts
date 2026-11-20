@@ -4,10 +4,8 @@ import { resolve } from 'node:path';
 import { TrustedRootProvider } from '@freedomofpress/sigstore-browser';
 import {
   type ComposeManagerAttestation,
-  type MeasuredDeployment,
   fetchImageProvenance,
   verifyComposeManagerDeploymentImageProvenance,
-  verifyDirectModelAttestations,
   verifyModelAttestation,
 } from '../src';
 import { decodeModelAttestationReport } from '../src/boundaries/cloud-api';
@@ -468,98 +466,6 @@ describe('Compose Manager deployment image provenance', () => {
       expect(fetch).toHaveBeenCalledTimes(1);
     },
   );
-
-  test.each(['missing', 'different'])(
-    'rejects %s manager evidence in the serving entry',
-    async (kind) => {
-      const report = managerReport();
-      const serving = {
-        ...createModelAttestation({
-          composeManagerAttestation: { ...report, intelQuote: 'invalid' },
-        }),
-        modelName: 'glm-5.2',
-      };
-
-      await expect(
-        verifyDirectModelAttestations({
-          servingAttestation: serving,
-          attestations: [
-            {
-              ...serving,
-              composeManagerAttestation:
-                kind === 'missing' ? undefined : report,
-            },
-          ],
-          clientBinding: { nonce },
-          verifiers: {
-            tdxQuote: (quote) =>
-              quote === 'bb' ? managerQuote(report) : createModelQuote(),
-          },
-        }),
-      ).rejects.toMatchObject({
-        failure: {
-          code: 'input.invalid',
-          details: {
-            field: 'servingAttestation',
-            reason: 'not_in_attestation_set',
-          },
-        },
-      });
-    },
-  );
-
-  test('uses the deployment verifier for direct manager provenance', async () => {
-    const report = managerReport();
-    const serving = {
-      ...createModelAttestation({ composeManagerAttestation: report }),
-      modelName: 'glm-5.2',
-    };
-    const sibling = {
-      ...createModelAttestation({ intelQuote: 'cc' }),
-      modelName: 'glm-5.2',
-    };
-    jest
-      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
-      .mockResolvedValue(TRUSTED_ROOT);
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockImplementation(async (url) =>
-        String(url).includes('/contents/')
-          ? new Response(COMPOSE)
-          : Response.json({ attestations: [{ bundle: BUNDLE }] }),
-      );
-    const params = {
-      servingAttestation: serving,
-      clientBinding: { nonce },
-      verifiers: {
-        tdxQuote: (quote: string) =>
-          quote === 'bb' ? managerQuote(report) : createModelQuote(),
-        deployment: (deployment: MeasuredDeployment) =>
-          verifyComposeManagerDeploymentImageProvenance({
-            deployment,
-            imagePolicies: IMAGE_POLICIES,
-            composeManagerImagePolicy: MANAGER_POLICY,
-          }),
-      },
-    };
-    const verified = await verifyDirectModelAttestations({
-      ...params,
-      attestations: [serving],
-    });
-    expect(verified.servingAttestation.deploymentProvenance).toBe('verified');
-    await expect(
-      verifyDirectModelAttestations({
-        ...params,
-        servingAttestation: sibling,
-        attestations: [sibling],
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        code: 'provenance.compose_manager_deployment_invalid',
-        details: { reason: 'attestation_missing' },
-      },
-    });
-  });
 
   test('selects the requested compose project and the latest manager-start image', async () => {
     const verified = await verifyManagerFixture();

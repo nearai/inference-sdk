@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import OpenAI from 'openai';
-import { ApiError, DirectInferenceClient, InferenceClient } from '../src';
+import { ApiError, InferenceClient } from '../src';
 import { createEcdsaGateway } from './ecdsa-gateway-fixtures';
 import { tlsFingerprint } from './fixtures';
 import {
@@ -391,7 +391,7 @@ describe('Responses API', () => {
     });
   });
 
-  test('rejects E2EE, Direct, history and foreign URLs before network I/O', async () => {
+  test('rejects E2EE, history and foreign URLs before network I/O', async () => {
     const fixture = responsesGateway();
     const fetch = jest
       .spyOn(globalThis, 'fetch')
@@ -399,10 +399,8 @@ describe('Responses API', () => {
     const options = inferenceClientOptions(fixture.gateway);
     const plain = new InferenceClient({ ...options, e2ee: false });
     const encrypted = new InferenceClient(options);
-    const direct = new DirectInferenceClient({ baseUrl, e2ee: false });
     for (const [client, url] of [
       [encrypted, `${baseUrl}responses`],
-      [direct, `${baseUrl}responses`],
       [plain, `${baseUrl}responses/resp_fixture`],
       [plain, 'https://other.test/v1/responses'],
     ] as const) {

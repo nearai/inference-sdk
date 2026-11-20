@@ -5,19 +5,19 @@ import {
   CloudApiModelAttestationResponseSchema,
   CloudApiModelMetadataResponseSchema,
 } from '../schemas';
-import type { GatewayAttestation } from '../types/attestation-gateway';
-import type { ModelAttestation } from '../types/attestation-model';
 import type {
   AttestationEvidence,
   SigningAlgo,
 } from '../types/attestation-common';
+import type { GatewayAttestation } from '../types/attestation-gateway';
+import type { ModelAttestation } from '../types/attestation-model';
+import type { CompletionSignature } from '../types/chat';
 import type {
+  CloudApiCompletionSignatureResult,
   CloudApiGatewayAttestation,
   CloudApiModelAttestation,
-  CloudApiCompletionSignatureResult,
   ModelMetadata,
 } from '../types/cloud-api';
-import type { CompletionSignature } from '../types/chat';
 import type {
   OhttpAttestation,
   OhttpAttestationResponse,
@@ -111,7 +111,7 @@ export function decodeGatewayAttestationReport(
   };
 }
 
-/** Map report-level OHTTP metadata shared by Gateway and direct endpoints. */
+/** Map report-level OHTTP metadata from Gateway endpoints. */
 export function mapOhttpAttestation(
   attestation: OhttpAttestationResponse,
 ): OhttpAttestation {

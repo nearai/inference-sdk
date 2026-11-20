@@ -15,7 +15,7 @@ import (
 )
 
 func run() error {
-	c, err := demo.ConfigurationForModel(false, "z-ai/glm-5.3-flash")
+	c, err := demo.ConfigurationForModel("z-ai/glm-5.3-flash")
 	if err != nil {
 		return err
 	}

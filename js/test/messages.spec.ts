@@ -2,12 +2,7 @@ import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
-import {
-  ApiError,
-  DirectInferenceClient,
-  getSdkError,
-  InferenceClient,
-} from '../src';
+import { ApiError, getSdkError, InferenceClient } from '../src';
 import { createEcdsaGateway } from './ecdsa-gateway-fixtures';
 import { tlsFingerprint } from './fixtures';
 import {
@@ -488,7 +483,7 @@ describe('Messages API', () => {
     });
   });
 
-  test('rejects E2EE, Direct, history and foreign URLs before network I/O', async () => {
+  test('rejects E2EE, history and foreign URLs before network I/O', async () => {
     const fixture = messagesGateway();
     const fetch = jest
       .spyOn(globalThis, 'fetch')
@@ -496,10 +491,8 @@ describe('Messages API', () => {
     const options = inferenceClientOptions(fixture.gateway);
     const plain = new InferenceClient({ ...options, e2ee: false });
     const encrypted = new InferenceClient(options);
-    const direct = new DirectInferenceClient({ baseUrl, e2ee: false });
     for (const [client, url] of [
       [encrypted, `${baseUrl}messages`],
-      [direct, `${baseUrl}messages`],
       [plain, `${baseUrl}messages/msg_fixture`],
       [plain, 'https://other.test/v1/messages'],
     ] as const) {

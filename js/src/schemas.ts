@@ -267,29 +267,6 @@ export const CloudApiModelAttestationSchema = objectSchema({
   compose_manager_attestation: OptionalComposeManagerAttestationSchema,
 });
 
-const DirectApiModelAttestationEntries = {
-  ...CloudApiModelAttestationEntries,
-  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
-  model_name: v.pipe(v.string(), v.minLength(1)),
-  info: objectSchema({
-    tcb_info: v.union([CloudApiTcbInfoSchema, CloudApiTcbInfoJsonSchema]),
-    instance_id: OptionalCloudApiStringSchema,
-  }),
-};
-
-export const DirectApiModelAttestationSchema = objectSchema(
-  DirectApiModelAttestationEntries,
-);
-
-export const DirectApiAttestationReportSchema = objectSchema({
-  ...DirectApiModelAttestationEntries,
-  all_attestations: v.pipe(
-    v.array(DirectApiModelAttestationSchema),
-    v.minLength(1),
-  ),
-  ohttp_attestation: OptionalOhttpAttestationSchema,
-});
-
 export const CloudApiGatewayAttestationSchema = objectSchema({
   ...CloudApiAttestationEntries,
   report_data: v.string(),
@@ -356,19 +333,6 @@ export const CloudApiCompletionSignatureResponseSchema = objectSchema({
 
 export const CloudApiCompletionSignatureResultSchema = v.union([
   CloudApiCompletionSignatureResponseSchema,
-  CloudApiUnavailableSignatureResponseSchema,
-]);
-
-export const DirectApiCompletionSignatureResultSchema = v.union([
-  objectSchema({
-    text: v.string(),
-    signature: v.string(),
-    signing_address: v.string(),
-    signing_algo: SigningAlgoSchema,
-    // Direct provider signatures do not carry a kind discriminator. An
-    // explicit Gateway discriminator must not be silently reinterpreted.
-    signature_kind: v.optional(v.literal('provider_tee')),
-  }),
   CloudApiUnavailableSignatureResponseSchema,
 ]);
 

@@ -9,13 +9,13 @@ import (
 )
 
 func main() {
-	c, err := demo.Configuration(false)
+	c, err := demo.Configuration()
 	if err != nil {
 		log.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
-	if err = demo.RunIntegrated(ctx, c, false); err != nil {
+	if err = demo.RunIntegrated(ctx, c); err != nil {
 		log.Fatal(err)
 	}
 }

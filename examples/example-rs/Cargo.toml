@@ -22,14 +22,6 @@ name = "gateway-chat-completions"
 path = "src/gateway/chat_completions.rs"
 
 [[bin]]
-name = "direct-chat-completions-bare"
-path = "src/direct/chat_completions_bare.rs"
-
-[[bin]]
-name = "direct-chat-completions"
-path = "src/direct/chat_completions.rs"
-
-[[bin]]
 name = "responses"
 path = "src/gateway/responses.rs"
 

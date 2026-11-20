@@ -56,8 +56,7 @@ async def fetch_and_verify_model_attestations(
     if not fetched.attestations:
         raise RuntimeError('Gateway returned no model attestations')
 
-    # These are model reports fetched through the Gateway, not direct model TLS
-    # connections. Verify every report before choosing an encryption recipient.
+    # Verify every report before choosing an encryption recipient.
     model_attestations = []
     for attestation in fetched.attestations:
         verified = await verify_model_attestation(
