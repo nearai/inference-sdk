@@ -111,7 +111,6 @@ async function fetchAndVerifyGateway(
 async function fetchAndVerifyModelAttestations(
   client: AttestationClient,
 ): Promise<readonly VerifiedModelAttestation[]> {
-  // These reports come through the Gateway, not a direct model TLS connection.
   // The fetch helper requests the signer-and-nonce layout without a TLS binding.
   const fetched = await client.fetchModelAttestations({
     model: MODEL,

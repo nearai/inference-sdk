@@ -14,7 +14,7 @@ import (
 )
 
 func run() error {
-	c, err := demo.ConfigurationForModel(false, "")
+	c, err := demo.ConfigurationForModel("")
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,6 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 pub const MODEL: &str = "z-ai/glm-5.3-flash";
 pub const GATEWAY: &str = "https://cloud-api.near.ai/v1/";
-pub const DIRECT: &str = "https://glm-5-3-flash.completions.near.ai/v1/";
 
 pub fn api_key() -> Result<String> {
     Ok(std::env::var("NEARAI_API_KEY")?)
@@ -22,14 +21,6 @@ pub fn gateway() -> String {
         "{}/",
         std::env::var("NEARAI_BASE_URL")
             .unwrap_or_else(|_| GATEWAY.into())
-            .trim_end_matches('/')
-    )
-}
-pub fn direct() -> String {
-    format!(
-        "{}/",
-        std::env::var("NEARAI_BASE_URL")
-            .unwrap_or_else(|_| DIRECT.into())
             .trim_end_matches('/')
     )
 }

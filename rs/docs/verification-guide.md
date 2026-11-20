@@ -81,29 +81,12 @@ and logprobs. Both Ed25519 and ECDSA are supported.
 request and `decrypt_json` / `decrypt_sse` helpers. Retain the encrypted request
 and response bytes for standalone signature verification.
 
-Set `ohttp: true` to encrypt encapsulated requests and responses to the Gateway
-or Direct endpoint. `Authorization` and configured forwarded headers remain on
+Set `ohttp: true` to encrypt encapsulated requests and responses to the Gateway. `Authorization` and configured forwarded headers remain on
 the outer HTTP request. OHTTP requires Ed25519 and an endpoint serving `/ohttp`;
 it can be enabled independently of E2EE.
 
 For manual OHTTP, authenticate the key configuration with
 `verify_ohttp_key_config`, then pass it to `create_ohttp_client`.
-
-### Experimental direct endpoints
-
-`DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. Use `DirectInferenceClientOptions` with `e2ee: true` for encryption.
-
-`verify_response(id)` returns `VerifiedDirectCompletionResult` with all matching
-model reports in `attestations`.
-
-For manual verification, pass the fingerprints from `verify_direct_model_attestations`
-to `create_pinned_tls_client`. Send Chat with that client and reuse it with
-`DirectAttestationClient::with_http_client` to fetch the signature. Select matching
-reports with `find_direct_model_attestations_for_signature` and pass one match to
-`verify_direct_model_response`.
-
-Requests use the verified model TLS fingerprints by default.
 
 ## Verify System One decisions
 
@@ -455,7 +438,7 @@ For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
 `ModelAttestationVerifiers.deployment`. Keep the manager repository and build
 identity in `ComposeManagerImagePolicy`, separate from the compose image map.
 
-On Gateway or Direct inference clients, set `model_verification.deployment`.
+On Gateway inference clients, set `model_verification.deployment`.
 The policy runs for every model report and requires Compose Manager evidence in
 each one. See the [API reference](./api-reference.md#compose-manager-deployment-images)
 for file selection, GitHub access, and standalone verification options.

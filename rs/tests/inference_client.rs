@@ -1,5 +1,3 @@
-#[path = "inference/direct_inference_client.rs"]
-mod direct_inference_client;
 #[path = "support/inference.rs"]
 mod fixture;
 #[path = "inference/messages.rs"]
@@ -780,122 +778,93 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
 }
 #[tokio::test]
 async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
-    for direct in [false, true] {
-        for case in [
-            "valid",
-            "alternate_spelling",
-            "missing",
-            "wrong_signer",
-            "bad_signature",
-            "bad_config",
-            "tampered_final",
-        ] {
-            let (server, f, mut options) = setup(Fixture {
-                direct,
-                ohttp: if case == "missing" {
-                    None
-                } else {
-                    Some(ohttp_config())
-                },
-                wrong_ohttp_signer: case == "wrong_signer",
-                bad_ohttp_signature: case == "bad_signature",
-                bad_ohttp_config: case == "bad_config",
-                tampered_ohttp_response: case == "tampered_final",
-                alternate_direct_signer: direct && case == "alternate_spelling",
-                ..Default::default()
-            })
-            .await;
-            options.ohttp = true;
-            options.e2ee = true;
-            // Exercise JSON and SSE, with encryption inside the OHTTP tunnel.
-            for streaming in [false, true] {
-                let mut request = body();
-                request["stream"] = json!(streaming);
-                let (result, receipt) = if direct {
-                    let client = DirectInferenceClient::with_options(fixture::direct_options(
-                        options.clone(),
-                    ))
-                    .unwrap();
-                    let result = match client.send(client.chat_request(request).unwrap()).await {
-                        Ok(r) => r.bytes().await,
-                        Err(e) => Err(e),
-                    };
-                    let receipt = if result.is_ok() {
-                        Some(
-                            client
-                                .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await
-                                .map(|receipt| receipt.attestations.len()),
-                        )
-                    } else {
-                        assert_eq!(
-                            client.verify_response("chat-0").await.unwrap_err().code(),
-                            "api.completion_not_found"
-                        );
-                        None
-                    };
-                    (result, receipt)
-                } else {
-                    let client = InferenceClient::with_options(options.clone()).unwrap();
-                    let result = match client.send(client.chat_request(request).unwrap()).await {
-                        Ok(r) => r.bytes().await,
-                        Err(e) => Err(e),
-                    };
-                    let receipt = if result.is_ok() {
-                        Some(
-                            client
-                                .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await
-                                .map(|receipt| receipt.attestations.len()),
-                        )
-                    } else {
-                        assert_eq!(
-                            client.verify_response("chat-0").await.unwrap_err().code(),
-                            "api.completion_not_found"
-                        );
-                        None
-                    };
-                    (result, receipt)
+    for case in [
+        "valid",
+        "missing",
+        "wrong_signer",
+        "bad_signature",
+        "bad_config",
+        "tampered_final",
+    ] {
+        let (server, f, mut options) = setup(Fixture {
+            ohttp: if case == "missing" {
+                None
+            } else {
+                Some(ohttp_config())
+            },
+            wrong_ohttp_signer: case == "wrong_signer",
+            bad_ohttp_signature: case == "bad_signature",
+            bad_ohttp_config: case == "bad_config",
+            tampered_ohttp_response: case == "tampered_final",
+            ..Default::default()
+        })
+        .await;
+        options.ohttp = true;
+        options.e2ee = true;
+        // Exercise JSON and SSE, with encryption inside the OHTTP tunnel.
+        for streaming in [false, true] {
+            let mut request = body();
+            request["stream"] = json!(streaming);
+            let (result, receipt) = {
+                let client = InferenceClient::with_options(options.clone()).unwrap();
+                let result = match client.send(client.chat_request(request).unwrap()).await {
+                    Ok(r) => r.bytes().await,
+                    Err(e) => Err(e),
                 };
-                if case == "valid" || case == "alternate_spelling" {
-                    assert!(String::from_utf8(result.unwrap())
-                        .unwrap()
-                        .contains("Hello"));
-                    let attestation_count = receipt.unwrap().unwrap();
-                    assert_eq!(attestation_count, if direct { 2 } else { 1 });
+                let receipt = if result.is_ok() {
+                    Some(
+                        client
+                            .verify_response(&format!("chat-{}", usize::from(streaming)))
+                            .await
+                            .map(|receipt| receipt.attestations.len()),
+                    )
                 } else {
                     assert_eq!(
-                        result.unwrap_err().code(),
-                        match case {
-                            "missing" => "ohttp.attestation_required",
-                            "wrong_signer" => "ohttp.signer_mismatch",
-                            "bad_signature" => "ohttp.signature_invalid",
-                            "bad_config" => "ohttp.key_config_invalid",
-                            "tampered_final" => "ohttp.decryption_failed",
-                            _ => unreachable!(),
-                        }
+                        client.verify_response("chat-0").await.unwrap_err().code(),
+                        "api.completion_not_found"
                     );
-                    assert_eq!(
-                        f.chat.load(Ordering::SeqCst),
-                        if case == "tampered_final" {
-                            1 + usize::from(streaming)
-                        } else {
-                            0
-                        }
-                    );
-                    assert_eq!(f.signatures.load(Ordering::SeqCst), 0);
-                    if !direct && case != "tampered_final" {
-                        assert_eq!(f.model.load(Ordering::SeqCst), 0);
-                        assert!(server
-                            .received_requests()
-                            .await
-                            .unwrap()
-                            .iter()
-                            .all(|request| {
-                                request.url.path() == "/v1/attestation/report"
-                                    && !request.url.query_pairs().any(|(key, _)| key == "model")
-                            }));
+                    None
+                };
+                (result, receipt)
+            };
+            if case == "valid" {
+                assert!(String::from_utf8(result.unwrap())
+                    .unwrap()
+                    .contains("Hello"));
+                let attestation_count = receipt.unwrap().unwrap();
+                assert_eq!(attestation_count, 1);
+            } else {
+                assert_eq!(
+                    result.unwrap_err().code(),
+                    match case {
+                        "missing" => "ohttp.attestation_required",
+                        "wrong_signer" => "ohttp.signer_mismatch",
+                        "bad_signature" => "ohttp.signature_invalid",
+                        "bad_config" => "ohttp.key_config_invalid",
+                        "tampered_final" => "ohttp.decryption_failed",
+                        _ => unreachable!(),
                     }
+                );
+                assert_eq!(
+                    f.chat.load(Ordering::SeqCst),
+                    if case == "tampered_final" {
+                        1 + usize::from(streaming)
+                    } else {
+                        0
+                    }
+                );
+                assert_eq!(f.signatures.load(Ordering::SeqCst), 0);
+                if case != "tampered_final" {
+                    assert_eq!(f.model.load(Ordering::SeqCst), 0);
+                    assert!(server
+                        .received_requests()
+                        .await
+                        .unwrap()
+                        .iter()
+                        .all(|request| {
+                            request.url.path() == "/v1/attestation/report"
+                                && !request.url.query_pairs().any(|(key, _)| key == "model")
+                        }));
                 }
             }
         }

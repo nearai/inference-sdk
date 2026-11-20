@@ -34,8 +34,6 @@ type Attestation struct {
 	SigningPublicKey          string
 	NvidiaPayload             *string
 	SPKIFingerprint           string
-	ModelName                 string
-	InstanceID                string
 }
 type ClientBinding struct{ Nonce, SPKIFingerprint string }
 type OHTTPAttestation struct {
@@ -50,10 +48,8 @@ type FetchedGatewayAttestation struct {
 	OHTTPAttestation *OHTTPAttestation
 }
 type FetchedModelAttestations struct {
-	Attestations       []Attestation
-	ClientBinding      ClientBinding
-	ServingAttestation *Attestation
-	OHTTPAttestation   *OHTTPAttestation
+	Attestations  []Attestation
+	ClientBinding ClientBinding
 }
 type ModelMetadata struct {
 	ModelID              string `json:"model_id"`
@@ -116,13 +112,6 @@ type VerifiedGatewayAttestation struct {
 	SPKIFingerprint string
 }
 
-type VerifiedDirectModelAttestation struct {
-	VerifiedModelAttestation
-	// The quote does not authenticate the endpoint's ModelName or InstanceID.
-	ModelName, InstanceID string
-	SPKIFingerprint       string
-}
-
 // AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
 	Gateway    *VerifiedGatewayAttestation
@@ -158,7 +147,7 @@ type VerifiedCompletionResult struct {
 // ClientOptions configures evidence retrieval.
 // A custom transport is part of the trust boundary and must perform normal TLS verification.
 type ClientOptions struct {
-	// API Key is optional. Gateway and direct reports omit authentication;
+	// API Key is optional. Gateway reports omit authentication;
 	// model reports through the Gateway use it for organization access.
 	APIKey     string
 	BaseURL    string
@@ -184,39 +173,4 @@ type InferenceOptions struct {
 	GatewayVerification VerificationOptions
 	ModelVerification   VerificationOptions
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
-}
-
-// DirectInferenceOptions leaves E2EE disabled by default.
-type DirectInferenceOptions struct {
-	ClientOptions
-	SigningAlgo       SigningAlgo
-	E2EE              bool
-	OHTTP             bool
-	DisableTLSBinding bool
-	AttestationTTL    *time.Duration
-	ResponseTTL       *time.Duration
-	ModelVerification VerificationOptions
-	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
-}
-type VerifiedDirectModelAttestations struct {
-	ServingAttestation VerifiedDirectModelAttestation
-	Attestations       []VerifiedDirectModelAttestation
-	SPKIFingerprints   []string
-}
-
-// DirectAttestationVerificationResult contains the verified Direct model reports.
-type DirectAttestationVerificationResult struct {
-	VerifiedDirectModelAttestations
-	VerifiedAt time.Time
-}
-
-// VerifiedDirectCompletionResult contains the complete preflight-verified signer
-// group for a Direct receipt.
-type VerifiedDirectCompletionResult struct {
-	ID string
-	// Deprecated: use ID. CompletionID contains the same value.
-	CompletionID  string
-	SignatureKind string
-	Signature     CompletionSignature
-	Attestations  []VerifiedDirectModelAttestation
 }

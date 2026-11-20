@@ -13,8 +13,6 @@ from nearai_inference_sdk import (
     AttestationClient,
     CompletionSignature,
     CompletionSignatureReference,
-    DirectAttestationClient,
-    DirectInferenceClient,
     InferenceClient,
     MeasuredDeployment,
     OhttpAttestation,
@@ -90,8 +88,7 @@ async def test_gateway_bootstrap_keeps_its_own_peer_capturing_transport(
         assert not http_client.is_closed
 
 
-@pytest.mark.parametrize('client_type', [AttestationClient, DirectAttestationClient])
-async def test_borrowed_http_client_does_not_follow_evidence_redirects(client_type):
+async def test_borrowed_http_client_does_not_follow_evidence_redirects():
     requested_urls = []
 
     async def redirect(request):
@@ -103,7 +100,7 @@ async def test_borrowed_http_client_does_not_follow_evidence_redirects(client_ty
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(redirect), follow_redirects=True
     ) as http_client:
-        client = client_type(
+        client = AttestationClient(
             api_key=API_KEY, base_url=BASE_URL, http_client=http_client
         )
         with pytest.raises(ApiError) as rejected:
@@ -161,9 +158,7 @@ async def test_model_metadata_decodes_capabilities_at_the_http_boundary(
     'client_type',
     [
         AttestationClient,
-        DirectAttestationClient,
         InferenceClient,
-        DirectInferenceClient,
     ],
 )
 def test_client_rejects_invalid_base_urls_at_construction(base_url, client_type):
@@ -248,11 +243,9 @@ def use_fake_cloud_api_fetch(
 
 @pytest.mark.parametrize('api_key', [None, API_KEY])
 @pytest.mark.parametrize('custom_headers', [False, True])
-@pytest.mark.parametrize('direct', [False, True])
-async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_retain_it(
-    monkeypatch, api_key, custom_headers, direct
+async def test_gateway_reports_omit_authentication_but_model_reports_retain_it(
+    monkeypatch, api_key, custom_headers
 ):
-    from nearai_inference_sdk import DirectAttestationClient
 
     requests = []
 
@@ -265,7 +258,7 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
                 signing_address=SIGNING_ADDRESS,
             )
         query = parse_qs(urlsplit(url).query)
-        if direct or 'model' not in query:
+        if 'model' not in query:
             assert all(
                 name not in headers
                 for name in ('authorization', 'api-key', 'x-api-key')
@@ -283,10 +276,7 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
             report_data='00' * 64,
             tls_cert_fingerprint=None,
         )
-        if direct:
-            report['model_name'] = 'test'
-            payload = {**report, 'all_attestations': [report]}
-        elif 'model' in query:
+        if 'model' in query:
             payload = {'model_attestations': [report]}
         else:
             payload = {'gateway_attestation': report}
@@ -303,13 +293,9 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
         if custom_headers
         else None
     )
-    if direct:
-        client = DirectAttestationClient(BASE_URL, api_key=api_key, headers=headers)
-        await client.fetch_model_attestations(include_spki_fingerprint=False)
-    else:
-        client = AttestationClient(api_key, base_url=BASE_URL, headers=headers)
-        await client.fetch_gateway_attestation(include_spki_fingerprint=False)
-        await client.fetch_model_attestations('test')
+    client = AttestationClient(api_key, base_url=BASE_URL, headers=headers)
+    await client.fetch_gateway_attestation(include_spki_fingerprint=False)
+    await client.fetch_model_attestations('test')
     await client.fetch_completion_signature('test')
     assert requests[-1][1].get('authorization') == (
         'Bearer test' if api_key else 'Bearer custom' if custom_headers else None

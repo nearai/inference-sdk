@@ -3,10 +3,7 @@ use crate::*;
 use crate::{
     e2ee::remove_e2ee_headers,
     errors::protocol,
-    inference_core::{
-        input, ordinary_client, verified_at, CoreOptions, EvidenceApi, InferenceCore,
-        PolicyVerifier, Session, SessionProvider, VerifiedReceipt,
-    },
+    inference_core::{input, ordinary_client, verified_at, InferenceCore, PolicyVerifier, Session},
 };
 use futures_util::future::try_join_all;
 use reqwest::header::{HeaderMap, HeaderValue};
@@ -45,19 +42,18 @@ pub struct InferenceClientOptions {
 }
 impl Default for InferenceClientOptions {
     fn default() -> Self {
-        let options = CoreOptions::default();
         Self {
-            api_key: options.api_key,
-            base_url: options.base_url,
-            headers: options.headers,
-            e2ee: options.e2ee,
-            ohttp: options.ohttp,
-            signing_algo: options.signing_algo,
-            attestation_cache_ttl: options.attestation_cache_ttl,
-            response_cache_ttl: options.response_cache_ttl,
+            api_key: None,
+            base_url: DEFAULT_NEAR_AI_CLOUD_BASE_URL.into(),
+            headers: HeaderMap::new(),
+            e2ee: false,
+            ohttp: false,
+            signing_algo: SigningAlgo::Ed25519,
+            attestation_cache_ttl: Duration::from_secs(3600),
+            response_cache_ttl: Duration::from_secs(3600),
             gateway_verification: GatewayVerificationOptions::default(),
-            model_verification: options.model_verification,
-            deployment_policy: options.deployment_policy,
+            model_verification: ModelVerificationOptions::default(),
+            deployment_policy: None,
         }
     }
 }
@@ -93,22 +89,7 @@ impl VerifiedCompletionResult {
         self.signature.kind
     }
 }
-impl From<InferenceClientOptions> for CoreOptions {
-    fn from(options: InferenceClientOptions) -> Self {
-        Self {
-            api_key: options.api_key,
-            base_url: options.base_url,
-            headers: options.headers,
-            e2ee: options.e2ee,
-            ohttp: options.ohttp,
-            signing_algo: options.signing_algo,
-            attestation_cache_ttl: options.attestation_cache_ttl,
-            response_cache_ttl: options.response_cache_ttl,
-            model_verification: options.model_verification,
-            deployment_policy: options.deployment_policy,
-        }
-    }
-}
+
 #[derive(Clone)]
 pub struct InferenceClient {
     core: InferenceCore,
@@ -121,9 +102,8 @@ impl InferenceClient {
         })
     }
     pub fn with_options(options: InferenceClientOptions) -> Result<Self, InferenceError> {
-        let provider = SessionProvider::Gateway(options.gateway_verification.clone());
         Ok(Self {
-            core: InferenceCore::new(options.into(), provider)?,
+            core: InferenceCore::new(options)?,
         })
     }
     pub fn base_url(&self) -> &str {
@@ -301,10 +281,7 @@ impl InferenceClient {
         &self,
         id: &str,
     ) -> Result<VerifiedCompletionResult, InferenceError> {
-        match self.core.verify_receipt(id).await? {
-            VerifiedReceipt::Gateway(receipt) => Ok(*receipt),
-            VerifiedReceipt::Direct(_) => unreachable!("Gateway client contains a Direct receipt"),
-        }
+        self.core.verify_receipt(id).await
     }
     /// OpenAI-compatible JSON Chat request. Use `send` for streaming.
     pub async fn chat_completions(&self, body: Value) -> Result<Value, InferenceError> {
@@ -323,7 +300,7 @@ impl InferenceClient {
 }
 pub(crate) async fn create_session(
     model: &str,
-    options: CoreOptions,
+    options: InferenceClientOptions,
     gateway_options: GatewayVerificationOptions,
 ) -> Result<Arc<Session>, InferenceError> {
     let api = AttestationClient::with_base_url(options.api_key.clone(), &options.base_url)?
@@ -454,11 +431,9 @@ pub(crate) async fn create_session(
         gateway: Some(gateway),
         models: model_attestations,
         selected: selected_model_attestation,
-        direct: None,
-        selected_direct_attestations: Vec::new(),
         verified_at: verified_at(),
         client,
-        api: EvidenceApi::Gateway(api),
+        api,
         ohttp,
     }))
 }

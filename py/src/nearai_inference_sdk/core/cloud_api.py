@@ -19,8 +19,6 @@ from ..schemas import (
     CloudModelAttestationResponseSchema,
     CloudModelAttestationSchema,
     CloudUnavailableSignatureSchema,
-    DirectCompletionSignatureSchema,
-    DirectModelAttestationSchema,
     ModelMetadataResponseSchema,
     OhttpAttestationSchema,
 )
@@ -399,10 +397,9 @@ def _decode_gateway_attestation_report(value: object) -> GatewayAttestation:
 
 
 def _map_model_attestation(
-    raw: CloudModelAttestationSchema | DirectModelAttestationSchema, label: str
+    raw: CloudModelAttestationSchema, label: str
 ) -> ModelAttestation:
-    # Direct reports carry manager evidence only on the response envelope.
-    manager = getattr(raw, 'compose_manager_attestation', None)
+    manager = raw.compose_manager_attestation
     if raw.signing_public_key is not None:
         _api_hex_to_bytes(raw.signing_public_key, f'{label}.signing_public_key')
     return ModelAttestation(
@@ -469,9 +466,6 @@ def _map_ohttp_attestation(raw: OhttpAttestationSchema) -> OhttpAttestation:
 
 def _decode_completion_signature(
     value: object,
-    schema: type[
-        CloudCompletionSignatureSchema | DirectCompletionSignatureSchema
-    ] = CloudCompletionSignatureSchema,
 ) -> CompletionSignature:
     if isinstance(value, dict) and not (SIGNATURE_RESPONSE_FIELDS & set(value)):
         try:
@@ -486,7 +480,7 @@ def _decode_completion_signature(
             },
         )
     try:
-        raw = schema.model_validate(value)
+        raw = CloudCompletionSignatureSchema.model_validate(value)
     except ValidationError as error:
         _raise_invalid_wire_response(error, root='signature')
     return CompletionSignature(

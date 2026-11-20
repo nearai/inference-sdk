@@ -46,7 +46,7 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default |
 | --- | --- |
-| `api_key` / `headers` | No API key / empty headers. Gateway and direct reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
+| `api_key` / `headers` | No API key / empty headers. Gateway reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
 | `base_url` | `https://cloud-api.near.ai/v1` |
 | `signing_algo` | `Ed25519` |
 | `e2ee` / `ohttp` | Both `false` for Gateway clients. OHTTP requires Ed25519. |
@@ -94,7 +94,7 @@ probabilities, and Box coordinates/confidence use finite `f64` values.
 See the [native image example](../../examples/example-rs/src/gateway/systemone.rs) and
 [run instructions](../../examples/README.md#system-one-images).
 
-## Standalone transport and experimental direct APIs
+## Standalone transport
 
 - `prepare_e2ee_chat_request(request, &E2eeModelKey)` returns
   `PreparedE2eeChatRequest { request, .. }` with private response-key state.
@@ -108,32 +108,6 @@ See the [native image example](../../examples/example-rs/src/gateway/systemone.r
 - `create_ohttp_client(config, base_url, reqwest_client, forwarded_headers)` returns
   `OhttpClient`; its `send` returns `InferenceResponse`. Config bytes must already
   be authenticated, and the supplied HTTP client must disable redirects.
-- `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
-  Gateway client. An explicit model endpoint URL is required, including with `with_options`.
-  Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
-  to enable it. Direct has its own options type without Gateway verification settings.
-  `verify` returns `DirectAttestationVerificationResult`.
-  `verify_response` returns `VerifiedDirectCompletionResult` with `id`, `signature`,
-  and `attestations: Vec<VerifiedDirectModelAttestation>`. Read the matching report
-  group directly from `receipt.attestations`; `signature_kind()` returns the
-  receipt's signature kind. The quote does not authenticate the endpoint's
-  `model_name` or `instance_id`. Chat and transport methods match `InferenceClient`.
-- `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
-  and direct signatures. `with_headers` configures extra headers.
-  `fetch_model_attestations_with_options(DirectAttestationFetchOptions)` accepts
-  `signing_algo`, `signing_address`, and `include_spki_fingerprint` (default `true`).
-  After verification, use `with_http_client(create_pinned_tls_client(&verified.spki_fingerprints)?)`
-  to pin signature requests.
-- `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
-  `verify_direct_model_response` validate individual reports, complete report
-  sets, and exact completion bytes respectively. Select matching reports with
-  `find_direct_model_attestations_for_signature` and pass one report to the response verifier.
-
-See the [Direct client guide](./verification-guide.md#experimental-direct-endpoints)
-for usage. Direct clients are experimental and use attested TLS by default.
-Set `DirectInferenceClientOptions.include_spki_fingerprint` to `false` for an
-application proxy or HTTP endpoint.
-
 ## Verification lifecycle
 
 The public APIs support three stages:
@@ -163,7 +137,7 @@ Gateway verification with `create_pinned_tls_client`. Custom clients must preser
 certificate and hostname validation, disable redirects, and enable `tls_info(true)`
 when fetching TLS-bound Gateway reports.
 
-Gateway and Direct attestation report requests omit `Authorization`, `api-key`,
+Gateway attestation report requests omit `Authorization`, `api-key`,
 and `x-api-key`. Model reports fetched through the Gateway, model metadata,
 inference, and response signatures use the configured credentials.
 
@@ -196,7 +170,6 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `find_direct_model_attestations_for_signature` | `attestations: &[VerifiedDirectModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedDirectModelAttestation>, VerificationError>` | Selects all verified Direct reports matching the signature signer, or an error when none match. |
 | `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Selects all verified reports sharing the model receipt's signer. |
 | `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Deprecated. Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
 
@@ -235,7 +208,6 @@ observed by the matching fetch request.
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `verify_direct_model_response` | `request: &[u8]`, `response: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedDirectModelAttestation` | `()` | Verifies exact bytes against a verified Direct report. |
 | `verify_model_response` | `request_body: &[u8]`, `response_body: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedModelAttestation` | `()` | Verifies a `ProviderTee` completion signature for exact bytes and matches its signer to verified model evidence. |
 | `verify_gateway_response` | `request_body: &[u8]`, `response_body: &[u8]`, `signature: &CompletionSignature`, `attestation: &VerifiedGatewayAttestation` | `()` | Verifies a `Gateway` completion signature for exact bytes and matches its signer to verified Gateway evidence. |
 

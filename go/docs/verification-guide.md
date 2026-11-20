@@ -3,7 +3,7 @@
 Use the Go SDK to verify deployments before sending a prompt and explicitly
 verify response signatures after receiving a completion. This guide covers
 Gateway clients, the official OpenAI Go client, streaming, policies, encryption,
-and experimental direct endpoints. See the [API reference](./api-reference.md)
+and response verification. See the [API reference](./api-reference.md)
 for signatures, options, and result fields.
 
 ## Install
@@ -372,7 +372,7 @@ check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
             },
         })
 }
-// Gateway and Direct: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
+// Gateway: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
 ```
 
 This checks container image builds recorded by Compose Manager. Set source
@@ -414,45 +414,12 @@ field label through authenticated data. The endpoint must support v3. See the
 for the format and supported fields.
 
 Enable `E2EE: true` to encrypt supported content fields to an attested model key.
-Enable `OHTTP: true` to encrypt encapsulated requests and responses to the Gateway
-or Direct endpoint. `Authorization` and configured forwarded headers remain on
+Enable `OHTTP: true` to encrypt encapsulated requests and responses to the Gateway. `Authorization` and configured forwarded headers remain on
 the outer HTTP request. OHTTP requires Ed25519 and can be combined with E2EE. See the
 [encryption reference](./api-reference.md#encryption) for exact field coverage.
 
 Gateway requests use attested TLS pinning by default. For an application proxy,
 set `DisableTLSBinding: true`.
-
-## Experimental direct endpoints
-
-Direct clients require an explicit model endpoint URL. E2EE is disabled by
-default; this example enables it:
-
-```go
-client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-	ClientOptions: nearai.ClientOptions{
-		APIKey:  apiKey,
-		BaseURL: directBaseURL,
-	},
-	E2EE: true,
-})
-if err != nil {
-	return err
-}
-defer client.Close()
-```
-
-`DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. It supports Chat, streaming, OHTTP, and OpenAI integration.
-Requests use the verified model TLS fingerprints by default.
-
-`VerifyResponse` returns `VerifiedDirectCompletionResult` with all matching model
-reports in `Attestations`. After `VerifyDirectModelAttestations`, create a pinned
-transport with `NewPinnedTransport(transport, verified.SPKIFingerprints...)`.
-Wrap it in `httpClient := &http.Client{Transport: pinned}`. Use that client for
-Chat and pass it to `NewDirectAttestationClient` via `ClientOptions.HTTPClient`
-to fetch the response signature. Select matching reports with
-`FindDirectModelAttestationsForSignature` and pass one match to
-`VerifyDirectModelResponse`.
 
 ## Manual verification
 

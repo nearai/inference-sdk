@@ -58,7 +58,6 @@ type fakeCloud struct {
 	missingModelKey  bool
 	onlyLastModelKey bool
 	tee              bool
-	direct           bool
 	stream           bool
 	tamper           bool
 	badModel         bool
@@ -99,7 +98,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.expectedHost != "" && r.Host != f.expectedHost {
 		f.t.Errorf("unexpected authority %q", r.Host)
 	}
-	if strings.HasSuffix(r.URL.Path, "/attestation/report") && (f.direct || !r.URL.Query().Has("model")) {
+	if strings.HasSuffix(r.URL.Path, "/attestation/report") && !r.URL.Query().Has("model") {
 		for _, name := range []string{"Authorization", "Api-Key", "X-Api-Key"} {
 			if r.Header.Get(name) != "" {
 				f.t.Errorf("attestation sent %s", name)
@@ -142,7 +141,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"report_data":        hex.EncodeToString(report),
 			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
 		}
-		if f.a.ComposeManagerAttestation != nil && (f.direct || r.URL.Query().Get("model") != "") {
+		if f.a.ComposeManagerAttestation != nil && r.URL.Query().Get("model") != "" {
 			manager := *f.a.ComposeManagerAttestation
 			manager.Nonce = n
 			managerQuote := q
@@ -153,12 +152,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			manager.IntelQuote = string(managerQuoteBytes)
 			a["compose_manager_attestation"] = manager
 		}
-		if f.direct {
-			a["model_name"] = "canonical/model"
-			root := maps.Clone(a)
-			root["all_attestations"] = []any{a}
-			json.NewEncoder(w).Encode(root)
-		} else if r.URL.Query().Get("model") != "" {
+		if r.URL.Query().Get("model") != "" {
 			generation := f.modelReports.Add(1)
 			if f.missingModelKey {
 				delete(a, "signing_public_key")

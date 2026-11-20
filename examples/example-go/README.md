@@ -15,9 +15,6 @@ and the matching JavaScript, Python, and Rust examples.
 | `go run ./gateway/messages` | Native Messages JSON/SSE and Gateway receipts |
 | `go run ./gateway/messages-with-anthropic-sdk` | Official Anthropic Messages JSON/SSE and Gateway receipts |
 | `go run ./gateway/systemone` | Text decisions or PNG image/Box decisions with verified receipts |
-| `go run ./direct/chat-completions` | Experimental native direct Chat with E2EE and receipts |
-| `go run ./direct/chat-completions-bare` | Experimental standalone direct verification over plaintext HTTPS |
-| `go run ./direct/chat-completions-with-openai-sdk` | Experimental official OpenAI direct Chat with E2EE and receipts |
 
 `go run .` remains an alias for `gateway/chat-completions-with-openai-sdk`. `NEARAI_BASE_URL`,
 `NEARAI_MODEL`, `NEARAI_SIGNING_ALGO`, and `NEARAI_OHTTP` select the endpoint,

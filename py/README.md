@@ -73,5 +73,5 @@ disabled and no model attestation policy or deployment checks configured.
 - [Verification guide](./docs/verification-guide.md): streaming, official SDK integration,
   encryption, deployment policies, and standalone verification.
 - [API reference](./docs/api-reference.md): options, methods, and result fields.
-- [Runnable examples](../examples/README.md#python-setup): Gateway and Direct workflows.
+- [Runnable examples](../examples/README.md#python-setup): Gateway workflows.
 - [Development checks](../TESTING.md#validation) and [live E2E tests](../e2e/README.md).

@@ -53,7 +53,7 @@ const client = new InferenceClient({
 ### Use OHTTP
 
 Set `ohttp: true` to encapsulate Chat requests and responses in OHTTP. Both
-`InferenceClient` and `DirectInferenceClient` support this option for ordinary
+`InferenceClient` supports this option for ordinary
 and streaming completions:
 
 ```ts
@@ -65,8 +65,7 @@ const client = new InferenceClient({
 
 OHTTP requires Ed25519 and an endpoint serving `/ohttp`.
 
-OHTTP encrypts encapsulated requests and responses to the Gateway or Direct
-endpoint. `Authorization` and configured forwarded headers remain on the outer
+OHTTP encrypts encapsulated requests and responses to the Gateway. `Authorization` and configured forwarded headers remain on the outer
 HTTP request. E2EE encrypts supported Chat fields to the model; both options can
 be enabled independently or together.
 
@@ -423,60 +422,6 @@ Streaming uses the same ID-based verification as the built-in client.
 Configure credentials on `InferenceClient`. With raw `client.fetch()`, consume
 the response body before verification.
 
-## Use a direct model endpoint
-
-`DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. Set `e2ee: true` to enable encryption. Direct clients are
-experimental. The Node client pins requests to the verified model TLS fingerprints.
-
-```ts
-import { DirectInferenceClient } from '@nearai/inference-sdk/node';
-
-const client = new DirectInferenceClient({
-  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
-  apiKey: process.env.NEARAI_API_KEY,
-  e2ee: true,
-});
-```
-
-Use `client.chat.completions.create()`, `client.fetch`, and
-`client.verifyResponse(id)` as above. Direct endpoints may require different
-credentials from the Gateway and use separate fetch and verification APIs.
-
-### Verify direct evidence manually
-
-```ts
-import {
-  createPinnedTlsFetch,
-  DirectAttestationClient,
-  verifyDirectModelAttestations,
-} from '@nearai/inference-sdk/node';
-
-const baseUrl = 'https://glm-5-3-flash.completions.near.ai/v1';
-const bootstrap = new DirectAttestationClient({ baseUrl });
-const fetched = await bootstrap.fetchModelAttestations({ signingAlgo: 'ed25519' });
-const verified = await verifyDirectModelAttestations(fetched);
-const pinnedFetch = createPinnedTlsFetch(verified.spkiFingerprints);
-const client = new DirectAttestationClient({
-  baseUrl,
-  apiKey: process.env.NEARAI_API_KEY,
-  fetch: pinnedFetch,
-});
-```
-
-Send Chat with `pinnedFetch` and retain the exact request and response bytes.
-Fetch its signature with `client.fetchCompletionSignature()`, select matching
-reports with `findDirectModelAttestationsForSignature()`, and pass one report,
-the signature, and the bytes to `verifyDirectModelResponse()`.
-
-`verifyDirectModelAttestation()` verifies one report;
-`verifyDirectModelAttestations()` verifies the returned set.
-
-The runnable [direct/chat-completions.ts](../../examples/example-js/direct/chat-completions.ts),
-[direct/chat-completions-with-openai-sdk.ts](../../examples/example-js/direct/chat-completions-with-openai-sdk.ts),
-and [direct/chat-completions-bare.ts](../../examples/example-js/direct/chat-completions-bare.ts) examples each
-include streaming and non-streaming calls. The bare example omits E2EE.
-
 ## Verify Gateway requests manually
 
 The manual flow below uses a TEE model and has distinct stages:
@@ -704,7 +649,7 @@ deployment record, including the manager's startup image.
 
 Use `composeFile` to select a project's file and `composeRepository` to change the
 trusted repository. Configure this callback as `modelVerification.verifiers.deployment`
-on Gateway or Direct inference clients. The policy runs for every model report
+on Gateway inference clients. The policy runs for every model report
 and requires Compose Manager evidence in each one.
 
 See the [API reference](./api-reference.md#verifycomposemanagerdeploymentimageprovenance)

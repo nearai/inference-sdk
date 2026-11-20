@@ -902,17 +902,16 @@ fn require_signature_field<T>(
     }
 }
 
-pub(crate) fn decode_model_value(value: &serde_json::Value) -> Result<ModelAttestation, ApiError> {
-    let wire = decode_wire_response(
-        &value.to_string(),
-        ApiResource::ModelAttestation,
-        "attestation",
-    )?;
-    map_model_attestation(wire, "attestation")
-}
-
 #[cfg(test)]
 mod tests {
+    fn decode_model_value(value: &serde_json::Value) -> Result<ModelAttestation, ApiError> {
+        let wire = decode_wire_response(
+            &value.to_string(),
+            ApiResource::ModelAttestation,
+            "attestation",
+        )?;
+        map_model_attestation(wire, "attestation")
+    }
     use super::*;
     use serde_json::json;
 

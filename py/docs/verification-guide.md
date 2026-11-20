@@ -121,8 +121,7 @@ async with InferenceClient(api_key, ohttp=True) as inference_client:
 
 OHTTP requires Ed25519 and an endpoint serving `/ohttp`.
 
-OHTTP encrypts encapsulated requests and responses to the Gateway or Direct
-endpoint. `Authorization` and configured forwarded headers remain on the outer
+OHTTP encrypts encapsulated requests and responses to the Gateway. `Authorization` and configured forwarded headers remain on the outer
 HTTP request. E2EE encrypts supported Chat fields to the model; both options can
 be enabled independently or together.
 
@@ -275,64 +274,6 @@ print(receipt.signature_kind, response.output_text)
 
 Set `stream=True` and use `async for` for typed Responses events. An external
 `AsyncOpenAI` client can use the same API through `http_client=client.http_client`.
-
-## Direct model endpoints
-
-`DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. Direct clients are experimental and pin requests to the verified
-model TLS fingerprints by default.
-
-```python
-from nearai_inference_sdk import DirectInferenceClient
-
-async with DirectInferenceClient(
-    'https://glm-5-3-flash.completions.near.ai/v1/',
-    api_key=direct_api_key,
-    e2ee=True,
-) as direct_client:
-    completion = await direct_client.chat.completions.create(
-        model='z-ai/glm-5.3-flash',
-        messages=[{'role': 'user', 'content': 'Hello'}],
-    )
-    verified = await direct_client.verify_response(completion.id)
-```
-
-Set `e2ee=True` to enable encryption. Streaming, OHTTP, and OpenAI integration
-use the same interfaces as Gateway Chat.
-
-For a manual non-streaming call, prepare an `httpx.Request` named `chat_request`
-for the Direct Chat endpoint with the endpoint credentials, `Accept-Encoding: identity`,
-and `X-No-Aliasing: true`.
-
-```python
-from nearai_inference_sdk import (
-    DirectAttestationClient,
-    create_pinned_tls_client,
-    find_direct_model_attestations_for_signature,
-    verify_direct_model_attestations,
-    verify_direct_model_response,
-)
-
-bootstrap = DirectAttestationClient(direct_base_url)
-fetched_attestations = await bootstrap.fetch_model_attestations(signing_algo='ed25519')
-verified = await verify_direct_model_attestations(fetched_attestations)
-
-async with create_pinned_tls_client(verified.spki_fingerprints) as http:
-    response = await http.send(chat_request)
-    response.raise_for_status()
-    direct_client = DirectAttestationClient(
-        direct_base_url, api_key=direct_api_key, http_client=http
-    )
-    signature = await direct_client.fetch_completion_signature(
-        response.json()['id'], signing_algo='ed25519'
-    )
-matching_attestations = find_direct_model_attestations_for_signature(
-    verified.attestations, signature
-)
-verify_direct_model_response(
-    chat_request.content, response.content, signature, matching_attestations[0]
-)
-```
 
 ## Standalone workflow
 
@@ -544,7 +485,7 @@ deployment record, including the manager's startup image.
 
 Use `compose_file` to select a project's file and `compose_repository` to change the
 trusted repository. Configure this callback as `model_verification.verifiers.deployment`
-on Gateway or Direct inference clients. The policy runs for every model report
+on Gateway inference clients. The policy runs for every model report
 and requires Compose Manager evidence in each one.
 
 See the [API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
