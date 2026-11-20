@@ -86,7 +86,7 @@ export type InferenceClientCommonOptions = {
   readonly responseCacheTimeToLiveMs?: number;
   /**
    * Encrypt supported Chat fields directly to the verified model key.
-   * Defaults to `false` in both Gateway and direct clients.
+   * Defaults to `false`.
    * Enabling E2EE requires verified NEAR model evidence. With E2EE disabled,
    * supported NEAR deployments still use model verification and key routing;
    * Incognito models use Gateway verification only.
@@ -102,7 +102,7 @@ export type InferenceClientCommonOptions = {
   readonly modelVerification?: ModelVerificationOptions;
 };
 
-/** OHTTP key attestations are signed with Ed25519 on both endpoint types. */
+/** OHTTP key attestations are signed with Ed25519. */
 export type InferenceEncryptionOptions =
   | {
       /** Encapsulate Chat requests with OHTTP. Defaults to false. Independent of field-level E2EE. */

@@ -32,7 +32,7 @@ type fakeCloud struct {
 	streamBody      string
 	encoding        string
 	t               *testing.T
-	a               Attestation
+	a               ModelAttestation
 	q               QuoteVerificationResult
 	ohttp           *OHTTPAttestation
 	priv            ed25519.PrivateKey
@@ -55,7 +55,6 @@ type fakeCloud struct {
 	badSharedModel  bool
 	missingModelKey bool
 	tee             bool
-	direct          bool
 	stream          bool
 	tamper          bool
 	badModel        bool
@@ -73,7 +72,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.expectedHost != "" && r.Host != f.expectedHost {
 		f.t.Errorf("unexpected authority %q", r.Host)
 	}
-	if strings.HasSuffix(r.URL.Path, "/attestation/report") && (f.direct || !r.URL.Query().Has("model")) {
+	if strings.HasSuffix(r.URL.Path, "/attestation/report") && !r.URL.Query().Has("model") {
 		for _, name := range []string{"Authorization", "Api-Key", "X-Api-Key"} {
 			if r.Header.Get(name) != "" {
 				f.t.Errorf("attestation sent %s", name)
@@ -116,7 +115,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"report_data":        hex.EncodeToString(report),
 			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
 		}
-		if f.a.ComposeManagerAttestation != nil && (f.direct || r.URL.Query().Get("model") != "") {
+		if f.a.ComposeManagerAttestation != nil && r.URL.Query().Get("model") != "" {
 			manager := *f.a.ComposeManagerAttestation
 			manager.Nonce = n
 			managerQuote := q
@@ -127,12 +126,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			manager.IntelQuote = string(managerQuoteBytes)
 			a["compose_manager_attestation"] = manager
 		}
-		if f.direct {
-			a["model_name"] = "canonical/model"
-			root := maps.Clone(a)
-			root["all_attestations"] = []any{a}
-			json.NewEncoder(w).Encode(root)
-		} else if r.URL.Query().Get("model") != "" {
+		if r.URL.Query().Get("model") != "" {
 			generation := f.modelReports.Add(1)
 			if f.missingModelKey {
 				delete(a, "signing_public_key")
@@ -371,7 +365,7 @@ func TestGatewayOHTTPVerificationPrecedesAuthenticatedRequests(t *testing.T) {
 			if _, ok := session.transport.(*ohttpTransport); !ok {
 				t.Fatal("valid OHTTP configuration was not installed")
 			}
-			if fixture.metadata.Load() != 1 || fixture.attestations.Load() != 2 || len(session.result.Models) != 1 {
+			if fixture.metadata.Load() != 1 || fixture.attestations.Load() != 2 || len(session.models) != 1 {
 				t.Fatal("valid OHTTP evidence did not allow authenticated model verification")
 			}
 		})
@@ -452,12 +446,10 @@ func TestClientPreflightAndSignature(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
+				first.Gateway.Signer = SigningIdentity{}
 				second, e := c.Verify(context.Background(), "canonical/model")
 				if e != nil || !first.VerifiedAt.Equal(second.VerifiedAt) {
 					t.Fatal("cache not reused")
-				}
-				if first.Gateway != nil {
-					first.Gateway.Signer.SigningAddress = "mutated"
 				}
 				body, _ := json.Marshal(chatRequest())
 				req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
@@ -671,7 +663,7 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 	if len(before.Models) != 3 || len(deployments) != 3 || deployments[0] == deployments[2] || before.Models[0].Signer == before.Models[1].Signer {
 		t.Fatalf("expected three verified reports with two keys and distinct deployments: %#v %v", before.Models, deployments)
 	}
-	expected := []VerifiedAttestation{before.Models[0], before.Models[2]}
+	expected := []VerifiedModelAttestation{before.Models[0], before.Models[2]}
 	if _, err = client.CreateChatCompletion(ctx, chatRequest()); err != nil {
 		t.Fatal(err)
 	}
@@ -691,10 +683,10 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Attestations) != 2 || first.Attestations[0].InstanceID != "instance-0" || first.Attestations[1].InstanceID != "instance-1" || first.Attestation == nil {
+	if len(first.Attestations) != 2 || first.Attestation == nil {
 		t.Fatalf("response lost shared-signer reports: %#v", first)
 	}
-	if !reflect.DeepEqual(first.Attestations, expected) || !reflect.DeepEqual(*first.Attestation, before.Models[0]) {
+	if !reflect.DeepEqual(first.Attestations, expected) || !reflect.DeepEqual(first.Attestation, &before.Models[0]) {
 		t.Fatal("response did not retain the preflight evidence and compatibility representative")
 	}
 	cached, err := client.VerifyResponse(ctx, "chat-1")
@@ -705,7 +697,7 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cached.Attestations, expected) || !reflect.DeepEqual(after.Models, refreshed.Models) || !reflect.DeepEqual(*cached.Attestation, before.Models[0]) {
+	if !reflect.DeepEqual(cached.Attestations, expected) || !reflect.DeepEqual(after.Models, refreshed.Models) || !reflect.DeepEqual(cached.Attestation, &before.Models[0]) {
 		t.Fatal("cached receipts must retain their original preflight evidence")
 	}
 	if f.attestations.Load() != 4 || f.signatureCalls.Load() != 1 || len(deployments) != 6 {
@@ -982,45 +974,8 @@ func TestSuccessfulE2EEInference(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if !reflect.DeepEqual(receipt.Attestations, []VerifiedAttestation{preflight.Models[0], preflight.Models[2]}) {
+			if !reflect.DeepEqual(receipt.Attestations, []VerifiedModelAttestation{preflight.Models[0], preflight.Models[2]}) {
 				t.Fatal("E2EE response did not retain every report for the selected signer")
-			}
-		})
-	}
-}
-
-func TestDirectClientE2EEIsOptIn(t *testing.T) {
-	for _, e2ee := range []bool{false, true} {
-		name := "default plaintext"
-		if e2ee {
-			name = "explicit E2EE"
-		}
-		t.Run(name, func(t *testing.T) {
-			f := newFakeCloud(t)
-			f.tee, f.direct, f.encrypt = true, true, e2ee
-			server := httptest.NewServer(f)
-			defer server.Close()
-			opts := DirectInferenceOptions{InferenceOptions: InferenceOptions{
-				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
-				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
-			}}
-			if e2ee {
-				opts.E2EE = true
-			}
-			client, err := NewDirectInferenceClient(opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer client.Close()
-			body, err := client.CreateChatCompletion(context.Background(), chatRequest())
-			if err != nil || !bytes.Contains(body, []byte("answer")) {
-				t.Fatalf("response=%s err=%v", body, err)
-			}
-			if _, err := client.VerifyResponse(context.Background(), "chat-1"); err != nil {
-				t.Fatal(err)
-			}
-			if f.attestations.Load() != 1 {
-				t.Fatal("expected model preflight")
 			}
 		})
 	}

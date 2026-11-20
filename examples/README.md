@@ -12,7 +12,7 @@ All four languages use the same environment variables:
 | Variable | Meaning and default |
 | --- | --- |
 | `NEARAI_API_KEY` | Required credential for the selected endpoint |
-| `NEARAI_BASE_URL` | Gateway: `https://cloud-api.near.ai/v1/`; direct: `https://glm-5-3-flash.completions.near.ai/v1/` |
+| `NEARAI_BASE_URL` | `https://cloud-api.near.ai/v1/` |
 | `NEARAI_MODEL` | Chat/Responses: `z-ai/glm-5.3-flash`; Messages: `anthropic/claude-haiku-4-5`; required for System One |
 | `NEARAI_SIGNING_ALGO` | `ed25519` (default) or `ecdsa`, used for evidence and receipts, and for Chat E2EE |
 | `NEARAI_OHTTP` | `true` enables OHTTP for integrated Chat, Responses, and Messages clients; requires Ed25519 |
@@ -37,8 +37,7 @@ Each Chat, Responses, and Messages entry point runs JSON and SSE. Commands below
 run from `examples/example-js`, `examples/example-py`, `examples/example-rs`, or
 `examples/example-go`, respectively.
 
-Entry points are grouped under `gateway/` and `direct/` (`src/gateway/` and
-`src/direct/` in Rust). All languages share the entry-point names
+Entry points are grouped under `gateway/` (`src/gateway/` in Rust). All languages share the entry-point names
 `chat-completions`, `systemone`, `messages`, and `responses`. Standalone verification
 adds `-bare`; official SDK integrations add `-with-<vendor>-sdk`. Python and Rust source filenames use
 underscores in place of hyphens.
@@ -54,9 +53,6 @@ underscores in place of hyphens.
 | Messages, official Anthropic SDK | `node gateway/messages-with-anthropic-sdk.ts` | `uv run python -m gateway.messages_with_anthropic_sdk` | — | `go run ./gateway/messages-with-anthropic-sdk` |
 | System One, native client | `node gateway/systemone.ts` | `uv run python -m gateway.systemone` | `cargo run --bin systemone` | `go run ./gateway/systemone` |
 | System One, official TypeSafe SDK | `node gateway/systemone-with-typesafe-sdk.ts` | `uv run python -m gateway.systemone_with_typesafe_sdk` | — | — |
-| Direct Chat, native client | `node direct/chat-completions.ts` | `uv run python -m direct.chat_completions` | `cargo run --bin direct-chat-completions` | `go run ./direct/chat-completions` |
-| Direct Chat, standalone verification | `node direct/chat-completions-bare.ts` | `uv run python -m direct.chat_completions_bare` | `cargo run --bin direct-chat-completions-bare` | `go run ./direct/chat-completions-bare` |
-| Direct Chat, official OpenAI SDK | `node direct/chat-completions-with-openai-sdk.ts` | `uv run python -m direct.chat_completions_with_openai_sdk` | — | `go run ./direct/chat-completions-with-openai-sdk` |
 
 A dash means the vendor has no official SDK for that language. Official SDK
 examples share the inference client's verified transport and verify receipts
@@ -94,9 +90,8 @@ node gateway/chat-completions.ts
 ```
 
 Use `pnpm start:<entry-name>` for Gateway examples, such as
-`pnpm start:chat-completions-with-openai-sdk`, and `start:direct-<entry-name>`
-for direct examples. Existing `start:client`, `start:bare`,
-`start:client-openai-sdk`, and existing direct aliases remain available.
+`pnpm start:chat-completions-with-openai-sdk`. Existing `start:client`,
+`start:bare`, and `start:client-openai-sdk` aliases remain available.
 
 ### Python setup
 
@@ -153,16 +148,3 @@ Keep reusable example code in each language's helper directory:
 Run these commands from the corresponding language's example directory. Python
 example tests are also collected by the SDK's pytest configuration. Credentialed
 integration tests are described in the [live E2E guide](../e2e/README.md).
-
-## Direct endpoints
-
-Direct clients are experimental. Set `NEARAI_BASE_URL` and `NEARAI_API_KEY` for the model endpoint.
-
-Direct examples verify every returned model report and use standard HTTPS without
-attested TLS pinning. Integrated
-clients use E2EE and require response signatures from the selected model signer.
-Standalone direct examples send plaintext over HTTPS and verify exact response
-bytes against the matching attestation group.
-
-See the [live E2E guide](../e2e/README.md) to run the integration tests with your
-endpoint credentials and selected models.

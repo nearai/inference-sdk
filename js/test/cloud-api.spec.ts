@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import type {
   AttestationClientOptions,
   CompletionSignature,
@@ -5,9 +6,9 @@ import type {
 } from '../src';
 import {
   AttestationClient,
-  InferenceClient,
   findModelAttestationForSignature,
   findModelAttestationsForSignature,
+  InferenceClient,
 } from '../src';
 import {
   createCloudApiRequestConfiguration,
@@ -1193,4 +1194,38 @@ describe('AttestationClient', () => {
       });
     });
   });
+});
+
+describe('evidence redirects', () => {
+  it.each([AttestationClient, NodeAttestationClient])(
+    'rejects redirects with %p',
+    async (Client) => {
+      const paths: string[] = [];
+      const server = createServer((request, response) => {
+        paths.push(request.url ?? '');
+        response.writeHead(302, { location: '/redirected' });
+        response.end();
+      });
+      await new Promise<void>((resolve) =>
+        server.listen(0, '127.0.0.1', resolve),
+      );
+      try {
+        const address = server.address();
+        if (address === null || typeof address === 'string')
+          throw new Error('missing port');
+        const client = new Client({
+          baseUrl: `http://127.0.0.1:${address.port}`,
+        });
+        await expect(client.fetchModelMetadata('model')).rejects.toMatchObject({
+          failure: { code: 'api.transport_failed' },
+        });
+        expect(paths).toEqual(['/model/model']);
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
 });

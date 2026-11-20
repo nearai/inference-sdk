@@ -1,17 +1,17 @@
-import type {
-  GpuEvidenceStatus,
-  DeploymentVerifier,
-  AttestationPolicy,
-  TdxQuoteVerifier,
-  GpuEvidenceVerifier,
-  VerifiedModelAttestation,
-  VerifyModelAttestationParams,
-} from '../types/verification';
 import { Buffer } from 'buffer';
 import { computeAddress } from 'ethers';
 import { decodeNvidiaPayloadNonce } from '../boundaries/nvidia';
 import type { SigningAlgo } from '../types/attestation-common';
 import type { ModelAttestation } from '../types/attestation-model';
+import type {
+  AttestationPolicy,
+  DeploymentVerifier,
+  GpuEvidenceStatus,
+  GpuEvidenceVerifier,
+  TdxQuoteVerifier,
+  VerifiedModelAttestation,
+  VerifyModelAttestationParams,
+} from '../types/verification';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { createGpuEvidenceVerifier } from '../utils/nvidia';
@@ -19,19 +19,15 @@ import {
   verifyReportDataBinding,
   verifyReportedNonce,
 } from './attestation-common';
+import { verifyComposeManagerAttestation } from './compose-manager-attestation';
+import { runDeploymentVerifier } from './deployment-verifier';
+import type { VerifiedDstackQuote } from './dstack-attestation';
 import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
-import type { VerifiedDstackQuote } from './dstack-attestation';
-import { verifyComposeManagerAttestation } from './compose-manager-attestation';
-import { runDeploymentVerifier } from './deployment-verifier';
 
-/**
- * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
- * and the model signing identity but does not claim a client-to-model TLS
- * binding; the client's TLS connection terminates at the gateway.
- */
+/** Verify model signing identity, deployment measurements, and GPU evidence. */
 export async function verifyModelAttestation(
   params: VerifyModelAttestationParams,
 ): Promise<VerifiedModelAttestation> {
@@ -86,8 +82,7 @@ type VerifyModelDeploymentParams = {
   tdxQuoteVerifier?: TdxQuoteVerifier;
 };
 
-/** Shared model checks after the endpoint-specific report-data binding passes. */
-export async function verifyModelDeployment({
+async function verifyModelDeployment({
   attestation,
   verifiedQuote,
   deploymentVerifier,
@@ -132,7 +127,7 @@ export async function verifyModelDeployment({
 }
 
 /** GPU verification is independent of the model's CPU quote and deployment. */
-export function verifyModelGpuEvidence({
+function verifyModelGpuEvidence({
   attestation,
   clientBinding: { nonce },
   policy,

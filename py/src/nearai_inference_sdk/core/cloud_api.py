@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -19,8 +20,6 @@ from ..schemas import (
     CloudModelAttestationResponseSchema,
     CloudModelAttestationSchema,
     CloudUnavailableSignatureSchema,
-    DirectCompletionSignatureSchema,
-    DirectModelAttestationSchema,
     ModelMetadataResponseSchema,
     OhttpAttestationSchema,
 )
@@ -75,8 +74,13 @@ class _CloudApiJsonResponse:
     peer_spki_fingerprint: str | None
 
 
-class _ApiClient:
-    """Shared HTTP configuration and signature retrieval for both endpoint types."""
+class AttestationClient:
+    """Fetch Gateway evidence, model reports, metadata, and signatures.
+
+    ``http_client`` supplies the transport for model reports, metadata, and
+    completion signatures.
+    Gateway evidence uses the default transport to capture its own TLS peer.
+    """
 
     def __init__(
         self,
@@ -117,7 +121,7 @@ class _ApiClient:
             ),
             'completion_signature',
         )
-        return self._decode_signature(response.json)
+        return _decode_completion_signature(response.json)
 
     async def _fetch(
         self,
@@ -125,13 +129,17 @@ class _ApiClient:
         *,
         headers: Mapping[str, str],
         _capture_peer_spki: bool = False,
+        allow_redirects: bool = False,
     ) -> FetchResponse:
         if self._http_client is None or _capture_peer_spki:
             return await default_fetch(
-                url, headers=headers, _capture_peer_spki=_capture_peer_spki
+                url,
+                headers=headers,
+                _capture_peer_spki=_capture_peer_spki,
+                allow_redirects=allow_redirects,
             )
         response = await self._http_client.get(
-            url, headers=headers, follow_redirects=False
+            url, headers=headers, follow_redirects=allow_redirects
         )
         return FetchResponse(
             status=response.status_code, body=response.content, headers=response.headers
@@ -158,11 +166,13 @@ class _ApiClient:
             # Bootstrap must observe the peer on its own evidence connection;
             # a caller-supplied ordinary API transport cannot replace it.
             fetch = default_fetch if resource == 'gateway_attestation' else self._fetch
-            response = await fetch(
-                url,
-                headers=headers,
-                _capture_peer_spki=capture_peer_spki,
-            )
+            async with asyncio.timeout(120):
+                response = await fetch(
+                    url,
+                    headers=headers,
+                    _capture_peer_spki=capture_peer_spki,
+                    allow_redirects=False,
+                )
         except VerificationError:
             # A pinned internal transport has already started TLS verification.
             raise
@@ -189,19 +199,6 @@ class _ApiClient:
             json=json_body,
             peer_spki_fingerprint=response.peer_spki_fingerprint,
         )
-
-    @staticmethod
-    def _decode_signature(value: object) -> CompletionSignature:
-        return _decode_completion_signature(value)
-
-
-class AttestationClient(_ApiClient):
-    """Fetch Gateway evidence, model reports, metadata, and signatures.
-
-    ``http_client`` supplies the transport for model reports, metadata, and
-    completion signatures.
-    Gateway evidence uses the default transport to capture its own TLS peer.
-    """
 
     async def fetch_model_metadata(self, model: str) -> ModelMetadata:
         """Read catalog capabilities; metadata alone is not model verification."""
@@ -404,10 +401,9 @@ def _decode_gateway_attestation_report(value: object) -> GatewayAttestation:
 
 
 def _map_model_attestation(
-    raw: CloudModelAttestationSchema | DirectModelAttestationSchema, label: str
+    raw: CloudModelAttestationSchema, label: str
 ) -> ModelAttestation:
-    # Direct reports carry manager evidence only on the response envelope.
-    manager = getattr(raw, 'compose_manager_attestation', None)
+    manager = raw.compose_manager_attestation
     if raw.signing_public_key is not None:
         _api_hex_to_bytes(raw.signing_public_key, f'{label}.signing_public_key')
     return ModelAttestation(
@@ -474,9 +470,6 @@ def _map_ohttp_attestation(raw: OhttpAttestationSchema) -> OhttpAttestation:
 
 def _decode_completion_signature(
     value: object,
-    schema: type[
-        CloudCompletionSignatureSchema | DirectCompletionSignatureSchema
-    ] = CloudCompletionSignatureSchema,
 ) -> CompletionSignature:
     if isinstance(value, dict) and not (SIGNATURE_RESPONSE_FIELDS & set(value)):
         try:
@@ -491,7 +484,7 @@ def _decode_completion_signature(
             },
         )
     try:
-        raw = schema.model_validate(value)
+        raw = CloudCompletionSignatureSchema.model_validate(value)
     except ValidationError as error:
         _raise_invalid_wire_response(error, root='signature')
     return CompletionSignature(

@@ -173,6 +173,7 @@ mod tests {
                             });
                             let body = match operation {
                                 "model" => json!({"model_attestations": [report]}),
+
                                 "gateway" => {
                                     let mut report = report;
                                     report["tls_cert_fingerprint"] = json!(reported_pin);

@@ -7,14 +7,13 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from aiohttp import web
 
 from nearai_inference_sdk import (
     ApiError,
     AttestationClient,
     CompletionSignature,
     CompletionSignatureReference,
-    DirectAttestationClient,
-    DirectInferenceClient,
     InferenceClient,
     MeasuredDeployment,
     OhttpAttestation,
@@ -27,7 +26,7 @@ from nearai_inference_sdk import (
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .fixtures import SIGNING_ADDRESS, cloud_attestation
+from .fixtures import SIGNING_ADDRESS, cloud_attestation, create_model_attestation
 
 API_KEY = 'test'
 BASE_URL = 'https://cloud.example/v1'
@@ -50,7 +49,7 @@ def cloud_client() -> AttestationClient:
 async def test_gateway_bootstrap_keeps_its_own_peer_capturing_transport(
     monkeypatch, include_spki_fingerprint
 ):
-    async def bootstrap_fetch(url, *, headers, _capture_peer_spki):
+    async def bootstrap_fetch(url, *, headers, _capture_peer_spki, allow_redirects):
         assert _capture_peer_spki is include_spki_fingerprint
         assert 'authorization' not in headers
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
@@ -156,9 +155,7 @@ async def test_model_metadata_decodes_capabilities_at_the_http_boundary(
     'client_type',
     [
         AttestationClient,
-        DirectAttestationClient,
         InferenceClient,
-        DirectInferenceClient,
     ],
 )
 def test_client_rejects_invalid_base_urls_at_construction(base_url, client_type):
@@ -243,11 +240,9 @@ def use_fake_cloud_api_fetch(
 
 @pytest.mark.parametrize('api_key', [None, API_KEY])
 @pytest.mark.parametrize('custom_headers', [False, True])
-@pytest.mark.parametrize('direct', [False, True])
-async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_retain_it(
-    monkeypatch, api_key, custom_headers, direct
+async def test_gateway_reports_omit_authentication_but_model_reports_retain_it(
+    monkeypatch, api_key, custom_headers
 ):
-    from nearai_inference_sdk import DirectAttestationClient
 
     requests = []
 
@@ -260,7 +255,7 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
                 signing_address=SIGNING_ADDRESS,
             )
         query = parse_qs(urlsplit(url).query)
-        if direct or 'model' not in query:
+        if 'model' not in query:
             assert all(
                 name not in headers
                 for name in ('authorization', 'api-key', 'x-api-key')
@@ -278,10 +273,7 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
             report_data='00' * 64,
             tls_cert_fingerprint=None,
         )
-        if direct:
-            report['model_name'] = 'test'
-            payload = {**report, 'all_attestations': [report]}
-        elif 'model' in query:
+        if 'model' in query:
             payload = {'model_attestations': [report]}
         else:
             payload = {'gateway_attestation': report}
@@ -298,13 +290,9 @@ async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_
         if custom_headers
         else None
     )
-    if direct:
-        client = DirectAttestationClient(BASE_URL, api_key=api_key, headers=headers)
-        await client.fetch_model_attestations()
-    else:
-        client = AttestationClient(api_key, base_url=BASE_URL, headers=headers)
-        await client.fetch_gateway_attestation(include_spki_fingerprint=False)
-        await client.fetch_model_attestations('test')
+    client = AttestationClient(api_key, base_url=BASE_URL, headers=headers)
+    await client.fetch_gateway_attestation(include_spki_fingerprint=False)
+    await client.fetch_model_attestations('test')
     await client.fetch_completion_signature('test')
     assert requests[-1][1].get('authorization') == (
         'Bearer test' if api_key else 'Bearer custom' if custom_headers else None
@@ -362,6 +350,7 @@ def verified_model_attestation_for_signer(
     signer: SigningIdentity,
 ) -> VerifiedModelAttestation:
     return VerifiedModelAttestation(
+        report=create_model_attestation(signer=signer),
         signer=signer,
         tcb_status='UpToDate',
         advisory_ids=(),
@@ -1101,3 +1090,27 @@ async def test_non_utf8_success_response_is_an_api_error(
 
     assert raised.value.failure.code == 'api.invalid_json'
     assert raised.value.failure.details == {'resource': 'model_attestation'}
+
+
+async def test_default_client_does_not_follow_evidence_redirects():
+    paths = []
+
+    async def redirect(request):
+        paths.append(request.path)
+        raise web.HTTPFound('/redirected')
+
+    app = web.Application()
+    app.router.add_get('/{path:.*}', redirect)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    try:
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        host, port = runner.addresses[0]
+        client = AttestationClient(base_url=f'http://{host}:{port}')
+        with pytest.raises(ApiError) as rejected:
+            await client.fetch_model_metadata('model')
+        assert rejected.value.failure.code == 'api.http_status'
+        assert paths == ['/model/model']
+    finally:
+        await runner.cleanup()

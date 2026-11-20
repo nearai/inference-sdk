@@ -125,8 +125,7 @@ model, two Responses models (NEAR and OpenAI), and one Anthropic Messages model.
 | Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
 
 The suite uses real verifiers and Gateway endpoints. Chutes cases use JSON and
-Gateway receipts. Browser/CORS and experimental Direct endpoints have separate
-integration requirements.
+Gateway receipts. Browser/CORS has separate integration requirements.
 
 Chat runs the same native and supported official-client modes in each language,
 with at most 1,024 completion tokens per request. Responses must contain an answer and

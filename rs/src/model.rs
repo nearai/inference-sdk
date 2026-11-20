@@ -10,25 +10,12 @@ use crate::types::{
 };
 use serde_json::Value;
 
-/// Verify model evidence returned through NEAR AI Cloud. A successful model
-/// verification establishes the model signing identity and deployment
-/// measurements, but not a client-to-model TLS connection: the client talks to
-/// the Cloud Gateway rather than the upstream model CVM.
+/// Verify model signing identity, deployment measurements, and GPU evidence.
 pub async fn verify_model_attestation(
     attestation: &ModelAttestation,
     client_binding: &ModelClientBinding,
     policy: Option<&ModelAttestationPolicy>,
     verifiers: ModelAttestationVerifiers<'_>,
-) -> Result<VerifiedModelAttestation, VerificationError> {
-    verify_model_with_tls(attestation, client_binding, policy, verifiers, None).await
-}
-
-pub(crate) async fn verify_model_with_tls(
-    attestation: &ModelAttestation,
-    client_binding: &ModelClientBinding,
-    policy: Option<&ModelAttestationPolicy>,
-    verifiers: ModelAttestationVerifiers<'_>,
-    fingerprint: Option<&str>,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
     let common_policy = policy.map(|policy| AttestationPolicy {
         accepted_tcb_statuses: policy.accepted_tcb_statuses.clone(),
@@ -41,21 +28,11 @@ pub(crate) async fn verify_model_with_tls(
         attestation.reported_quote_data.as_deref(),
     )
     .await?;
-    if let Some(fingerprint) = fingerprint {
-        crate::bindings::verify_report_data_binding_with_tls_fingerprint(
-            &verified_quote.quote.report_data,
-            &client_binding.nonce,
-            &verified_quote.signer.signing_address,
-            fingerprint,
-            fingerprint,
-        )?;
-    } else {
-        verify_report_data_binding(
-            &verified_quote.quote.report_data,
-            &client_binding.nonce,
-            &verified_quote.signer.signing_address,
-        )?;
-    }
+    verify_report_data_binding(
+        &verified_quote.quote.report_data,
+        &client_binding.nonce,
+        &verified_quote.signer.signing_address,
+    )?;
     let manager = if let Some(manager) = &attestation.compose_manager_attestation {
         Some(
             crate::compose_manager::verify_compose_manager_attestation(
@@ -90,6 +67,7 @@ pub(crate) async fn verify_model_with_tls(
     )
     .await?;
     Ok(VerifiedModelAttestation {
+        report: std::sync::Arc::new(attestation.clone()),
         signing_public_key: verify_signing_public_key(attestation)?,
         evidence,
         gpu_evidence,

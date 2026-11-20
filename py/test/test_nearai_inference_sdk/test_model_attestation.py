@@ -13,14 +13,12 @@ from eth_utils import keccak
 from nacl.signing import SigningKey
 
 from nearai_inference_sdk import (
-    DirectModelAttestation,
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     SigningIdentity,
     VerificationError,
     create_gpu_evidence_verifier,
-    verify_direct_model_attestation,
     verify_model_attestation,
 )
 from nearai_inference_sdk.utils import nvidia
@@ -203,25 +201,22 @@ async def test_nras_factory_compares_payload_and_signed_nonce_as_bytes(
 
 
 async def test_model_attestation_returns_verified_evidence() -> None:
+    attestation = create_model_attestation()
     result = await verify_model_attestation(
-        create_model_attestation(),
+        attestation,
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: create_model_quote()),
     )
 
     assert result.tcb_status == 'UpToDate'
+    assert result.report == attestation
     assert result.gpu_evidence == 'not_provided'
     assert result.deployment.app_compose == APP_COMPOSE
     assert result.deployment_provenance == 'not_checked'
 
 
-@pytest.mark.parametrize(
-    'verify_attestation', [verify_model_attestation, verify_direct_model_attestation]
-)
 @pytest.mark.parametrize('failed_verifier', ['cpu', 'gpu'])
-async def test_failed_verification_awaits_sibling_cleanup(
-    verify_attestation, failed_verifier
-):
+async def test_failed_verification_awaits_sibling_cleanup(failed_verifier):
     started = asyncio.Event()
     cleaned_up = asyncio.Event()
     failure = verification_failure('policy.debug_enabled')
@@ -238,13 +233,10 @@ async def test_failed_verification_awaits_sibling_cleanup(
         await started.wait()
         raise failure
 
-    attestation = DirectModelAttestation(
-        **vars(create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE}))),
-        model_name='test-model',
-    )
+    attestation = create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE}))
     async with asyncio.timeout(1):
         with pytest.raises(VerificationError) as raised:
-            await verify_attestation(
+            await verify_model_attestation(
                 attestation,
                 MODEL_CLIENT_BINDING,
                 verifiers=ModelAttestationVerifiers(

@@ -354,7 +354,7 @@ func TestSystemOneSharesChatSession(t *testing.T) {
 }
 
 func TestSystemOneFailuresAndUnsupportedRequests(t *testing.T) {
-	for _, mode := range []string{"429", "503", "truncated", "invalid", "id", "tamper", "signer", "bad-model", "missing-key", "e2ee", "ohttp", "stream", "direct"} {
+	for _, mode := range []string{"429", "503", "truncated", "invalid", "id", "tamper", "signer", "bad-model", "missing-key", "e2ee", "ohttp", "stream"} {
 		t.Run(mode, func(t *testing.T) {
 			c, f := systemOneClient(t, true, Ed25519, func(f *systemOneCloud, o *InferenceOptions) {
 				switch mode {
@@ -386,9 +386,6 @@ func TestSystemOneFailuresAndUnsupportedRequests(t *testing.T) {
 			if mode == "stream" {
 				request["stream"] = false
 			}
-			if mode == "direct" {
-				c.api.direct = true
-			}
 			result, err := c.CreateSystemOne(context.Background(), request)
 			if mode == "tamper" || mode == "signer" {
 				if err != nil {
@@ -412,7 +409,7 @@ func TestSystemOneFailuresAndUnsupportedRequests(t *testing.T) {
 				}
 			}
 			want := int32(1)
-			if mode == "bad-model" || mode == "missing-key" || mode == "e2ee" || mode == "ohttp" || mode == "stream" || mode == "direct" {
+			if mode == "bad-model" || mode == "missing-key" || mode == "e2ee" || mode == "ohttp" || mode == "stream" {
 				want = 0
 			}
 			if f.calls.Load() != want {

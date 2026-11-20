@@ -27,7 +27,7 @@ func requireCode(t *testing.T, e error, code string) {
 		t.Fatalf("want %s, got %v", code, e)
 	}
 }
-func attestationFixture(t *testing.T, algo SigningAlgo) (Attestation, QuoteVerificationResult, ed25519.PrivateKey) {
+func attestationFixture(t *testing.T, algo SigningAlgo) (ModelAttestation, QuoteVerificationResult, ed25519.PrivateKey) {
 	t.Helper()
 	pub, priv, e := ed25519.GenerateKey(rand.Reader)
 	if e != nil {
@@ -51,12 +51,14 @@ func attestationFixture(t *testing.T, algo SigningAlgo) (Attestation, QuoteVerif
 	digest := sha512.Sum384([]byte("measured event"))
 	rtmr := sha512.Sum384(append(make([]byte, 48), digest[:]...))
 	events, _ := json.Marshal([]map[string]any{{"imr": 3, "digest": hex.EncodeToString(digest[:])}})
-	a := Attestation{
-		Nonce:            n,
-		Signer:           SigningIdentity{algo, signer},
-		IntelQuote:       "ff",
-		EventLog:         events,
-		AppCompose:       compose,
+	a := ModelAttestation{
+		AttestationEvidence: AttestationEvidence{
+			Nonce:      n,
+			Signer:     SigningIdentity{algo, signer},
+			IntelQuote: "ff",
+			EventLog:   events,
+			AppCompose: compose,
+		},
 		SigningPublicKey: hex.EncodeToString(pub),
 	}
 	return a, QuoteVerificationResult{TCBStatus: "UpToDate", ReportData: report, MRConfigID: mr, RTMR3: rtmr[:]}, priv
@@ -67,82 +69,82 @@ func fixedQuote(q QuoteVerificationResult) QuoteVerifier {
 func TestAttestationRejectsTampering(t *testing.T) {
 	tests := []struct {
 		name, code string
-		mutate     func(*Attestation, *QuoteVerificationResult, *ClientBinding, *VerificationOptions)
+		mutate     func(*ModelAttestation, *QuoteVerificationResult, *ModelClientBinding, *VerificationOptions)
 	}{
 		{
 			"nonce",
 			"binding.nonce_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				b.Nonce = strings.Repeat("cd", 32)
 			},
 		},
 		{
 			"quote nonce",
 			"binding.nonce_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.ReportData[63] ^= 1
 			},
 		},
 		{
 			"signer",
 			"binding.report_data_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.ReportData[0] ^= 1
 			},
 		},
 		{
 			"debug",
 			"policy.debug_enabled",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.DebugEnabled = true
 			},
 		},
 		{
 			"tcb",
 			"policy.tcb_status_not_allowed",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.TCBStatus = "Revoked"
 			},
 		},
 		{
 			"compose",
 			"measurement.app_compose_mrconfigid_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				a.AppCompose += " "
 			},
 		},
 		{
 			"rtmr",
 			"measurement.rtmr3_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.RTMR3[0] ^= 1
 			},
 		},
 		{
 			"event",
 			"measurement.event_log_invalid",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				a.EventLog = []byte(`[{"imr":3}]`)
 			},
 		},
 		{
 			"key",
 			"binding.model_public_key_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				a.SigningPublicKey = strings.Repeat("11", 32)
 			},
 		},
 		{
 			"gpu required",
 			"policy.gpu_evidence_required",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				o.Policy.RequireGPUEvidence = true
 			},
 		},
 		{
 			"deployment",
 			"provenance.verification_failed",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				o.DeploymentVerifier = func(context.Context, MeasuredDeployment) error { return errors.New("denied") }
 			},
 		},
@@ -150,7 +152,7 @@ func TestAttestationRejectsTampering(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a, q, _ := attestationFixture(t, Ed25519)
-			b := ClientBinding{Nonce: a.Nonce}
+			b := ModelClientBinding{Nonce: a.Nonce}
 			o := VerificationOptions{}
 			tt.mutate(&a, &q, &b, &o)
 			o.QuoteVerifier = fixedQuote(q)
@@ -162,20 +164,20 @@ func TestAttestationRejectsTampering(t *testing.T) {
 func TestAttestationSuccessAndTLS(t *testing.T) {
 	a, q, _ := attestationFixture(t, Ed25519)
 	o := VerificationOptions{QuoteVerifier: fixedQuote(q)}
-	v, e := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, o)
-	if e != nil || v.GPUEvidence != "not_provided" {
+	v, e := VerifyModelAttestation(context.Background(), a, ModelClientBinding{Nonce: a.Nonce}, o)
+	if e != nil || v.GPUEvidence != "not_provided" || v.Report == nil || v.Report.IntelQuote != a.IntelQuote {
 		t.Fatalf("%+v %v", v, e)
 	}
 	fp := bytes.Repeat([]byte{1}, 32)
 	key, _ := unhex(a.Signer.SigningAddress)
 	binding := sha256.Sum256(append(key, fp...))
 	copy(q.ReportData, binding[:])
-	a.SPKIFingerprint = hex.EncodeToString(fp)
+	gateway := GatewayAttestation{a.AttestationEvidence, hex.EncodeToString(fp)}
 	o.QuoteVerifier = fixedQuote(q)
-	if _, e = VerifyGatewayAttestation(context.Background(), a, ClientBinding{a.Nonce, a.SPKIFingerprint}, o); e != nil {
+	if _, e = VerifyGatewayAttestation(context.Background(), gateway, GatewayClientBinding{a.Nonce, gateway.SPKIFingerprint}, o); e != nil {
 		t.Fatal(e)
 	}
-	_, e = VerifyGatewayAttestation(context.Background(), a, ClientBinding{a.Nonce, strings.Repeat("22", 32)}, o)
+	_, e = VerifyGatewayAttestation(context.Background(), gateway, GatewayClientBinding{a.Nonce, strings.Repeat("22", 32)}, o)
 	requireCode(t, e, "binding.spki_fingerprint_mismatch")
 }
 func TestSignaturesBindExactBytesAndKind(t *testing.T) {
@@ -200,17 +202,19 @@ func TestSignaturesBindExactBytesAndKind(t *testing.T) {
 					compact := secpecdsa.SignCompact(priv, digest, false)
 					sig.Signature = hex.EncodeToString(append(compact[1:], compact[0]))
 				}
-				verify := VerifyGatewayResponse
-				if kind == "provider_tee" {
-					verify = VerifyModelResponse
+				evidence := VerifiedAttestationEvidence{Signer: sig.Signer}
+				verify := func(request, response []byte, sig CompletionSignature) error {
+					if kind == "provider_tee" {
+						return VerifyModelResponse(request, response, sig, VerifiedModelAttestation{VerifiedAttestationEvidence: evidence})
+					}
+					return VerifyGatewayResponse(request, response, sig, VerifiedGatewayAttestation{VerifiedAttestationEvidence: evidence})
 				}
-				att := VerifiedAttestation{Signer: sig.Signer}
-				if e := verify(request, response, sig, att); e != nil {
+				if e := verify(request, response, sig); e != nil {
 					t.Fatal(e)
 				}
-				requireCode(t, verify(request, append(response, ' '), sig, att), "signature.payload_mismatch")
+				requireCode(t, verify(request, append(response, ' '), sig), "signature.payload_mismatch")
 				sig.Kind = "other"
-				requireCode(t, verify(request, response, sig, att), "signature.kind_mismatch")
+				requireCode(t, verify(request, response, sig), "signature.kind_mismatch")
 			})
 		}
 	}
@@ -312,7 +316,7 @@ func TestTCBPolicy(t *testing.T) {
 			a, q, _ := attestationFixture(t, Ed25519)
 			q.TCBStatus = tc.status
 			options := VerificationOptions{QuoteVerifier: fixedQuote(q)}
-			binding := ClientBinding{Nonce: a.Nonce}
+			binding := ModelClientBinding{Nonce: a.Nonce}
 
 			_, err := VerifyModelAttestation(context.Background(), a, binding, options)
 			if tc.acceptedByDefault {
@@ -340,7 +344,7 @@ func TestQuoteVerifierPreservesSDKError(t *testing.T) {
 		return QuoteVerificationResult{}, original
 	}}
 
-	_, err := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, options)
+	_, err := VerifyModelAttestation(context.Background(), a, ModelClientBinding{Nonce: a.Nonce}, options)
 	if err != original {
 		t.Fatalf("quote error changed: %v", err)
 	}

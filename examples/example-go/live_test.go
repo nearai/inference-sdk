@@ -91,7 +91,7 @@ func assertLiveChatEvidence(t *testing.T, receipt nearai.VerifiedCompletionResul
 		}
 		return
 	}
-	var selected *nearai.VerifiedAttestation
+	var selected *nearai.VerifiedModelAttestation
 	for i := range preflight.Models {
 		if preflight.Models[i].Signer.SigningAlgo == receipt.Signature.Signer.SigningAlgo && preflight.Models[i].SigningPublicKey != "" {
 			selected = &preflight.Models[i]
@@ -101,7 +101,7 @@ func assertLiveChatEvidence(t *testing.T, receipt nearai.VerifiedCompletionResul
 	if selected == nil || !sameSigner(receipt.Signature.Signer, selected.Signer) {
 		t.Fatal("receipt did not use the selected model key")
 	}
-	var expected []nearai.VerifiedAttestation
+	var expected []nearai.VerifiedModelAttestation
 	for _, report := range preflight.Models {
 		if sameSigner(report.Signer, selected.Signer) {
 			expected = append(expected, report)

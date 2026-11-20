@@ -139,9 +139,6 @@ can keep their current dependencies and calls.
 - **Standalone E2EE:** `prepare_e2ee_chat_request()` encrypts a raw HTTPX Chat
   request and supplies its JSON/SSE decryptor. Key verification and response
   signature verification remain the application's responsibility.
-- **Direct endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect to the model endpoint using standard HTTPS
-  without attested TLS pinning. See the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#direct-model-endpoints).
 
 ## Documentation
 
@@ -150,7 +147,7 @@ can keep their current dependencies and calls.
 - [API reference](https://github.com/nearai/inference-sdk/blob/main/py/docs/api-reference.md):
   client options, public functions, defaults, and result fields.
 - [Runnable Python examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#python-setup):
-  Gateway and direct clients, standalone verification, and OpenAI integration.
+  Gateway clients, standalone verification, and OpenAI integration.
 - [Error handling](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#handle-retrieval-and-verification-errors):
   SDK errors, OpenAI exception wrapping, and receipt-only retries.
 

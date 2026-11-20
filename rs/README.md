@@ -131,9 +131,6 @@ or `message_request()` and `send()`.
   request and supplies JSON/SSE decryptors. Key verification and response signature
   verification remain the application's responsibility. See
   [encryption and OHTTP](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#encryption-and-ohttp).
-- **Direct endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect to the model endpoint using standard HTTPS
-  without attested TLS pinning. See the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#experimental-direct-endpoints).
 
 ## Standalone verification
 
@@ -176,7 +173,7 @@ verifier:
   preflight, chat, and response-receipt stages.
 - [API reference](https://github.com/nearai/inference-sdk/blob/main/rs/docs/api-reference.md) lists the client, verification
   functions, return values, policies, and callback traits.
-- [Runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust-setup) cover Gateway and direct
+- [Runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust-setup) cover Gateway
   clients, JSON/SSE, standalone verification, and image provenance.
 
 When using standalone verification, retain the exact bytes sent to and received

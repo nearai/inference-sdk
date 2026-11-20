@@ -1,9 +1,5 @@
 """Verification helpers for NEAR AI Cloud attestations and signatures."""
 
-from .core.attestation_direct import (
-    verify_direct_model_attestation,
-    verify_direct_model_attestations,
-)
 from .core.attestation_gateway import verify_gateway_attestation
 from .core.attestation_model import verify_model_attestation
 from .core.chat import verify_gateway_response, verify_model_response
@@ -14,11 +10,6 @@ from .core.cloud_api import (
 )
 from .core.compose_manager_provenance import (
     verify_compose_manager_deployment_image_provenance,
-)
-from .core.direct_api import DirectAttestationClient
-from .core.direct_inference_client import (
-    DirectInferenceClient,
-    verify_direct_model_response,
 )
 from .core.e2ee_request import prepare_e2ee_chat_request
 from .core.inference_client import InferenceClient
@@ -56,17 +47,6 @@ from .types.compose_manager import (
     ComposeManagerAttestation,
     ComposeManagerImagePolicy,
     VerifiedComposeManagerAttestation,
-)
-from .types.direct import (
-    DirectAttestationVerificationResult,
-    DirectClientBinding,
-    DirectModelAttestation,
-    DirectModelVerificationOptions,
-    DirectTlsBinding,
-    FetchedDirectModelAttestations,
-    VerifiedDirectCompletionResult,
-    VerifiedDirectModelAttestation,
-    VerifiedDirectModelAttestations,
 )
 from .types.e2ee import E2eeModelKey, PreparedE2eeChatRequest
 from .types.inference_client import (
@@ -136,15 +116,7 @@ __all__ = [
     'ComposeManagerImagePolicy',
     'DeploymentPolicy',
     'DeploymentVerifier',
-    'DirectAttestationClient',
-    'DirectAttestationVerificationResult',
-    'DirectClientBinding',
-    'DirectInferenceClient',
-    'DirectModelAttestation',
-    'DirectModelVerificationOptions',
-    'DirectTlsBinding',
     'E2eeModelKey',
-    'FetchedDirectModelAttestations',
     'FetchedGatewayAttestation',
     'FetchedModelAttestations',
     'GatewayAttestation',
@@ -181,9 +153,6 @@ __all__ = [
     'VerifiedAttestationEvidence',
     'VerifiedCompletionResult',
     'VerifiedComposeManagerAttestation',
-    'VerifiedDirectCompletionResult',
-    'VerifiedDirectModelAttestation',
-    'VerifiedDirectModelAttestations',
     'VerifiedGatewayAttestation',
     'VerifiedGatewayCompletionResult',
     'VerifiedImageProvenance',
@@ -200,9 +169,6 @@ __all__ = [
     'prepare_e2ee_chat_request',
     'verify_compose_manager_deployment_image_provenance',
     'verify_deployment_image_provenance',
-    'verify_direct_model_attestation',
-    'verify_direct_model_attestations',
-    'verify_direct_model_response',
     'verify_gateway_attestation',
     'verify_gateway_response',
     'verify_image_provenance',

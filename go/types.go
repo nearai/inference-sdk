@@ -23,21 +23,26 @@ type SigningIdentity struct {
 	SigningAlgo    SigningAlgo `json:"signingAlgo"`
 	SigningAddress string      `json:"signingAddress"`
 }
-type Attestation struct {
+type AttestationEvidence struct {
+	Nonce             string
+	Signer            SigningIdentity
+	IntelQuote        string
+	EventLog          json.RawMessage
+	AppCompose        string
+	ReportedQuoteData string
+}
+type GatewayAttestation struct {
+	AttestationEvidence
+	SPKIFingerprint string
+}
+type ModelAttestation struct {
+	AttestationEvidence
 	ComposeManagerAttestation *ComposeManagerAttestation
-	Nonce                     string
-	Signer                    SigningIdentity
-	IntelQuote                string
-	EventLog                  json.RawMessage
-	AppCompose                string
-	ReportedQuoteData         string
 	SigningPublicKey          string
 	NvidiaPayload             *string
-	SPKIFingerprint           string
-	ModelName                 string
-	InstanceID                string
 }
-type ClientBinding struct{ Nonce, SPKIFingerprint string }
+type GatewayClientBinding struct{ Nonce, SPKIFingerprint string }
+type ModelClientBinding struct{ Nonce string }
 type OHTTPAttestation struct {
 	SigningAlgo SigningAlgo `json:"signing_algo"`
 	SigningKey  string      `json:"signing_key"`
@@ -45,15 +50,13 @@ type OHTTPAttestation struct {
 	Signature   string      `json:"signature"`
 }
 type FetchedGatewayAttestation struct {
-	Attestation      Attestation
-	ClientBinding    ClientBinding
+	Attestation      GatewayAttestation
+	ClientBinding    GatewayClientBinding
 	OHTTPAttestation *OHTTPAttestation
 }
 type FetchedModelAttestations struct {
-	Attestations       []Attestation
-	ClientBinding      ClientBinding
-	ServingAttestation *Attestation
-	OHTTPAttestation   *OHTTPAttestation
+	Attestations  []ModelAttestation
+	ClientBinding ModelClientBinding
 }
 type ModelMetadata struct {
 	ModelID              string `json:"model_id"`
@@ -85,7 +88,7 @@ type AttestationPolicy struct {
 type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error)
 type GPUEvidenceVerifier func(context.Context, string) error
 
-// DeploymentVerifier inspects read-only evidence and returns an error to reject it.
+// DeploymentVerifier applies deployment policy and returns an error to reject it.
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
 	Policy             AttestationPolicy
@@ -93,41 +96,65 @@ type VerificationOptions struct {
 	GPUVerifier        GPUEvidenceVerifier
 	DeploymentVerifier DeploymentVerifier
 }
-type VerifiedAttestation struct {
-	Signer                SigningIdentity
-	TCBStatus             string
-	AdvisoryIDs           []string
-	Deployment            MeasuredDeployment
-	DeploymentProvenance  string
-	GPUEvidence           string
-	SigningPublicKey      string
-	SPKIFingerprint       string
-	ModelName, InstanceID string
+
+// VerifiedAttestationEvidence contains verified signer and deployment evidence.
+type VerifiedAttestationEvidence struct {
+	Signer               SigningIdentity
+	TCBStatus            string
+	AdvisoryIDs          []string
+	Deployment           MeasuredDeployment
+	DeploymentProvenance string
 }
+
+type VerifiedModelAttestation struct {
+	VerifiedAttestationEvidence
+	Report           *ModelAttestation
+	GPUEvidence      string
+	SigningPublicKey string
+}
+
+type VerifiedGatewayAttestation struct {
+	VerifiedAttestationEvidence
+	Report          *GatewayAttestation
+	SPKIFingerprint string
+}
+
+// AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
-	Gateway    *VerifiedAttestation
-	Models     []VerifiedAttestation
+	Gateway    *VerifiedGatewayAttestation
+	Models     []VerifiedModelAttestation
 	VerifiedAt time.Time
 }
+
+// VerifiedCompletionAttestation is Gateway evidence or a model representative.
+// Model receipts expose all matching reports in VerifiedCompletionResult.Attestations.
+type VerifiedCompletionAttestation interface {
+	verifiedCompletionAttestation()
+}
+
+func (*VerifiedGatewayAttestation) verifiedCompletionAttestation() {}
+func (*VerifiedModelAttestation) verifiedCompletionAttestation()   {}
+
+// VerifiedCompletionResult contains a response receipt verified by a Gateway client.
 type VerifiedCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	// Attestation contains Gateway evidence for gateway receipts and is nil for Direct.
-	// For provider_tee receipts, this field holds the report selected for the request
-	// key. Its use for model receipts is deprecated. Use Attestations instead.
-	Attestation *VerifiedAttestation
+	// Attestation contains Gateway evidence for gateway receipts.
+	// For provider_tee it is the report used to select the model key;
+	// that singular model field is deprecated in favor of Attestations.
+	Attestation VerifiedCompletionAttestation
 	// Attestations contains every matching verified model deployment for provider_tee
 	// receipts. It is empty for Gateway receipts.
-	Attestations []VerifiedAttestation
+	Attestations []VerifiedModelAttestation
 }
 
-// ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
+// ClientOptions configures evidence retrieval.
 // A custom transport is part of the trust boundary and must perform normal TLS verification.
 type ClientOptions struct {
-	// API Key is optional. Gateway and direct reports omit authentication;
+	// API Key is optional. Gateway reports omit authentication;
 	// model reports through the Gateway use it for organization access.
 	APIKey     string
 	BaseURL    string
@@ -140,7 +167,7 @@ type FetchOptions struct {
 	DisableTLSBinding bool
 }
 
-// InferenceOptions applies to Gateway and experimental direct clients. Nil TTLs
+// InferenceOptions configures Gateway inference. Nil TTLs
 // default to one hour; a pointer to zero disables the corresponding cache.
 type InferenceOptions struct {
 	ClientOptions
@@ -153,18 +180,4 @@ type InferenceOptions struct {
 	GatewayVerification VerificationOptions
 	ModelVerification   VerificationOptions
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
-}
-
-// DirectInferenceOptions uses the same E2EE opt-in as InferenceOptions.
-// Direct TLS identity binding is experimental and disabled in all clients.
-type DirectInferenceOptions struct {
-	InferenceOptions
-	// Deprecated: E2EE is disabled by default. Set InferenceOptions.E2EE to enable it.
-	// When true, DisableE2EE takes precedence over E2EE.
-	DisableE2EE bool
-}
-type VerifiedDirectModelAttestations struct {
-	ServingAttestation VerifiedAttestation
-	Attestations       []VerifiedAttestation
-	SPKIFingerprints   []string
 }

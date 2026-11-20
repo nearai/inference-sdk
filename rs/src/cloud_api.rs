@@ -26,7 +26,7 @@ pub const NO_ALIASING_HEADER: &str = "x-no-aliasing";
 /// NEAR AI Cloud.
 ///
 /// The client owns its optional API key, base URL, and HTTP clients.
-/// Gateway and direct reports omit Authorization, api-key, and x-api-key headers.
+/// Gateway reports omit Authorization, api-key, and x-api-key headers.
 /// Model reports through the Gateway use configured authentication.
 #[derive(Clone)]
 pub struct AttestationClient {
@@ -34,7 +34,7 @@ pub struct AttestationClient {
     api_key: Option<String>,
     base_url: Url,
     client: Client,
-    gateway_client: Client,
+    tls_client: Client,
 }
 
 impl AttestationClient {
@@ -55,28 +55,7 @@ impl AttestationClient {
         Ok(Self::from_parts(api_key.into(), base_url))
     }
 
-    fn from_parts(api_key: Option<String>, base_url: Url) -> Self {
-        Self {
-            api_key,
-            base_url,
-            headers: HeaderMap::new(),
-            client: Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("valid client"),
-            // A Gateway TLS binding must observe the Gateway's own peer, not
-            // a system-configured HTTPS proxy. Other Cloud API requests keep
-            // reqwest's normal proxy behavior.
-            gateway_client: Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .no_proxy()
-                .tls_info(true)
-                .build()
-                .expect("the SDK's default HTTP client configuration is valid"),
-        }
-    }
-
-    /// Use additional headers; Gateway and direct reports omit authentication headers.
+    /// Use additional headers; Gateway reports omit authentication headers.
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.headers = headers;
         self
@@ -87,7 +66,7 @@ impl AttestationClient {
     /// Custom clients need `tls_info(true)` when fetching TLS-bound attestations.
     pub fn with_http_client(mut self, client: Client) -> Self {
         self.client = client.clone();
-        self.gateway_client = client;
+        self.tls_client = client;
         self
     }
 
@@ -103,9 +82,9 @@ impl AttestationClient {
             .map_err(|_| invalid_base_url())?
             .pop_if_empty()
             .push(model);
-        let response =
-            get_cloud_api_response(self, url, ApiResource::ModelMetadata, None, false, true)
-                .await?;
+        let response = self
+            .get(url, ApiResource::ModelMetadata, None, false, true)
+            .await?;
         #[derive(Deserialize)]
         struct MetadataResponse {
             metadata: crate::ModelMetadata,
@@ -115,65 +94,6 @@ impl AttestationClient {
         Ok(response.metadata)
     }
 
-    pub(crate) async fn fetch_value(
-        &self,
-        path: &str,
-        query: &[(&str, String)],
-        resource: ApiResource,
-    ) -> Result<serde_json::Value, ApiError> {
-        let mut url = self.endpoint(path)?;
-        url.query_pairs_mut()
-            .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
-        let response = get_cloud_api_response(self, url, resource, None, false, false).await?;
-        decode_wire_response(&response.body, resource, path)
-    }
-
-    pub(crate) async fn direct_signature(
-        &self,
-        id: &str,
-        algo: Option<SigningAlgo>,
-    ) -> Result<CompletionSignature, ApiError> {
-        let mut url = self.endpoint("signature")?;
-        url.path_segments_mut()
-            .map_err(|_| invalid_base_url())?
-            .push(id);
-        if let Some(algo) = algo {
-            url.query_pairs_mut()
-                .append_pair("signing_algo", &algo.to_string());
-        }
-        let response = get_cloud_api_response(
-            self,
-            url,
-            ApiResource::CompletionSignature,
-            None,
-            false,
-            true,
-        )
-        .await?;
-        let mut value: serde_json::Value = decode_wire_response(
-            &response.body,
-            ApiResource::CompletionSignature,
-            "signature",
-        )?;
-        if value.get("signature").is_some() && value.get("signature_kind").is_none() {
-            value
-                .as_object_mut()
-                .ok_or_else(|| invalid_api_input("signature", "expected object", None, None))?
-                .insert("signature_kind".into(), serde_json::json!("provider_tee"));
-        }
-        let wire = decode_wire_response(
-            &value.to_string(),
-            ApiResource::CompletionSignature,
-            "signature",
-        )?;
-        let signature = map_completion_signature(wire)?;
-        require_provider_signature(&signature)?;
-        Ok(signature)
-    }
-
-    fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
-        self.base_url.join(path).map_err(|_| invalid_base_url())
-    }
     /// Fetch model attestations for a canonical NEAR model ID.
     ///
     /// The result preserves Cloud API's `model_attestations` array and has a
@@ -204,15 +124,15 @@ impl AttestationClient {
                 query.append_pair("signing_address", signing_address);
             }
         }
-        let cloud_response = get_cloud_api_response(
-            self,
-            url,
-            ApiResource::ModelAttestation,
-            Some((NO_ALIASING_HEADER, "true")),
-            false,
-            true,
-        )
-        .await?;
+        let cloud_response = self
+            .get(
+                url,
+                ApiResource::ModelAttestation,
+                Some((NO_ALIASING_HEADER, "true")),
+                false,
+                true,
+            )
+            .await?;
         let response: WireModelAttestationResponse = decode_wire_response(
             &cloud_response.body,
             ApiResource::ModelAttestation,
@@ -264,15 +184,15 @@ impl AttestationClient {
                 },
             );
         }
-        let cloud_response = get_cloud_api_response(
-            self,
-            url,
-            ApiResource::GatewayAttestation,
-            None,
-            options.include_spki_fingerprint,
-            false,
-        )
-        .await?;
+        let cloud_response = self
+            .get(
+                url,
+                ApiResource::GatewayAttestation,
+                None,
+                options.include_spki_fingerprint,
+                false,
+            )
+            .await?;
         let response: WireGatewayAttestationResponse = decode_wire_response(
             &cloud_response.body,
             ApiResource::GatewayAttestation,
@@ -337,25 +257,15 @@ impl AttestationClient {
             url.query_pairs_mut()
                 .append_pair("signing_algo", &signing_algo.to_string());
         }
-        let cloud_response = get_cloud_api_response(
-            self,
-            url,
-            ApiResource::CompletionSignature,
-            None,
-            false,
-            true,
-        )
-        .await?;
-        let response: WireCompletionSignatureResponse = decode_wire_response(
-            &cloud_response.body,
-            ApiResource::CompletionSignature,
-            "signature",
-        )?;
-        map_completion_signature(response)
+        let cloud_response = self
+            .get(url, ApiResource::CompletionSignature, None, false, true)
+            .await?;
+        decode_completion_signature(&cloud_response.body)
     }
 }
 
 /// Return every verified model report sharing a `provider_tee` signature's key.
+/// Use [`crate::verify_model_response`] to verify the response signature.
 pub fn find_model_attestations_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
@@ -384,6 +294,7 @@ pub fn find_model_attestations_for_signature<'a>(
 
 /// Return the first verified report matching the response signer.
 /// Use [`find_model_attestations_for_signature`] for all matching reports.
+#[deprecated(note = "Use find_model_attestations_for_signature for all matching reports.")]
 pub fn find_model_attestation_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
@@ -391,47 +302,73 @@ pub fn find_model_attestation_for_signature<'a>(
     Ok(find_model_attestations_for_signature(attestations, signature)?[0])
 }
 
-async fn get_cloud_api_response(
-    client: &AttestationClient,
-    url: Url,
-    resource: ApiResource,
-    extra_header: Option<(&str, &str)>,
-    capture_peer_spki_fingerprint: bool,
-    authenticate: bool,
-) -> Result<CloudApiResponse, ApiError> {
-    let headers = build_cloud_api_headers(client, authenticate, extra_header)?;
-    let http_client = if capture_peer_spki_fingerprint {
-        &client.gateway_client
-    } else {
-        &client.client
-    };
-    let response = http_client
-        .get(url)
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|_| ApiError::Transport {
-            resource,
-            reason: ApiTransportReason::Request,
-        })?;
-    let status = response.status().as_u16();
-    let peer_spki_fingerprint = capture_peer_spki_fingerprint
-        .then(|| peer_spki_fingerprint(&response))
-        .flatten();
-    let body = response.text().await.map_err(|_| ApiError::Transport {
-        resource,
-        reason: ApiTransportReason::ResponseBody,
-    })?;
-    if !(200..300).contains(&status) {
-        return Err(ApiError::HttpStatus { resource, status });
+impl AttestationClient {
+    fn from_parts(api_key: Option<String>, base_url: Url) -> Self {
+        Self {
+            api_key,
+            base_url,
+            headers: HeaderMap::new(),
+            client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("valid client"),
+            // Capture the endpoint peer directly when binding evidence to TLS.
+            tls_client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
+                .tls_info(true)
+                .build()
+                .expect("the SDK's default HTTP client configuration is valid"),
+        }
     }
-    Ok(CloudApiResponse {
-        body,
-        peer_spki_fingerprint,
-    })
+
+    fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
+        self.base_url.join(path).map_err(|_| invalid_base_url())
+    }
+
+    async fn get(
+        &self,
+        url: Url,
+        resource: ApiResource,
+        extra_header: Option<(&str, &str)>,
+        capture_peer_spki_fingerprint: bool,
+        authenticate: bool,
+    ) -> Result<ApiResponse, ApiError> {
+        let headers = build_api_headers(self, authenticate, extra_header)?;
+        let http_client = if capture_peer_spki_fingerprint {
+            &self.tls_client
+        } else {
+            &self.client
+        };
+        let response = http_client
+            .get(url)
+            .timeout(std::time::Duration::from_secs(120))
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|_| ApiError::Transport {
+                resource,
+                reason: ApiTransportReason::Request,
+            })?;
+        let status = response.status().as_u16();
+        let peer_spki_fingerprint = capture_peer_spki_fingerprint
+            .then(|| peer_spki_fingerprint(&response))
+            .flatten();
+        let body = response.text().await.map_err(|_| ApiError::Transport {
+            resource,
+            reason: ApiTransportReason::ResponseBody,
+        })?;
+        if !(200..300).contains(&status) {
+            return Err(ApiError::HttpStatus { resource, status });
+        }
+        Ok(ApiResponse {
+            body,
+            peer_spki_fingerprint,
+        })
+    }
 }
 
-fn build_cloud_api_headers(
+fn build_api_headers(
     client: &AttestationClient,
     authenticate: bool,
     extra_header: Option<(&str, &str)>,
@@ -477,9 +414,9 @@ fn peer_spki_fingerprint(response: &reqwest::Response) -> Option<String> {
     Some(hex::encode(sha256(spki)))
 }
 
-struct CloudApiResponse {
-    body: String,
-    peer_spki_fingerprint: Option<String>,
+pub(crate) struct ApiResponse {
+    pub(crate) body: String,
+    pub(crate) peer_spki_fingerprint: Option<String>,
 }
 
 pub(crate) fn parse_base_url(value: &str) -> Result<Url, ApiError> {
@@ -500,7 +437,7 @@ pub(crate) fn parse_base_url(value: &str) -> Result<Url, ApiError> {
     Ok(url)
 }
 
-fn invalid_base_url() -> ApiError {
+pub(crate) fn invalid_base_url() -> ApiError {
     invalid_api_input(
         "base_url",
         "invalid_url",
@@ -509,7 +446,7 @@ fn invalid_base_url() -> ApiError {
     )
 }
 
-fn require_provider_signature(signature: &CompletionSignature) -> Result<(), ApiError> {
+pub(crate) fn require_provider_signature(signature: &CompletionSignature) -> Result<(), ApiError> {
     if signature.kind != CompletionSignatureKind::ProviderTee {
         return Err(invalid_api_input(
             "signature.kind",
@@ -569,7 +506,7 @@ fn completion_signature_kind_name(kind: CompletionSignatureKind) -> &'static str
     }
 }
 
-fn invalid_api_input(
+pub(crate) fn invalid_api_input(
     field: impl Into<String>,
     reason: impl Into<String>,
     expected: Option<String>,
@@ -604,7 +541,7 @@ fn require_matching_api_nonce(
 /// Decode one complete endpoint response into its wire type. This is the only
 /// JSON shape-decoding step between a Cloud API response body and its domain
 /// mapping, and attaches a stable root path to shape errors.
-fn decode_wire_response<T>(
+pub(crate) fn decode_wire_response<T>(
     body: &str,
     resource: ApiResource,
     root_path: &str,
@@ -734,6 +671,14 @@ fn validate_api_signing_identity(
         actual: "invalid".to_owned(),
     })?;
     Ok(())
+}
+
+pub(crate) fn decode_completion_signature(body: &str) -> Result<CompletionSignature, ApiError> {
+    map_completion_signature(decode_wire_response(
+        body,
+        ApiResource::CompletionSignature,
+        "signature",
+    )?)
 }
 
 fn map_completion_signature(
@@ -938,17 +883,16 @@ fn require_signature_field<T>(
     }
 }
 
-pub(crate) fn decode_model_value(value: &serde_json::Value) -> Result<ModelAttestation, ApiError> {
-    let wire = decode_wire_response(
-        &value.to_string(),
-        ApiResource::ModelAttestation,
-        "attestation",
-    )?;
-    map_model_attestation(wire, "attestation")
-}
-
 #[cfg(test)]
 mod tests {
+    fn decode_model_value(value: &serde_json::Value) -> Result<ModelAttestation, ApiError> {
+        let wire = decode_wire_response(
+            &value.to_string(),
+            ApiResource::ModelAttestation,
+            "attestation",
+        )?;
+        map_model_attestation(wire, "attestation")
+    }
     use super::*;
     use serde_json::json;
 

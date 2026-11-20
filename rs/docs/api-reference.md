@@ -34,7 +34,6 @@ After a valid response ID, Chat and Responses streams can end with `[DONE]` or n
 For `ProviderTee` receipts, `attestations` contains all verified reports sharing the selected signer.
 The deprecated `Model` variant holds the report selected for the request key.
 For Gateway-signed receipts, use `VerifiedCompletionAttestation::Gateway`.
-Direct receipts hold their matching reports in `VerifiedCompletionAttestation::Direct`.
 `signature_kind()` returns `CompletionSignatureKind`.
 
 Use `clear_response_cache().await` to discard retained responses.
@@ -49,7 +48,7 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default |
 | --- | --- |
-| `api_key` / `headers` | No API key / empty headers. Gateway and direct reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
+| `api_key` / `headers` | No API key / empty headers. Gateway reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
 | `base_url` | `https://cloud-api.near.ai/v1` |
 | `signing_algo` | `Ed25519` |
 | `e2ee` / `ohttp` | Both `false` for Gateway clients. OHTTP requires Ed25519. |
@@ -104,7 +103,7 @@ Dropping the request future cancels the operation.
 Inference is sent once. Retry transient receipt lookups through the verification
 method while the response remains cached.
 
-## Standalone transport and experimental direct APIs
+## Standalone transport
 
 - `prepare_e2ee_chat_request(request, &E2eeModelKey)` returns
   `PreparedE2eeChatRequest { request, .. }` with private response-key state.
@@ -118,20 +117,6 @@ method while the response remains cached.
 - `create_ohttp_client(config, base_url, reqwest_client, forwarded_headers)` returns
   `OhttpClient`; its `send` returns `InferenceResponse`. Config bytes must already
   be authenticated, and the supplied HTTP client must disable redirects.
-- `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
-  Gateway client. Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
-  to enable it. Chat/transport/receipt methods match
-  `InferenceClient`; `verify` returns `DirectAttestationVerificationResult`.
-- `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
-  and direct signatures. `with_headers` configures extra headers.
-- `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
-  `verify_direct_model_response` validate individual reports, complete report
-  sets, and exact completion bytes respectively. The response verifier returns
-  every verified report sharing the signature's signer.
-
-See the [guide](./verification-guide.md#experimental-direct-endpoints) for direct
-endpoint limitations and source migration notes for new optional evidence fields.
-
 ## Verification lifecycle
 
 The public APIs support three stages:
@@ -152,6 +137,9 @@ The Gateway's report and signature endpoints have different defaults.
 
 ## Gateway client
 
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
+
 `AttestationClient` owns the optional API key, Gateway base URL, and its internal
 reqwest clients. Create it once and reuse it for all signature and evidence
 requests in a flow. The client only fetches evidence; it does not send
@@ -166,7 +154,7 @@ inference requests or retain completion bytes.
 and signature requests. Pass the pinned client used for inference.
 
 Use `AttestationClient::new(None)` to fetch attestation without credentials.
-Gateway and direct attestation requests omit `Authorization`, `api-key`, and
+Gateway attestation requests omit `Authorization`, `api-key`, and
 `x-api-key`, including values supplied through `with_headers`. Other custom
 headers are preserved. Metadata and signature requests use configured authentication.
 
@@ -220,7 +208,7 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
 | `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Returns every verified report matching a `ProviderTee` signer, or an error when none match. Shared signers do not identify an individual instance. It does not verify the response signature. |
-| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
+| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Deprecated. Returns the first matching report in input order. Use `find_model_attestations_for_signature` for all matches. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS
@@ -526,9 +514,11 @@ DCAP constructs SGX and TDX collateral paths beneath the PCCS base URL. See
 |  | `tcb_status`, `advisory_ids` | Accepted quote TCB status and authenticated advisory IDs. |
 |  | `deployment` | `MeasuredDeployment` with `app_compose` and derived `RuntimeMeasurements`. |
 |  | `deployment_provenance` | `NotChecked` when no custom deployment verifier was supplied; `Verified` when it accepted the deployment. |
-| `VerifiedModelAttestation` | `evidence` | Shared verified evidence above. |
+| `VerifiedModelAttestation` | `report` | Original model report. |
+|  | `evidence` | Shared verified evidence above. |
 |  | `gpu_evidence` | `GpuEvidenceStatus::NotProvided` or `GpuEvidenceStatus::Verified`. |
-| `VerifiedGatewayAttestation` | `evidence` | Shared verified evidence above. |
+| `VerifiedGatewayAttestation` | `report` | Original gateway report. |
+|  | `evidence` | Shared verified evidence above. |
 |  | `tls_binding` | `GatewayTlsBinding::Attested { spki_fingerprint }` when the quote-bound fingerprint matched the observed peer, or `GatewayTlsBinding::None` when the attestation had no SPKI fingerprint. |
 
 ## Errors

@@ -121,7 +121,7 @@ HTTPX2 client can use this property for the same supported endpoints.
 Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
 the authorization for model reports, metadata, Chat, and signature requests.
 The client verifies Gateway evidence first, before sending authenticated requests.
-Gateway and direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`. An external
+Gateway attestation requests omit `Authorization`, `api-key`, and `x-api-key`. An external
 `AsyncOpenAI` client's API key does not override it. With header-only authentication,
 you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
 
@@ -154,10 +154,7 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
 `verify(model)` returns Gateway evidence, every verified model report, and `verified_at`
 (Unix milliseconds). Incognito models return Gateway evidence and an empty `models` tuple.
 
-`DirectInferenceClient.verify(model)` returns the complete verified direct report
-set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
-result. In both workflows, response signatures are still checked separately
-with `verify_response(id)` after Chat.
+Response signatures are checked separately with `verify_response(id)` after Chat.
 Chat, Responses, Messages, and System One share the session warmed by `verify(model)`.
 
 ### Use OHTTP
@@ -336,7 +333,7 @@ Anthropic model execution inside a TEE. Failed, incomplete, and cancelled stream
 cannot yield a verified complete response. If receipt lookup is temporarily
 unavailable, retry verification without sending inference again.
 
-Messages field-level E2EE and Direct clients are rejected before network I/O,
+Messages field-level E2EE is rejected before network I/O,
 matching the server's supported contract. Only Messages creation is supported.
 
 ```python
@@ -373,7 +370,7 @@ still have an unavailable receipt; retry receipt lookup when appropriate without
 repeating inference. Consume the entire SSE stream before verifying its nested
 `event.response.id`; output item IDs are not receipt IDs.
 
-Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+Field-level E2EE is rejected before network I/O. OHTTP is
 supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
 as opaque data and is separate from NEAR field encryption. Only creation is
 supported; response retrieval, cancellation, deletion, and history endpoints are
@@ -391,66 +388,6 @@ print(receipt.signature_kind, response.output_text)
 
 Set `stream=True` and use `async for` for typed Responses events. An external
 `AsyncOpenAI` client can use the same API through `http_client=client.http_client`.
-
-## Direct model endpoints
-
-Experimental Direct clients use standard HTTPS. The inference request can reach a different instance
-from the one verified during preflight. With E2EE disabled, that instance receives
-the plaintext prompt.
-
-```python
-from nearai_inference_sdk import DirectInferenceClient
-
-async with DirectInferenceClient(
-    'https://glm-5-3-flash.completions.near.ai/v1/',
-    api_key=direct_api_key,
-    e2ee=True,
-) as direct_client:
-    completion = await direct_client.chat.completions.create(
-        model='z-ai/glm-5.3-flash',
-        messages=[{'role': 'user', 'content': 'Hello'}],
-    )
-    verified = await direct_client.verify_response(completion.id)
-```
-
-Every supplied report is verified before selecting a model key. E2EE is opt-in,
-as with the Gateway client. The example enables it explicitly. Ed25519/ECDSA,
-streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the same interfaces as
-Gateway Chat. Response verification returns every verified
-report sharing the selected signer, without identifying one particular CVM.
-
-For a manual workflow:
-
-```python
-from nearai_inference_sdk import (
-    DirectAttestationClient,
-    verify_direct_model_attestations,
-    verify_direct_model_response,
-)
-
-direct_client = DirectAttestationClient(direct_base_url, api_key=direct_api_key)
-fetched_attestations = await direct_client.fetch_model_attestations(
-    signing_algo='ed25519'
-)
-verified = await verify_direct_model_attestations(fetched_attestations)
-
-# Application code sends Chat and retains its exact request and response bytes.
-signature = await direct_client.fetch_completion_signature(
-    completion_id, signing_algo='ed25519'
-)
-matching = verify_direct_model_response(
-    request_body,
-    response_body,
-    signature,
-    verified.attestations,
-)
-```
-
-The top-level serving report must also occur in `all_attestations`. Direct fetch
-currently requests `include_tls_fingerprint=false`, matching JavaScript. When
-verifying caller-supplied TLS-bound evidence, every fingerprint is authenticated
-by its own quote and the serving fingerprint must match the observed TLS peer.
-The returned `spki_fingerprints` can be used with `create_pinned_tls_client`.
 
 ## Standalone workflow
 
@@ -699,7 +636,7 @@ deployment record, including the manager's startup image.
 
 Use `compose_file` to select a project's file and `compose_repository` to change the
 trusted repository. Configure this callback as `model_verification.verifiers.deployment`
-on Gateway or Direct inference clients. The policy runs for every model report
+on Gateway inference clients. The policy runs for every model report
 and requires Compose Manager evidence in each one.
 
 The evidence covers recorded deployment actions and the configured image builds;
@@ -969,8 +906,7 @@ available. Do not repeat inference to recover a missing receipt.
 Use the original workspace's credentials for later retrieval, including after
 switching workspaces. Historical signatures without recorded ownership may remain
 unavailable regardless of retries. Already retrieved signatures can still be
-verified locally with the corresponding bytes and attestation evidence. These
-Gateway access rules do not change the Direct endpoint's authentication policy.
+verified locally with the corresponding bytes and attestation evidence.
 
 ## Handle retrieval and verification errors
 

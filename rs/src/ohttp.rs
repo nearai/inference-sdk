@@ -1,9 +1,9 @@
 //! Chunked OHTTP via the maintained `ohttp` implementation; RFC 9292 framing.
-use crate::inference::{ByteStream, InferenceResponse};
 use crate::{
     errors::protocol, util::decode_hex, ApiError, ApiResource, ApiTransportReason, InferenceError,
     OhttpAttestation, SigningAlgo, SigningIdentity, VerificationError,
 };
+use crate::{ByteStream, InferenceResponse};
 use futures_util::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     TryStreamExt,
@@ -629,7 +629,7 @@ mod tests {
             let client = create_ohttp_client(
                 &raw,
                 &format!("{}/v1", server.uri()),
-                crate::inference::ordinary_client().unwrap(),
+                crate::inference_core::ordinary_client().unwrap(),
                 vec![],
             )
             .unwrap();

@@ -202,29 +202,6 @@ class CloudCompletionSignatureSchema(CompletionSignatureFieldsSchema):
     signature_kind: Literal['provider_tee', 'gateway']
 
 
-class DirectInfoSchema(CloudInfoSchema):
-    instance_id: StrictStr | None = None
-
-
-class DirectModelAttestationSchema(CloudAttestationSchema):
-    model_name: StrictStr = Field(min_length=1)
-    info: DirectInfoSchema
-    report_data: StrictStr | None = None
-    nvidia_payload: StrictStr | None = None
-    signing_public_key: StrictStr | None = None
-
-
-class DirectAttestationReportSchema(DirectModelAttestationSchema):
-    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
-    all_attestations: list[DirectModelAttestationSchema] = Field(min_length=1)
-    ohttp_attestation: OhttpAttestationSchema | None = None
-
-
-class DirectCompletionSignatureSchema(CompletionSignatureFieldsSchema):
-    # The direct endpoint itself establishes the signature's trust boundary.
-    signature_kind: Literal['provider_tee'] = 'provider_tee'
-
-
 class CloudUnavailableSignatureSchema(ApiSchema):
     error_code: StrictStr
     message: StrictStr

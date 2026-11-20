@@ -143,24 +143,6 @@ signer. `create_ohttp_client` wraps a caller-supplied reqwest client and an
 already-authenticated configuration. The wrapper limits requests to its configured
 origin; supply a client with redirects disabled (or a pinned client).
 
-### Experimental direct endpoints
-
-`DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
-Gateway client. Its `verify(model)` returns the complete verified report set,
-serving report, TLS binding, and verification timestamp. `with_options` accepts
-`DirectInferenceClientOptions`. Set `e2ee: true` to enable encryption.
-
-Direct clients verify every supplied instance, require the serving report to be
-in that set, and retain the selected signer group for receipt verification.
-OHTTP is bound to the serving signer. `DirectAttestationClient` and the standalone
-`verify_direct_model_attestation(s)` / `verify_direct_model_response` functions
-support manual flows. Model names and instance IDs are endpoint metadata, not
-quote-authenticated model identity claims.
-
-Direct uses standard HTTPS. The inference request can reach a different instance
-from the one verified during preflight. With E2EE disabled, that instance receives
-the plaintext prompt.
-
 ### Existing Rust callers
 
 Existing fetch and standalone verification methods remain available. Struct
@@ -202,7 +184,7 @@ Anthropic model execution inside a TEE. Failed, incomplete, and cancelled stream
 cannot yield a verified complete response. If receipt lookup is temporarily
 unavailable, retry verification without sending inference again.
 
-Messages field-level E2EE and Direct clients are rejected before network I/O,
+Messages field-level E2EE is rejected before network I/O,
 matching the server's supported contract. Only Messages creation is supported.
 
 ```rust
@@ -235,7 +217,7 @@ still have an unavailable receipt; retry receipt lookup when appropriate without
 repeating inference. Consume the entire SSE stream before verifying its nested
 `event.response.id`; output item IDs are not receipt IDs.
 
-Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+Field-level E2EE is rejected before network I/O. OHTTP is
 supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
 as opaque data and is separate from NEAR field encryption. Only creation is
 supported; response retrieval, cancellation, deletion, and history endpoints are
@@ -590,7 +572,7 @@ For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
 `ModelAttestationVerifiers.deployment`. Keep the manager repository and build
 identity in `ComposeManagerImagePolicy`, separate from the compose image map.
 
-On Gateway or Direct inference clients, set `model_verification.deployment`.
+On Gateway inference clients, set `model_verification.deployment`.
 The policy runs for every model report and requires Compose Manager evidence in
 each one. See the [API reference](./api-reference.md#compose-manager-deployment-images)
 for file selection, GitHub access, and standalone verification options.
@@ -625,8 +607,7 @@ available. Do not repeat inference to recover a missing receipt.
 Use the original workspace's credentials for later retrieval, including after
 switching workspaces. Historical signatures without recorded ownership may remain
 unavailable regardless of retries. Already retrieved signatures can still be
-verified locally with the corresponding bytes and attestation evidence. These
-Gateway access rules do not change the Direct endpoint's authentication policy.
+verified locally with the corresponding bytes and attestation evidence.
 
 ## Handle errors
 

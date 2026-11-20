@@ -101,7 +101,7 @@ func run() error {
 
 Import as `nearai "github.com/nearai/inference-sdk/go"`. The
 [OpenAI example](../examples/example-go/gateway/chat-completions-with-openai-sdk/main.go) uses the official OpenAI Go
-SDK and reads `NEARAI_API_KEY` from the environment. It covers JSON and streaming calls. See the [Gateway/direct
+SDK and reads `NEARAI_API_KEY` from the environment. It covers JSON and streaming calls. See the [Gateway
 examples](../examples/example-go/README.md) for standalone and integrated clients,
 Gateway image provenance, and exact ciphertext receipt verification. The library
 itself takes credentials explicitly.
@@ -126,11 +126,6 @@ Consume the stream to completion, check `stream.Err()`, close it, then call
 succeeds is not yet signature-verified. Close an abandoned stream to cancel its
 request; incomplete or failed streams are not registered for verification.
 
-The [direct OpenAI example](../examples/example-go/direct/chat-completions-with-openai-sdk/main.go) uses
-`NewDirectInferenceClient` with the same OpenAI HTTP adapter for encrypted JSON
-and streaming Chat. Direct endpoints are experimental: they omit Gateway
-verification and use standard HTTPS without attested TLS pinning.
-
 The Gateway adapter accepts POSTs to its configured `chat/completions` and
 `responses` and `messages` endpoints. See [Responses](./docs/verification-guide.md#responses-api)
 and [Messages](./docs/verification-guide.md#messages-api)
@@ -154,7 +149,6 @@ are preserved; the SDK encrypts only the documented protocol fields.
 | Retained response records | `ResponseTTL` | One hour from full body consumption |
 | Deployment admission policy | `DeploymentPolicy`, `VerificationOptions` | Caller supplied |
 | GitHub/Sigstore image provenance | `FetchImageProvenance`, `VerifyImageProvenance`, `VerifyDeploymentImageProvenance` | Caller supplied |
-| Direct endpoints | `NewDirectInferenceClient`, `NewDirectAttestationClient` | Experimental |
 
 Go uses contexts, `net/http`, structured errors, and standard streams rather
 than the asynchronous object APIs of JavaScript/Python. It has the same protocol
@@ -213,7 +207,7 @@ Keep exact wire bytes when verifying receipts manually.
 
 - [Verification guide](./docs/verification-guide.md)
 - [API reference](./docs/api-reference.md)
-- [Gateway, direct, and OpenAI examples](../examples/example-go/README.md)
+- [Gateway and OpenAI examples](../examples/example-go/README.md)
 - [Live E2E coverage](../e2e/README.md)
 - [Release process](../RELEASING.md)
 

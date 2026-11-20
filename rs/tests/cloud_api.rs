@@ -1,9 +1,10 @@
+mod support;
+#[allow(deprecated)]
+use nearai_inference_sdk::find_model_attestation_for_signature;
 use nearai_inference_sdk::{
-    find_model_attestation_for_signature, find_model_attestations_for_signature, ApiError,
-    ApiResource, AttestationClient, CompletionSignature, CompletionSignatureKind,
-    DeploymentProvenanceStatus, GatewayAttestationFetchOptions, GpuEvidenceStatus,
-    MeasuredDeployment, RuntimeMeasurements, SigningAlgo, SigningIdentity, TcbStatus,
-    VerifiedAttestationEvidence, VerifiedModelAttestation,
+    find_model_attestations_for_signature, ApiError, ApiResource, AttestationClient,
+    CompletionSignature, CompletionSignatureKind, GatewayAttestationFetchOptions, SigningAlgo,
+    SigningIdentity,
 };
 use serde_json::json;
 use std::sync::Once;
@@ -184,138 +185,89 @@ async fn optional_keys_are_omitted_from_bootstrap_but_retained_for_model_reports
     test_api_key();
     let _ = AttestationClient::new(None);
     nearai_inference_sdk::InferenceClient::new(None).unwrap();
-    for direct in [false, true] {
-        for api_key in [None, Some("test-key".to_owned())] {
-            for custom_headers in [false, true] {
-                let server = MockServer::start().await;
-                Mock::given(path("/v1/attestation/report"))
-                    .respond_with(move |request: &Request| {
-                        if direct {
-                            let nonce = request
-                                .url
-                                .query_pairs()
-                                .find(|(key, _)| key == "nonce")
-                                .unwrap()
-                                .1
-                                .into_owned();
-                            let report = json!({
-                                "model_name": "test", "request_nonce": nonce,
-                                "signing_algo": "ed25519", "signing_address": "22".repeat(32),
-                                "intel_quote": "aa", "event_log": [],
-                                "info": {"tcb_info": {"app_compose": "{}"}},
-                            });
-                            let mut payload = report.clone();
-                            payload["all_attestations"] = json!([report]);
-                            ResponseTemplate::new(200).set_body_json(payload)
-                        } else if request.url.query_pairs().any(|(key, _)| key == "model") {
-                            ModelAttestationResponder.respond(request)
-                        } else {
-                            GatewayAttestationResponder.respond(request)
-                        }
-                    })
-                    .mount(&server)
-                    .await;
-                Mock::given(path("/v1/signature/test"))
-                    .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                        "text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
-                        "signing_algo": "ed25519", "signing_address": "22".repeat(32),
-                    })))
-                    .mount(&server).await;
-                let mut headers = reqwest::header::HeaderMap::new();
-                if custom_headers {
-                    for (name, value) in [
-                        ("authorization", "Bearer custom"),
-                        ("api-key", "api-key"),
-                        ("x-api-key", "x-api-key"),
-                        ("x-tenant", "tenant"),
-                    ] {
-                        headers.insert(name, value.parse().unwrap());
-                    }
-                }
-                if direct {
-                    let client = nearai_inference_sdk::DirectAttestationClient::new(
-                        &base_url(&server),
-                        api_key.clone(),
-                    )
-                    .unwrap()
-                    .with_headers(headers);
-                    client.fetch_model_attestations(None, None).await.unwrap();
-                    client
-                        .fetch_completion_signature("test", None)
-                        .await
-                        .unwrap();
-                } else {
-                    let client =
-                        AttestationClient::with_base_url(api_key.clone(), &base_url(&server))
-                            .unwrap()
-                            .with_headers(headers);
-                    client
-                        .fetch_gateway_attestation(GatewayAttestationFetchOptions {
-                            include_spki_fingerprint: false,
-                            ..Default::default()
-                        })
-                        .await
-                        .unwrap();
-                    client
-                        .fetch_model_attestations("test", None, None)
-                        .await
-                        .unwrap();
-                    client
-                        .fetch_completion_signature("test", None)
-                        .await
-                        .unwrap();
-                }
-                let requests = server.received_requests().await.unwrap();
-                assert_eq!(requests.len(), if direct { 2 } else { 3 });
-                for request in requests {
-                    assert_eq!(
-                        request.headers.get("x-tenant").map(|v| v.to_str().unwrap()),
-                        custom_headers.then_some("tenant")
-                    );
-                    if request.url.path() == "/v1/attestation/report"
-                        && (direct || !request.url.query_pairs().any(|(name, _)| name == "model"))
-                    {
-                        for name in ["authorization", "api-key", "x-api-key"] {
-                            assert!(
-                                request.headers.get(name).is_none(),
-                                "attestation sent {name}"
-                            );
-                        }
+
+    for api_key in [None, Some("test-key".to_owned())] {
+        for custom_headers in [false, true] {
+            let server = MockServer::start().await;
+            Mock::given(path("/v1/attestation/report"))
+                .respond_with(move |request: &Request| {
+                    if request.url.query_pairs().any(|(key, _)| key == "model") {
+                        ModelAttestationResponder.respond(request)
                     } else {
-                        let expected = if api_key.is_some() {
-                            Some("Bearer test-key")
-                        } else {
-                            custom_headers.then_some("Bearer custom")
-                        };
-                        assert_eq!(
-                            request
-                                .headers
-                                .get("authorization")
-                                .map(|v| v.to_str().unwrap()),
-                            expected
+                        GatewayAttestationResponder.respond(request)
+                    }
+                })
+                .mount(&server)
+                .await;
+            Mock::given(path("/v1/signature/test"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
+                    "signing_algo": "ed25519", "signing_address": "22".repeat(32),
+                })))
+                .mount(&server)
+                .await;
+            let mut headers = reqwest::header::HeaderMap::new();
+            if custom_headers {
+                for (name, value) in [
+                    ("authorization", "Bearer custom"),
+                    ("api-key", "api-key"),
+                    ("x-api-key", "x-api-key"),
+                    ("x-tenant", "tenant"),
+                ] {
+                    headers.insert(name, value.parse().unwrap());
+                }
+            }
+            let client = AttestationClient::with_base_url(api_key.clone(), &base_url(&server))
+                .unwrap()
+                .with_headers(headers);
+            client
+                .fetch_gateway_attestation(GatewayAttestationFetchOptions {
+                    include_spki_fingerprint: false,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            client
+                .fetch_model_attestations("test", None, None)
+                .await
+                .unwrap();
+            client
+                .fetch_completion_signature("test", None)
+                .await
+                .unwrap();
+
+            let requests = server.received_requests().await.unwrap();
+            assert_eq!(requests.len(), 3);
+            for request in requests {
+                assert_eq!(
+                    request.headers.get("x-tenant").map(|v| v.to_str().unwrap()),
+                    custom_headers.then_some("tenant")
+                );
+                if request.url.path() == "/v1/attestation/report"
+                    && !request.url.query_pairs().any(|(name, _)| name == "model")
+                {
+                    for name in ["authorization", "api-key", "x-api-key"] {
+                        assert!(
+                            request.headers.get(name).is_none(),
+                            "attestation sent {name}"
                         );
                     }
+                } else {
+                    let expected = if api_key.is_some() {
+                        Some("Bearer test-key")
+                    } else {
+                        custom_headers.then_some("Bearer custom")
+                    };
+                    assert_eq!(
+                        request
+                            .headers
+                            .get("authorization")
+                            .map(|v| v.to_str().unwrap()),
+                        expected
+                    );
                 }
             }
         }
-    }
-}
-
-fn verified_model_attestation_for_signer(signer: SigningIdentity) -> VerifiedModelAttestation {
-    VerifiedModelAttestation {
-        signing_public_key: None,
-        evidence: VerifiedAttestationEvidence {
-            signer,
-            tcb_status: TcbStatus::UpToDate,
-            advisory_ids: vec![],
-            deployment: MeasuredDeployment {
-                compose_manager: None,
-                app_compose: "{}".to_owned(),
-                runtime_measurements: RuntimeMeasurements::default(),
-            },
-            deployment_provenance: DeploymentProvenanceStatus::NotChecked,
-        },
-        gpu_evidence: GpuEvidenceStatus::NotProvided,
     }
 }
 
@@ -332,6 +284,7 @@ fn signature_for_evidence_selection(
 }
 
 #[test]
+#[allow(deprecated)]
 fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
     for (signing_algo, bytes) in [(SigningAlgo::Ed25519, 32), (SigningAlgo::Ecdsa, 20)] {
         let signature = signature_for_evidence_selection(
@@ -341,15 +294,15 @@ fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
                 signing_address: "ab".repeat(bytes),
             },
         );
-        let first = verified_model_attestation_for_signer(signature.signer.clone());
+        let first = support::verified_model_attestation(signature.signer.clone());
         let mut second = first.clone();
         second.evidence.signer.signing_address = format!("0X{}", "AB".repeat(bytes));
         second.evidence.advisory_ids.push("second-report".into());
-        let other = verified_model_attestation_for_signer(SigningIdentity {
+        let other = support::verified_model_attestation(SigningIdentity {
             signing_algo,
             signing_address: "cd".repeat(bytes),
         });
-        let other_algo = verified_model_attestation_for_signer(SigningIdentity {
+        let other_algo = support::verified_model_attestation(SigningIdentity {
             signing_algo: match signing_algo {
                 SigningAlgo::Ed25519 => SigningAlgo::Ecdsa,
                 SigningAlgo::Ecdsa => SigningAlgo::Ed25519,
@@ -387,15 +340,15 @@ fn finds_a_signer_with_an_equivalent_hex_address() {
             signing_address: format!("0X{}", "AB".repeat(20)),
         },
     );
-    let candidate = verified_model_attestation_for_signer(SigningIdentity {
+    let candidate = support::verified_model_attestation(SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,
         signing_address: "ab".repeat(20),
     });
     let candidates = [candidate];
 
-    let selected = find_model_attestation_for_signature(&candidates, &signature).unwrap();
+    let selected = find_model_attestations_for_signature(&candidates, &signature).unwrap();
 
-    assert_eq!(selected.evidence.signer.signing_address, "ab".repeat(20));
+    assert_eq!(selected[0].evidence.signer.signing_address, "ab".repeat(20));
 }
 
 #[test]
@@ -408,7 +361,7 @@ fn selection_rejects_a_non_provider_signature_as_api_input() {
         },
     );
 
-    let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
+    let error = find_model_attestations_for_signature(&[], &signature).unwrap_err();
 
     assert!(matches!(
         error,
@@ -434,7 +387,7 @@ fn selection_rejects_a_malformed_signer_as_api_input() {
         },
     );
 
-    let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
+    let error = find_model_attestations_for_signature(&[], &signature).unwrap_err();
 
     assert!(matches!(
         error,
@@ -457,12 +410,12 @@ fn selection_rejects_a_malformed_candidate_signer_as_api_input() {
             signing_address: "22".repeat(20),
         },
     );
-    let candidates = [verified_model_attestation_for_signer(SigningIdentity {
+    let candidates = [support::verified_model_attestation(SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,
         signing_address: "not hexadecimal".to_owned(),
     })];
 
-    let error = find_model_attestation_for_signature(&candidates, &signature).unwrap_err();
+    let error = find_model_attestations_for_signature(&candidates, &signature).unwrap_err();
 
     assert!(matches!(
         error,
@@ -882,4 +835,22 @@ async fn client_applies_a_completion_signature_algorithm_filter() {
         .fetch_completion_signature("found", Some(SigningAlgo::Ed25519))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn evidence_requests_do_not_follow_redirects() {
+    let server = MockServer::start().await;
+    Mock::given(path("/model/model"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/redirected"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/redirected"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let client = AttestationClient::with_base_url(None, &server.uri()).unwrap();
+    let error = client.fetch_model_metadata("model").await.unwrap_err();
+    assert_eq!(error.code(), "api.http_status");
 }

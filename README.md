@@ -61,12 +61,6 @@ A `provider_tee` signature binds those bytes to an attested model signer; a
 do not prove model TEE execution. See the [verification guides](#documentation)
 for encryption scope, deployment policies, and trust boundaries.
 
-Direct model clients are experimental. See the guides for
-[TypeScript](./js/docs/verification-guide.md#use-a-direct-model-endpoint),
-[Python](./py/docs/verification-guide.md#direct-model-endpoints),
-[Rust](./rs/docs/verification-guide.md#experimental-direct-endpoints), and
-[Go](./go/docs/verification-guide.md#experimental-direct-endpoints).
-
 ## Documentation
 
 | SDK | Verification guide | API reference |

@@ -2,7 +2,7 @@ import type * as v from 'valibot';
 import type { OhttpAttestationSchema } from '../schemas';
 import type { SigningIdentity } from './attestation-common';
 
-/** Wire-format OHTTP proof in Gateway and direct attestation reports. */
+/** Wire-format OHTTP proof in Gateway attestation reports. */
 export type OhttpAttestationResponse = v.InferOutput<
   typeof OhttpAttestationSchema
 >;
@@ -17,7 +17,7 @@ export type OhttpAttestation = {
 
 export type VerifyOhttpKeyConfigParams = {
   readonly ohttpAttestation: OhttpAttestation;
-  /** Identity obtained from a successfully verified Gateway or direct model attestation. */
+  /** Identity obtained from a successfully verified Gateway attestation. */
   readonly signer: SigningIdentity;
 };
 
