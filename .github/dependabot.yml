@@ -1,7 +1,7 @@
 version: 2
-# Weekly grouped minor/patch updates, with
-# seven days for new releases to settle. Security updates are not delayed by
-# cooldown or the version-update-only major ignore rule.
+# SDK packages receive security updates only. A zero limit disables version
+# updates without affecting security updates; the schedule remains required.
+# GitHub Actions retain weekly grouped version updates for their SHA pins.
 updates:
   - package-ecosystem: "npm"
     directories:
@@ -9,34 +9,14 @@ updates:
       - "/examples/example-js"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      typescript-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
   - package-ecosystem: "uv"
     directories:
       - "/py"
       - "/examples/example-py"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      python-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
   - package-ecosystem: "cargo"
     directories:
       - "/rs"
@@ -44,46 +24,22 @@ updates:
       - "/go/internal/dcap/wasm-src"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      rust-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
     cooldown:
       default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
     groups:
-      actions-minor-patch:
+      actions:
         applies-to: version-updates
         patterns: ["*"]
-        update-types: ["minor", "patch"]
   - package-ecosystem: "gomod"
     directories:
       - "/go"
       - "/examples/example-go"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-    groups:
-      go-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
+    open-pull-requests-limit: 0
