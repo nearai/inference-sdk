@@ -1,0 +1,22 @@
+{
+  "compose": "x-model: &model\n  image: nearaidev/compose-manager-launcher@sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56\nservices:\n  model:\n    <<: *model\n",
+  "actions": [
+    {
+      "action": "compose_up",
+      "commit": "1212121212121212121212121212121212121212",
+      "file": "prod/model.yaml",
+      "file_sha256": "bea85770f0919ace09a0dbcdb485c1f8eca1b856d0d6b9dfad61689dda72e53f",
+      "services": [
+        "model"
+      ],
+      "tag": "release-unicode-é-€-🌍",
+      "timestamp": "2026-10-01T00:00:00Z"
+    },
+    {
+      "action": "compose_manager_started",
+      "image": "nearaidev/compose-manager-launcher@sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56",
+      "timestamp": "2026-10-01T00:00:01Z"
+    }
+  ],
+  "actions_hash": "94841eb10885495ce21703d2324515119132e931107cdaba21bc71cf8f5c0379"
+}

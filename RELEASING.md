@@ -51,7 +51,7 @@ imports, type declarations, and license files.
 ```sh
 cd py
 uv sync --locked
-make lint
+make check
 uv build --no-sources
 uv run --with twine twine check dist/*
 ```

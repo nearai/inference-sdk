@@ -110,6 +110,14 @@ for (const { id: model } of MODELS.filter(
               }).chat
             : inferenceClient.chat,
           signingAlgo: options.signingAlgo,
+          expectedSignatureKind:
+            model === MODEL &&
+            options.e2ee &&
+            options.signingAlgo === 'ed25519' &&
+            !options.ohttp &&
+            !official
+              ? 'provider_tee'
+              : undefined,
         });
       });
     }
@@ -183,7 +191,7 @@ type VerifyClientCompletionsParams = {
   chat: InferenceChat;
   signingAlgo?: SigningAlgo;
   model?: string;
-  expectedSignatureKind?: 'gateway';
+  expectedSignatureKind?: 'gateway' | 'provider_tee';
 };
 
 async function verifyClientCompletions({

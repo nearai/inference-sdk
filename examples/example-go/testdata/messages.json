@@ -1,0 +1,17 @@
+{
+  "id": "json",
+  "type": "message",
+  "role": "assistant",
+  "model": "model",
+  "content": [
+    {
+      "type": "text",
+      "text": "answer"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 1,
+    "output_tokens": 1
+  }
+}
