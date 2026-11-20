@@ -4,6 +4,9 @@ This page lists the public Rust request and verification APIs exported by
 `nearai_inference_sdk`. For workflows and complete examples, see the
 [verification guide](./verification-guide.md).
 
+The previously experimental Direct Client has been removed from the SDK as part
+of the Direct endpoint retirement.
+
 ## Integrated client
 
 Construct `InferenceClient` with `new(api_key)` or

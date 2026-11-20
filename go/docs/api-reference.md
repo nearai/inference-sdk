@@ -4,6 +4,9 @@ Import `nearai "github.com/nearai/inference-sdk/go"`. For walkthroughs, see the
 [verification guide](./verification-guide.md); for runnable applications, see
 [the examples](../../examples/example-go/README.md).
 
+The previously experimental Direct Client has been removed from the SDK as part
+of the Direct endpoint retirement.
+
 ## Inference client
 
 ```go

@@ -4,6 +4,9 @@ This page describes the attestation, E2EE, and response verification APIs in
 `@nearai/inference-sdk`. For integration steps and examples, see the
 [verification guide](./verification-guide.md).
 
+The previously experimental Direct Client has been removed from the SDK as part
+of the Direct endpoint retirement.
+
 ## Package entry points
 
 Both entry points export the same verification APIs. Their Gateway clients differ

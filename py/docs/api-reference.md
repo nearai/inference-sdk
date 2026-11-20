@@ -3,6 +3,9 @@
 This page describes the public APIs exported by `nearai_inference_sdk`. For
 workflows and complete examples, see the [verification guide](./verification-guide.md).
 
+The previously experimental Direct Client has been removed from the SDK as part
+of the Direct endpoint retirement.
+
 ## Recommended lifecycle
 
 With a NEAR TEE model, applications use the public APIs in three stages:
