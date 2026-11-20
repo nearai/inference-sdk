@@ -6,18 +6,21 @@ import {
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
+  const baseUrl =
+    process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
   const model = process.env.NEARAI_MODEL;
+  const signingAlgo = process.env.NEARAI_SIGNING_ALGO ?? 'ed25519';
+  const expectedKind = process.env.NEARAI_EXPECT_SIGNATURE_KIND ?? 'gateway';
+
   if (!apiKey || !model) {
     throw new Error(
       'Set NEARAI_API_KEY and NEARAI_MODEL to your canonical System One model ID.',
     );
   }
 
-  const signingAlgo = process.env.NEARAI_SIGNING_ALGO ?? 'ed25519';
   if (signingAlgo !== 'ed25519' && signingAlgo !== 'ecdsa') {
     throw new Error('NEARAI_SIGNING_ALGO must be ed25519 or ecdsa.');
   }
-  const expectedKind = process.env.NEARAI_EXPECT_SIGNATURE_KIND ?? 'gateway';
   if (expectedKind !== 'gateway' && expectedKind !== 'provider_tee') {
     throw new Error(
       'NEARAI_EXPECT_SIGNATURE_KIND must be gateway or provider_tee.',
@@ -29,7 +32,7 @@ async function main(): Promise<void> {
     signingAlgo,
     modelVerification:
       expectedKind === 'provider_tee' ? { policy: {} } : undefined,
-    baseUrl: process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/',
+    baseUrl,
   });
 
   const { data, response } = await typesafe

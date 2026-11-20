@@ -27,8 +27,7 @@ pub fn verify_model_response(
     verify_signature_matches_attestation(signature, &attestation.evidence.signer)
 }
 
-/// Verify Gateway-service provenance and integrity for exact client-visible
-/// completion bytes. This does not establish that a model TEE generated them.
+/// Verify the exact request and response bytes against the attested Gateway signer.
 pub fn verify_gateway_response(
     request_body: &[u8],
     response_body: &[u8],

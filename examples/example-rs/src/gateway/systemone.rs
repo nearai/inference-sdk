@@ -5,6 +5,7 @@ use serde_json::json;
 
 async fn run() -> Result<()> {
     let model = std::env::var("NEARAI_MODEL")?;
+    let image_path = std::env::var("NEARAI_IMAGE_PATH").ok();
     let expected = match std::env::var("NEARAI_EXPECT_SIGNATURE_KIND")
         .as_deref()
         .unwrap_or("gateway")
@@ -51,7 +52,7 @@ async fn run() -> Result<()> {
             }
         }
     });
-    if let Ok(image_path) = std::env::var("NEARAI_IMAGE_PATH") {
+    if let Some(image_path) = image_path {
         let image_base64 = STANDARD.encode(std::fs::read(image_path)?);
         request = json!({
             "state": {

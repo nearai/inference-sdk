@@ -139,10 +139,7 @@ export type VerifiedAttestationEvidence = {
   readonly advisoryIds: readonly string[];
   /** Deployment measurements authenticated by MRCONFIGID and RTMR3. */
   readonly deployment: MeasuredDeployment;
-  /**
-   * `verified` only when a caller-supplied deployment verifier ran and
-   * accepted the measured deployment. A failed verifier always throws.
-   */
+  /** `verified` when a supplied deployment verifier accepted the deployment. */
   readonly deploymentProvenance: DeploymentProvenanceStatus;
 };
 

@@ -98,7 +98,7 @@ impl InferenceClient {
             ..Default::default()
         })
     }
-    /// Gateway and model evidence; cache hits preserve the original verification time.
+    /// Verify the required deployment attestations before sending a prompt.
     pub async fn verify(
         &self,
         model: &str,

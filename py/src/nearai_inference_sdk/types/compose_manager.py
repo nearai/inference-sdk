@@ -1,4 +1,4 @@
-"""Compose Manager's signed deployment actions, not current-runtime state."""
+"""Compose Manager's signed deployment actions."""
 
 from __future__ import annotations
 
@@ -33,10 +33,7 @@ class ComposeManagerAttestation:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedComposeManagerAttestation:
-    """Actions authenticated under the model's measured app-compose configuration.
-
-    Matching measurements do not identify a unique CVM or prove action success.
-    """
+    """Actions authenticated under the model's measured app-compose configuration."""
 
     actions: tuple[ComposeManagerAction, ...]
     tcb_status: TcbStatus

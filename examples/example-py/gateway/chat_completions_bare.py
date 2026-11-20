@@ -136,7 +136,7 @@ async def send_completion(
     )
 
 
-async def verify_completion_response(
+async def verify_response(
     client: AttestationClient,
     completion: Completion,
     gateway: VerifiedGatewayAttestation,
@@ -196,7 +196,7 @@ async def main() -> None:
         completion = await send_completion(
             pinned_tls_client, api_key, model_key, stream=False
         )
-        await verify_completion_response(
+        await verify_response(
             attestation_client,
             completion,
             gateway,
@@ -207,7 +207,7 @@ async def main() -> None:
         completion = await send_completion(
             pinned_tls_client, api_key, model_key, stream=True
         )
-        await verify_completion_response(
+        await verify_response(
             attestation_client,
             completion,
             gateway,

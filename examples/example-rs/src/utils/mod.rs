@@ -9,9 +9,35 @@ use std::{
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 pub const MODEL: &str = "z-ai/glm-5.3-flash";
 pub const GATEWAY: &str = "https://cloud-api.near.ai/v1/";
+
 pub fn api_key() -> Result<String> {
     Ok(std::env::var("NEARAI_API_KEY")?)
 }
+pub fn model() -> String {
+    std::env::var("NEARAI_MODEL").unwrap_or_else(|_| MODEL.into())
+}
+pub fn gateway() -> String {
+    format!(
+        "{}/",
+        std::env::var("NEARAI_BASE_URL")
+            .unwrap_or_else(|_| GATEWAY.into())
+            .trim_end_matches('/')
+    )
+}
+pub fn algo() -> Result<SigningAlgo> {
+    match std::env::var("NEARAI_SIGNING_ALGO")
+        .as_deref()
+        .unwrap_or("ed25519")
+    {
+        "ed25519" => Ok(SigningAlgo::Ed25519),
+        "ecdsa" => Ok(SigningAlgo::Ecdsa),
+        _ => Err("NEARAI_SIGNING_ALGO must be ed25519 or ecdsa".into()),
+    }
+}
+pub fn ohttp() -> bool {
+    std::env::var("NEARAI_OHTTP").is_ok_and(|v| v == "true")
+}
+
 pub fn body(stream: bool) -> Value {
     json!({"model": model(), "messages": [{"role":"user", "content":"Reply with the word ok."}], "max_completion_tokens":1024, "stream":stream})
 }
@@ -178,32 +204,6 @@ where
     }
     println!();
     Ok(body)
-}
-
-pub fn model() -> String {
-    std::env::var("NEARAI_MODEL").unwrap_or_else(|_| MODEL.into())
-}
-pub fn gateway() -> String {
-    format!(
-        "{}/",
-        std::env::var("NEARAI_BASE_URL")
-            .unwrap_or_else(|_| GATEWAY.into())
-            .trim_end_matches('/')
-    )
-}
-
-pub fn algo() -> Result<SigningAlgo> {
-    match std::env::var("NEARAI_SIGNING_ALGO")
-        .as_deref()
-        .unwrap_or("ed25519")
-    {
-        "ed25519" => Ok(SigningAlgo::Ed25519),
-        "ecdsa" => Ok(SigningAlgo::Ecdsa),
-        _ => Err("NEARAI_SIGNING_ALGO must be ed25519 or ecdsa".into()),
-    }
-}
-pub fn ohttp() -> bool {
-    std::env::var("NEARAI_OHTTP").is_ok_and(|v| v == "true")
 }
 
 #[cfg(test)]

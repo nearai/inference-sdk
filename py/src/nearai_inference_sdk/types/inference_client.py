@@ -39,7 +39,7 @@ class AttestationVerificationResult:
 
     gateway: VerifiedGatewayAttestation
     models: tuple[VerifiedModelAttestation, ...]
-    # Unix milliseconds when verification completed; unchanged on cache hits.
+    # Unix milliseconds when verification completed.
     verified_at: int
 
 
@@ -50,7 +50,9 @@ class VerifiedModelCompletionResult:
     id: str
     signature: CompletionSignature
     attestations: tuple[VerifiedModelAttestation, ...]
-    #: Deprecated: the report selected for the request key. Use ``attestations``.
+    #: Deprecated: use ``attestations`` for all verified reports sharing the
+    #: selected signer. This is the report used to select the request's model
+    #: public key.
     attestation: VerifiedModelAttestation
     signature_kind: Literal['provider_tee'] = 'provider_tee'
 

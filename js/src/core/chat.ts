@@ -34,9 +34,7 @@ export function verifyModelResponse({
 }
 
 /**
- * Verify gateway-service provenance and integrity for the exact completion
- * bytes. The signature must match the signer in a caller-supplied
- * gateway-attestation result; this does not establish model execution.
+ * Verify the exact request and response bytes against the attested Gateway signer.
  */
 export function verifyGatewayResponse({
   requestBody,

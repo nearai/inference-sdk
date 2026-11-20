@@ -19,17 +19,12 @@ All four languages use the same environment variables:
 | `NEARAI_EXPECT_SIGNATURE_KIND` | System One: `gateway` (default) or `provider_tee`; the latter requires verified model evidence |
 | `NEARAI_IMAGE_PATH` | Optional PNG file path for the native System One image/Box example |
 
-Choose a model available in the selected endpoint's catalog. Chat client examples
-and the standalone Gateway Chat examples explicitly enable field-level E2EE;
-use a NEAR TEE model for those examples. Responses, Messages, and System One keep
-E2EE disabled. OHTTP is independent of E2EE and requires signed key configuration
-and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
+Choose a NEAR TEE model for the encrypted Chat examples. To use OHTTP, choose
+an endpoint that publishes a signed Ed25519 key configuration and serves `/ohttp`.
 
-Runnable examples make one explicit receipt-verification call and propagate failure.
-Native clients and official SDK adapters disable automatic inference retries.
-
-Bare Gateway Chat examples verify the response with the model key selected for the
-request, then show how many verified reports share the response signer.
+Bare Gateway Chat examples verify deployments, send Chat through pinned TLS,
+and verify the response signature using the exact encrypted bytes. For model-signed
+responses, they show how many reports match the signer.
 
 ## Entry points
 
@@ -54,13 +49,8 @@ underscores in place of hyphens.
 | System One, native client | `node gateway/systemone.ts` | `uv run python -m gateway.systemone` | `cargo run --bin systemone` | `go run ./gateway/systemone` |
 | System One, official TypeSafe SDK | `node gateway/systemone-with-typesafe-sdk.ts` | `uv run python -m gateway.systemone_with_typesafe_sdk` | — | — |
 
-A dash means the vendor has no official SDK for that language. Official SDK
-examples share the inference client's verified transport and verify receipts
-through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and TypeSafe examples
-derive their API root from it. System One examples disable compression and inference
-retries, and use `X-Generation-Id` as the receipt ID. Native and official examples ask
-the same billing, team, and urgency questions by default and print answers after
-verification.
+Official SDK examples use the inference client's HTTP transport and response
+verification. System One examples print verified decision answers.
 
 ### System One images
 
@@ -89,9 +79,7 @@ cd examples/example-js
 node gateway/chat-completions.ts
 ```
 
-Use `pnpm start:<entry-name>` for Gateway examples, such as
-`pnpm start:chat-completions-with-openai-sdk`. Existing `start:client`,
-`start:bare`, and `start:client-openai-sdk` aliases remain available.
+Package scripts are also available, such as `pnpm start:chat-completions`.
 
 ### Python setup
 
@@ -117,9 +105,6 @@ cd examples/example-rs
 cargo run --locked --bin gateway-chat-completions
 ```
 
-`cargo run` and `cargo run --bin client` remain aliases for Gateway standalone
-and integrated Chat. The Rust client exposes its reqwest transport directly.
-
 ### Go setup
 
 Requires Go 1.27.0+. The SDK embeds the DCAP verifier. The example module
@@ -130,9 +115,8 @@ cd examples/example-go
 go run ./gateway/chat-completions-with-openai-sdk
 ```
 
-`go run .` remains an alias for the official OpenAI Gateway example. See the
-[Go example guide](example-go/README.md). Replace local path/link dependencies
-with released package versions when copying examples out of this repository.
+Replace local path dependencies with released packages when copying an example
+out of this repository.
 
 ## Shared helpers and tests
 
