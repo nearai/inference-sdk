@@ -33,7 +33,7 @@ type fakeCloud struct {
 	streamBody       string
 	encoding         string
 	t                *testing.T
-	a                Attestation
+	a                ModelAttestation
 	q                QuoteVerificationResult
 	ohttp            *OHTTPAttestation
 	priv             ed25519.PrivateKey

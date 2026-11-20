@@ -17,7 +17,7 @@ func TestQuoteVerifierPreservesSDKError(t *testing.T) {
 		return QuoteVerificationResult{}, original
 	}}
 
-	_, err := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, options)
+	_, err := VerifyModelAttestation(context.Background(), a, ModelClientBinding{Nonce: a.Nonce}, options)
 	if err != original {
 		t.Fatalf("quote error changed: %v", err)
 	}

@@ -92,8 +92,11 @@ See the [native image example](../../examples/example-go/gateway/systemone/main.
 
 ## Evidence retrieval
 
-Pass each fetched report and its matching `ClientBinding` to the corresponding
+Pass each fetched report and its matching client binding to the corresponding
 verification function.
+
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
 
 ```go
 func NewAttestationClient(o ClientOptions) (*AttestationClient, error)
@@ -110,8 +113,8 @@ binding. `FetchModelMetadata` returns the model ID, provider, and attestation su
 ## Standalone verification
 
 ```go
-func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error)
-func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedModelAttestation, error)
+func VerifyGatewayAttestation(ctx context.Context, a GatewayAttestation, b GatewayClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error)
+func VerifyModelAttestation(ctx context.Context, a ModelAttestation, b ModelClientBinding, o VerificationOptions) (VerifiedModelAttestation, error)
 
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedModelAttestation) error
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedGatewayAttestation) error
@@ -211,18 +214,26 @@ type SigningIdentity struct {
 	SigningAddress string      `json:"signingAddress"`
 }
 
-type Attestation struct {
+type AttestationEvidence struct {
+	Nonce             string
+	Signer            SigningIdentity
+	IntelQuote        string
+	EventLog          json.RawMessage
+	AppCompose        string
+	ReportedQuoteData string
+}
+type GatewayAttestation struct {
+	AttestationEvidence
+	SPKIFingerprint string
+}
+type ModelAttestation struct {
+	AttestationEvidence
 	ComposeManagerAttestation *ComposeManagerAttestation
-	Nonce                     string
-	Signer                    SigningIdentity
-	IntelQuote                string
-	EventLog                  json.RawMessage
-	AppCompose                string
-	ReportedQuoteData         string
 	SigningPublicKey          string
 	NvidiaPayload             *string
-	SPKIFingerprint           string
 }
+type GatewayClientBinding struct{ Nonce, SPKIFingerprint string }
+type ModelClientBinding struct{ Nonce string }
 
 type ComposeManagerAction map[string]any
 
@@ -242,8 +253,6 @@ type VerifiedComposeManagerAttestation struct {
 	RuntimeMeasurements RuntimeMeasurements
 }
 
-type ClientBinding struct{ Nonce, SPKIFingerprint string }
-
 type OHTTPAttestation struct {
 	SigningAlgo SigningAlgo `json:"signing_algo"`
 	SigningKey  string      `json:"signing_key"`
@@ -252,14 +261,14 @@ type OHTTPAttestation struct {
 }
 
 type FetchedGatewayAttestation struct {
-	Attestation      Attestation
-	ClientBinding    ClientBinding
+	Attestation      GatewayAttestation
+	ClientBinding    GatewayClientBinding
 	OHTTPAttestation *OHTTPAttestation
 }
 
 type FetchedModelAttestations struct {
-	Attestations  []Attestation
-	ClientBinding ClientBinding
+	Attestations       []ModelAttestation
+	ClientBinding      ModelClientBinding
 }
 
 type ModelMetadata struct {
@@ -315,14 +324,14 @@ type VerifiedAttestationEvidence struct {
 
 type VerifiedModelAttestation struct {
 	VerifiedAttestationEvidence
-	Report           *Attestation
+	Report           *ModelAttestation
 	GPUEvidence      string
 	SigningPublicKey string
 }
 
 type VerifiedGatewayAttestation struct {
 	VerifiedAttestationEvidence
-	Report          *Attestation
+	Report          *GatewayAttestation
 	SPKIFingerprint string
 }
 

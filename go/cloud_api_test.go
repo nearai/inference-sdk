@@ -219,7 +219,6 @@ func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
 				}
 				ctx := context.Background()
 				fetch := FetchOptions{DisableTLSBinding: true}
-				var client *apiClient
 				api, err := NewAttestationClient(options)
 				if err != nil {
 					t.Fatal(err)
@@ -230,9 +229,7 @@ func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
 				if _, err := api.FetchModelAttestations(ctx, "canonical/model", fetch); err != nil {
 					t.Fatal(err)
 				}
-				client = api.apiClient
-
-				if _, err := client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
+				if _, err := api.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
 					t.Fatal(err)
 				}
 			})
@@ -313,5 +310,23 @@ func TestAttestationAPIBindsEveryReport(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestEvidenceRequestsDoNotFollowRedirects(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		http.Redirect(w, r, "/redirected", http.StatusFound)
+	}))
+	defer server.Close()
+	client, err := NewAttestationClient(ClientOptions{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FetchModelMetadata(context.Background(), "model")
+	requireCode(t, err, "api.http_status")
+	if len(paths) != 1 || paths[0] != "/model/model" {
+		t.Fatalf("unexpected requests: %v", paths)
 	}
 }

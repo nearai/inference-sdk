@@ -832,3 +832,21 @@ async fn client_applies_a_completion_signature_algorithm_filter() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn evidence_requests_do_not_follow_redirects() {
+    let server = MockServer::start().await;
+    Mock::given(path("/model/model"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/redirected"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/redirected"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let client = AttestationClient::with_base_url(None, &server.uri()).unwrap();
+    let error = client.fetch_model_metadata("model").await.unwrap_err();
+    assert_eq!(error.code(), "api.http_status");
+}

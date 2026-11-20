@@ -126,6 +126,9 @@ The Gateway's report and signature endpoints have different defaults.
 
 Fetches model metadata, attestations, and response signatures.
 
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
+
 | Constructor | Parameters | Result | Description |
 | --- | --- | --- | --- |
 | `AttestationClient::new` | `api_key: impl Into<Option<String>>` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. Accepts a `String`, `Some(String)`, or `None`. |

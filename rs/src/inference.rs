@@ -3,7 +3,7 @@ use crate::*;
 use crate::{
     e2ee::remove_e2ee_headers,
     errors::protocol,
-    inference_core::{input, ordinary_client, verified_at, InferenceCore, PolicyVerifier, Session},
+    inference_core::{input, ordinary_client, verified_at, PolicyVerifier, Session},
 };
 use futures_util::future::try_join_all;
 use reqwest::header::{HeaderMap, HeaderValue};
@@ -90,10 +90,7 @@ impl VerifiedCompletionResult {
     }
 }
 
-#[derive(Clone)]
-pub struct InferenceClient {
-    core: InferenceCore,
-}
+pub use crate::inference_core::InferenceClient;
 impl InferenceClient {
     pub fn new(api_key: impl Into<Option<String>>) -> Result<Self, InferenceError> {
         Self::with_options(InferenceClientOptions {
@@ -101,29 +98,14 @@ impl InferenceClient {
             ..Default::default()
         })
     }
-    pub fn with_options(options: InferenceClientOptions) -> Result<Self, InferenceError> {
-        Ok(Self {
-            core: InferenceCore::new(options)?,
-        })
-    }
-    pub fn base_url(&self) -> &str {
-        self.core.base_url()
-    }
-    /// Clear captured response verification records.
-    pub async fn clear_response_cache(&self) {
-        self.core.clear_response_cache().await;
-    }
     /// Verify the required deployment attestations before sending a prompt.
     pub async fn verify(
         &self,
         model: &str,
     ) -> Result<AttestationVerificationResult, InferenceError> {
-        let session = self.core.session(model).await?;
+        let session = self.session(model).await?;
         Ok(AttestationVerificationResult {
-            gateway: session
-                .gateway
-                .clone()
-                .ok_or_else(|| input("client", "expected Gateway client"))?,
+            gateway: session.gateway.clone(),
             models: session.models.clone(),
             verified_at: session.verified_at,
         })
@@ -141,8 +123,8 @@ impl InferenceClient {
         request: &T,
         headers: HeaderMap,
     ) -> Result<crate::SystemOneResult, InferenceError> {
-        let generation = self.core.response_generation().await;
-        let options = self.core.options();
+        let generation = self.response_generation().await;
+        let options = self.options();
         if options.e2ee || options.ohttp {
             return Err(input("systemone", "requires a plaintext Gateway client").into());
         }
@@ -184,7 +166,7 @@ impl InferenceClient {
         owned.insert("content-type", HeaderValue::from_static("application/json"));
         owned.insert("accept", HeaderValue::from_static("application/json"));
         owned.insert("accept-encoding", HeaderValue::from_static("identity"));
-        let session = self.core.session(model).await?;
+        let session = self.session(model).await?;
         if let Some(model_key) = session.model_key() {
             owned.insert(
                 "x-model-pub-key",
@@ -232,8 +214,7 @@ impl InferenceClient {
             bytes.extend_from_slice(&chunk);
         }
         let data = crate::systemone::decode_response(&bytes)?;
-        self.core
-            .register(decision_id.clone(), body, bytes, session, false, generation)
+        self.register(decision_id.clone(), body, bytes, session, false, generation)
             .await?;
         Ok(crate::SystemOneResult { data, decision_id })
     }
@@ -255,7 +236,7 @@ impl InferenceClient {
     }
     /// Build a Responses creation request. `send` performs preflight and capture.
     pub fn response_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
-        self.core.json_request("responses", body)
+        self.json_request("responses", body)
     }
     /// Create an Anthropic Message and retain its bytes for `verify_response`.
     /// Use `message_request` and `send` for streaming events.
@@ -275,27 +256,7 @@ impl InferenceClient {
     }
     /// Build a Messages creation request. `send` performs preflight and capture.
     pub fn message_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
-        self.core.json_request("messages", body)
-    }
-    pub async fn verify_response(
-        &self,
-        id: &str,
-    ) -> Result<VerifiedCompletionResult, InferenceError> {
-        self.core.verify_receipt(id).await
-    }
-    /// OpenAI-compatible JSON Chat request. Use `send` for streaming.
-    pub async fn chat_completions(&self, body: Value) -> Result<Value, InferenceError> {
-        self.core.chat_completions(body).await
-    }
-    pub fn chat_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
-        self.core.chat_request(body)
-    }
-    /// Send an admitted Gateway request and retain its exact response bytes.
-    pub async fn send(
-        &self,
-        request: reqwest::Request,
-    ) -> Result<InferenceResponse, InferenceError> {
-        self.core.send(request).await
+        self.json_request("messages", body)
     }
 }
 pub(crate) async fn create_session(
@@ -428,7 +389,7 @@ pub(crate) async fn create_session(
         .into());
     }
     Ok(Arc::new(Session {
-        gateway: Some(gateway),
+        gateway,
         models: model_attestations,
         selected: selected_model_attestation,
         verified_at: verified_at(),

@@ -10,82 +10,82 @@ import (
 func TestAttestationRejectsTampering(t *testing.T) {
 	tests := []struct {
 		name, code string
-		mutate     func(*Attestation, *QuoteVerificationResult, *ClientBinding, *VerificationOptions)
+		mutate     func(*ModelAttestation, *QuoteVerificationResult, *ModelClientBinding, *VerificationOptions)
 	}{
 		{
 			"nonce",
 			"binding.nonce_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				b.Nonce = strings.Repeat("cd", 32)
 			},
 		},
 		{
 			"quote nonce",
 			"binding.nonce_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.ReportData[63] ^= 1
 			},
 		},
 		{
 			"signer",
 			"binding.report_data_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.ReportData[0] ^= 1
 			},
 		},
 		{
 			"debug",
 			"policy.debug_enabled",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.DebugEnabled = true
 			},
 		},
 		{
 			"tcb",
 			"policy.tcb_status_not_allowed",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.TCBStatus = "Revoked"
 			},
 		},
 		{
 			"compose",
 			"measurement.app_compose_mrconfigid_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				a.AppCompose += " "
 			},
 		},
 		{
 			"rtmr",
 			"measurement.rtmr3_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				q.RTMR3[0] ^= 1
 			},
 		},
 		{
 			"event",
 			"measurement.event_log_invalid",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				a.EventLog = []byte(`[{"imr":3}]`)
 			},
 		},
 		{
 			"key",
 			"binding.model_public_key_mismatch",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				a.SigningPublicKey = strings.Repeat("11", 32)
 			},
 		},
 		{
 			"gpu required",
 			"policy.gpu_evidence_required",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				o.Policy.RequireGPUEvidence = true
 			},
 		},
 		{
 			"deployment",
 			"provenance.verification_failed",
-			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+			func(a *ModelAttestation, q *QuoteVerificationResult, b *ModelClientBinding, o *VerificationOptions) {
 				o.DeploymentVerifier = func(context.Context, MeasuredDeployment) error { return errors.New("denied") }
 			},
 		},
@@ -93,7 +93,7 @@ func TestAttestationRejectsTampering(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a, q, _ := attestationFixture(t, Ed25519)
-			b := ClientBinding{Nonce: a.Nonce}
+			b := ModelClientBinding{Nonce: a.Nonce}
 			o := VerificationOptions{}
 			tt.mutate(&a, &q, &b, &o)
 			o.QuoteVerifier = fixedQuote(q)
@@ -105,7 +105,7 @@ func TestAttestationRejectsTampering(t *testing.T) {
 func TestModelAttestationSuccess(t *testing.T) {
 	a, q, _ := attestationFixture(t, Ed25519)
 	o := VerificationOptions{QuoteVerifier: fixedQuote(q)}
-	v, e := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, o)
+	v, e := VerifyModelAttestation(context.Background(), a, ModelClientBinding{Nonce: a.Nonce}, o)
 	if e != nil || v.GPUEvidence != "not_provided" || v.Report == nil || v.Report.IntelQuote != a.IntelQuote {
 		t.Fatalf("%+v %v", v, e)
 	}
@@ -125,7 +125,7 @@ func TestTCBPolicy(t *testing.T) {
 			a, q, _ := attestationFixture(t, Ed25519)
 			q.TCBStatus = tc.status
 			options := VerificationOptions{QuoteVerifier: fixedQuote(q)}
-			binding := ClientBinding{Nonce: a.Nonce}
+			binding := ModelClientBinding{Nonce: a.Nonce}
 
 			_, err := VerifyModelAttestation(context.Background(), a, binding, options)
 			if tc.acceptedByDefault {

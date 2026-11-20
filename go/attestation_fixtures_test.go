@@ -20,7 +20,7 @@ func requireCode(t *testing.T, e error, code string) {
 		t.Fatalf("want %s, got %v", code, e)
 	}
 }
-func attestationFixture(t *testing.T, algo SigningAlgo) (Attestation, QuoteVerificationResult, ed25519.PrivateKey) {
+func attestationFixture(t *testing.T, algo SigningAlgo) (ModelAttestation, QuoteVerificationResult, ed25519.PrivateKey) {
 	t.Helper()
 	pub, priv, e := ed25519.GenerateKey(rand.Reader)
 	if e != nil {
@@ -44,12 +44,14 @@ func attestationFixture(t *testing.T, algo SigningAlgo) (Attestation, QuoteVerif
 	digest := sha512.Sum384([]byte("measured event"))
 	rtmr := sha512.Sum384(append(make([]byte, 48), digest[:]...))
 	events, _ := json.Marshal([]map[string]any{{"imr": 3, "digest": hex.EncodeToString(digest[:])}})
-	a := Attestation{
-		Nonce:            n,
-		Signer:           SigningIdentity{algo, signer},
-		IntelQuote:       "ff",
-		EventLog:         events,
-		AppCompose:       compose,
+	a := ModelAttestation{
+		AttestationEvidence: AttestationEvidence{
+			Nonce:      n,
+			Signer:     SigningIdentity{algo, signer},
+			IntelQuote: "ff",
+			EventLog:   events,
+			AppCompose: compose,
+		},
 		SigningPublicKey: hex.EncodeToString(pub),
 	}
 	return a, QuoteVerificationResult{TCBStatus: "UpToDate", ReportData: report, MRConfigID: mr, RTMR3: rtmr[:]}, priv

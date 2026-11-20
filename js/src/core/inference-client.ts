@@ -6,14 +6,7 @@ import {
   CompletionResponseIdSchema,
 } from '../schemas';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
-import type { CompletionSignature } from '../types/chat';
-import type {
-  FetchCompletionSignatureParams,
-  FetchedGatewayAttestation,
-  FetchedModelAttestations,
-  FetchModelAttestationsParams,
-  ModelMetadata,
-} from '../types/cloud-api';
+import type { FetchedGatewayAttestation } from '../types/cloud-api';
 import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
 import type {
   AttestationVerificationResult,
@@ -25,7 +18,6 @@ import type {
   VerifiedCompletionResult,
 } from '../types/inference-client';
 import type { OhttpAttestation } from '../types/ohttp';
-import type { Awaitable } from '../types/shared';
 import type { InferenceSystemOne } from '../types/systemone';
 import type {
   ModelAttestationVerifiers,
@@ -76,24 +68,9 @@ export type InferenceSession = {
   readonly attestationResult: AttestationVerificationResult;
   /** Verified NEAR key for routing and encryption. Absent in Gateway-only sessions. */
   readonly modelKey?: E2eeModelKey;
-  readonly transport: InferenceSessionTransport;
-  readonly verifyResponse: (
-    params: VerifySessionResponseParams,
-  ) => Awaitable<VerifiedCompletionResult>;
-};
-
-export type VerifySessionResponseParams = {
-  readonly id: string;
-  readonly requestBody: Uint8Array;
-  readonly responseBody: Uint8Array;
-  readonly signature: CompletionSignature;
-};
-
-export type InferenceSessionTransport = {
   readonly fetch: typeof globalThis.fetch;
-  readonly fetchCompletionSignature: (
-    params: FetchCompletionSignatureParams,
-  ) => Promise<CompletionSignature>;
+  readonly selectedModelAttestation?: VerifiedModelAttestation;
+  readonly attestationClient: CloudApiClient;
 };
 
 type CachedVerification = {
@@ -151,7 +128,7 @@ export type VerifyCapturedResponseParams = {
 
 type SendCompletionRequestParams = {
   readonly request: Request;
-  readonly transport: InferenceSessionTransport;
+  readonly fetch: typeof globalThis.fetch;
 };
 
 type ClearPendingVerificationParams = {
@@ -170,21 +147,9 @@ type CreateOpenAiClientParams = {
   readonly requestConfiguration: CloudApiRequestConfiguration;
 };
 
-/** Internal Gateway operations used to fetch evidence and, after verification, send inference. */
-type GatewaySessionTransport = {
-  readonly fetch: typeof globalThis.fetch;
-  readonly fetchModelMetadata: (model: string) => Promise<ModelMetadata>;
-  readonly fetchModelAttestations: (
-    params: FetchModelAttestationsParams,
-  ) => Promise<FetchedModelAttestations>;
-  readonly fetchCompletionSignature: (
-    params: FetchCompletionSignatureParams,
-  ) => Promise<CompletionSignature>;
-};
-
 type VerifyModelAttestationsParams = {
   readonly model: string;
-  readonly transport: GatewaySessionTransport;
+  readonly client: CloudApiClient;
   readonly signal: AbortSignal;
 };
 
@@ -495,7 +460,7 @@ export abstract class InferenceClientBase {
     const requestBody = captureRequestEntityBody(prepared.request);
     let response = await this.sendCompletionRequest({
       request: prepared.request,
-      transport: session.transport,
+      fetch: session.fetch,
     });
     let wire: Uint8Array[] | undefined;
     if (decryptResponse && response.ok && isServerSentEventResponse(response)) {
@@ -537,7 +502,7 @@ export abstract class InferenceClientBase {
     gatewayOnly,
   }: VerifyCapturedResponseParams): Promise<VerifiedCompletionResult> {
     const bytes = await responseBody;
-    const signature = await session.transport.fetchCompletionSignature({
+    const signature = await session.attestationClient.fetchCompletionSignature({
       completionId: id,
       signingAlgo: this.signingAlgo,
     });
@@ -552,12 +517,48 @@ export abstract class InferenceClientBase {
       });
     }
 
-    return session.verifyResponse({
-      id,
+    const { selectedModelAttestation } = session;
+    const { gateway: gatewayAttestation, models: modelAttestations } =
+      session.attestationResult;
+    if (signature.kind === 'provider_tee') {
+      if (selectedModelAttestation === undefined) {
+        throw new VerificationError({
+          code: 'signature.kind_mismatch',
+          details: { expected: 'gateway', actual: signature.kind },
+        });
+      }
+      verifyModelResponse({
+        requestBody,
+        responseBody: bytes,
+        signature,
+        attestation: selectedModelAttestation,
+      });
+      const matchingAttestations = findModelAttestationsForSignature({
+        attestations: modelAttestations,
+        signature,
+      });
+      return {
+        id,
+        completionId: id,
+        signatureKind: 'provider_tee',
+        signature,
+        attestations: matchingAttestations,
+        attestation: selectedModelAttestation,
+      };
+    }
+    verifyGatewayResponse({
       requestBody,
       responseBody: bytes,
       signature,
+      attestation: gatewayAttestation,
     });
+    return {
+      id,
+      completionId: id,
+      signatureKind: 'gateway',
+      signature,
+      attestation: gatewayAttestation,
+    };
   }
 
   protected startVerification(model: string): Promise<InferenceSession> {
@@ -703,10 +704,10 @@ export abstract class InferenceClientBase {
 
   private async sendCompletionRequest({
     request,
-    transport,
+    fetch,
   }: SendCompletionRequestParams): Promise<Response> {
     try {
-      return await transport.fetch(request);
+      return await fetch(request);
     } catch (cause) {
       if (isVerificationError(cause) || isApiError(cause)) {
         throw cause;
@@ -818,19 +819,18 @@ export abstract class InferenceClientBase {
       // Evidence requests share the transport and cancellation owned by preflight.
       fetch: (input, init) => {
         signal.throwIfAborted();
-        return gatewayFetch(new Request(input, { ...init, signal }));
+        const request = new Request(input, init);
+        return gatewayFetch(
+          new Request(request, {
+            signal: AbortSignal.any([signal, request.signal]),
+          }),
+        );
       },
     });
-    const transport: GatewaySessionTransport = {
-      fetch: gatewayFetch,
-      fetchModelMetadata: (model) => client.fetchModelMetadata(model),
-      fetchModelAttestations: (params) => client.fetchModelAttestations(params),
-      fetchCompletionSignature: (params) =>
-        client.fetchCompletionSignature(params),
-    };
+
     const modelAttestations = await this.verifyModelAttestations({
       model,
-      transport,
+      client,
       signal,
     }).catch((cause: unknown) => {
       // Cancel outstanding evidence I/O before a retry can start a new preflight.
@@ -863,61 +863,19 @@ export abstract class InferenceClientBase {
         verifiedAt: Date.now(),
       },
       modelKey,
-      transport: {
-        ...transport,
-        fetch: completionFetch,
-      },
-      verifyResponse: ({ id, requestBody, responseBody, signature }) => {
-        if (signature.kind === 'provider_tee') {
-          if (selectedModelAttestation === undefined) {
-            throw new VerificationError({
-              code: 'signature.kind_mismatch',
-              details: { expected: 'gateway', actual: signature.kind },
-            });
-          }
-          verifyModelResponse({
-            requestBody,
-            responseBody,
-            signature,
-            attestation: selectedModelAttestation,
-          });
-          const matchingAttestations = findModelAttestationsForSignature({
-            attestations: modelAttestations,
-            signature,
-          });
-          return {
-            id,
-            completionId: id,
-            signatureKind: 'provider_tee',
-            signature,
-            attestations: matchingAttestations,
-            attestation: selectedModelAttestation,
-          };
-        }
-        verifyGatewayResponse({
-          requestBody,
-          responseBody,
-          signature,
-          attestation: gatewayAttestation,
-        });
-        return {
-          id,
-          completionId: id,
-          signatureKind: 'gateway',
-          signature,
-          attestation: gatewayAttestation,
-        };
-      },
+      fetch: completionFetch,
+      selectedModelAttestation,
+      attestationClient: client,
     };
   }
 
   /** NEAR deployments use model evidence; Incognito sessions verify only the Gateway. */
   private async verifyModelAttestations({
     model,
-    transport,
+    client,
     signal,
   }: VerifyModelAttestationsParams): Promise<VerifiedModelAttestation[]> {
-    const metadata = await transport.fetchModelMetadata(model);
+    const metadata = await client.fetchModelMetadata(model);
     signal.throwIfAborted();
     if (metadata.providerType !== 'vllm' || !metadata.attestationSupported) {
       const { deploymentPolicy, modelVerification } = this.options;
@@ -934,7 +892,7 @@ export abstract class InferenceClientBase {
       return [];
     }
 
-    const fetchedModelAttestations = await transport.fetchModelAttestations({
+    const fetchedModelAttestations = await client.fetchModelAttestations({
       model,
       signingAlgo: this.signingAlgo,
     });

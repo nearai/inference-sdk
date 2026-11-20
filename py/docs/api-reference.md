@@ -266,6 +266,9 @@ when finished.
 
 Fetches model metadata, attestations, and response signatures.
 
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
+
 `fetch_model_metadata(model)` requests the URL-encoded model ID and returns
 `ModelMetadata(provider_type: str, attestation_supported: bool)`, mapped from the
 Gateway's `metadata.providerType` and `metadata.attestationSupported` fields.

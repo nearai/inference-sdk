@@ -21,23 +21,13 @@ import (
 )
 
 // AttestationClient fetches evidence without making any claim that it is verified.
-type AttestationClient struct{ *apiClient }
-
-type apiClient struct {
+type AttestationClient struct {
 	base    *url.URL
 	headers http.Header
 	http    *http.Client
 }
 
 func NewAttestationClient(o ClientOptions) (*AttestationClient, error) {
-	api, err := newAPIClient(o)
-	if err != nil {
-		return nil, err
-	}
-	return &AttestationClient{api}, nil
-}
-
-func newAPIClient(o ClientOptions) (*apiClient, error) {
 	if o.BaseURL == "" {
 		o.BaseURL = DefaultBaseURL
 	}
@@ -59,10 +49,10 @@ func newAPIClient(o ClientOptions) (*apiClient, error) {
 		*client = *o.HTTPClient
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &apiClient{base: u, headers: h, http: client}, nil
+	return &AttestationClient{base: u, headers: h, http: client}, nil
 }
 
-func (c *apiClient) endpoint(path string, q url.Values) string {
+func (c *AttestationClient) endpoint(path string, q url.Values) string {
 	u := *c.base
 	unescaped, _ := url.PathUnescape(path)
 	u.Path += unescaped
@@ -124,7 +114,9 @@ func readResponseBounded(res *http.Response, limit int64) ([]byte, error) {
 	return readBounded(res.Body, limit)
 }
 
-func (c *apiClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
+func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	req, e := http.NewRequestWithContext(ctx, "GET", c.endpoint(path, q), nil)
 	if e != nil {
 		return nil, "", e
@@ -246,7 +238,11 @@ func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o Fetch
 	if !o.DisableTLSBinding && fp == "" {
 		return out, failure("binding.spki_fingerprint_required", nil)
 	}
-	return FetchedGatewayAttestation{a, ClientBinding{n, fp}, raw.OHTTP}, nil
+	return FetchedGatewayAttestation{
+		Attestation:      GatewayAttestation{AttestationEvidence: a.AttestationEvidence, SPKIFingerprint: a.SPKIFingerprint},
+		ClientBinding:    GatewayClientBinding{Nonce: n, SPKIFingerprint: fp},
+		OHTTPAttestation: raw.OHTTP,
+	}, nil
 }
 
 func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error) {
@@ -285,15 +281,20 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		if !sameHex(a.Nonce, n) || a.SPKIFingerprint != "" {
 			return out, failure("api.invalid_response", nil)
 		}
-		out.Attestations = append(out.Attestations, a)
+		out.Attestations = append(out.Attestations, ModelAttestation{
+			AttestationEvidence:       a.AttestationEvidence,
+			ComposeManagerAttestation: a.ComposeManagerAttestation,
+			SigningPublicKey:          a.SigningPublicKey,
+			NvidiaPayload:             a.NvidiaPayload,
+		})
 	}
 
-	out.ClientBinding = ClientBinding{Nonce: n}
+	out.ClientBinding = ModelClientBinding{Nonce: n}
 
 	return out, nil
 }
 
-func (c *apiClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
+func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
 	var sig CompletionSignature
 	if id == "" || id == "." || id == ".." {
 		return sig, failure("api.invalid_input", nil)
@@ -342,8 +343,16 @@ func (c *apiClient) FetchCompletionSignature(ctx context.Context, id string, alg
 	return sig, nil
 }
 
-func decodeAttestation(data []byte) (Attestation, error) {
-	var a Attestation
+type decodedAttestation struct {
+	AttestationEvidence
+	ComposeManagerAttestation *ComposeManagerAttestation
+	SigningPublicKey          string
+	NvidiaPayload             *string
+	SPKIFingerprint           string
+}
+
+func decodeAttestation(data []byte) (decodedAttestation, error) {
+	var a decodedAttestation
 	var raw struct {
 		Nonce    string          `json:"request_nonce"`
 		Algo     SigningAlgo     `json:"signing_algo"`
@@ -375,18 +384,21 @@ func decodeAttestation(data []byte) (Attestation, error) {
 	if e := json.Unmarshal(raw.Info.TCB, &tcb); e != nil || tcb.Compose == nil || raw.Quote == "" || len(raw.EventLog) == 0 {
 		return a, failure("api.invalid_response", e)
 	}
-	a = Attestation{
+	a = decodedAttestation{
+		AttestationEvidence: AttestationEvidence{
+			Nonce:             raw.Nonce,
+			Signer:            SigningIdentity{raw.Algo, raw.Address},
+			IntelQuote:        raw.Quote,
+			EventLog:          raw.EventLog,
+			AppCompose:        *tcb.Compose,
+			ReportedQuoteData: raw.Report,
+		},
 		ComposeManagerAttestation: raw.Manager,
-		Nonce:                     raw.Nonce,
-		Signer:                    SigningIdentity{raw.Algo, raw.Address},
-		IntelQuote:                raw.Quote,
-		EventLog:                  raw.EventLog,
-		AppCompose:                *tcb.Compose,
-		ReportedQuoteData:         raw.Report,
 		SigningPublicKey:          raw.PublicKey,
 		NvidiaPayload:             raw.GPU,
 		SPKIFingerprint:           raw.FP,
 	}
+
 	if _, e := hexSize(a.Nonce, 32); e != nil {
 		return a, failure("api.invalid_response", e)
 	}
