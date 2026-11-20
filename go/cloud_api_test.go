@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -65,6 +66,33 @@ func TestHTTPStatusRetryabilityDependsOnResource(t *testing.T) {
 				t.Fatalf("signature status %d: %v", status, err)
 			}
 		})
+	}
+}
+
+func TestSignatureNotFoundDoesNotRetryOrChangeCredentials(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path != "/v1/signature/missing" || r.Header.Get("Authorization") != "Bearer test" {
+			t.Error("signature lookup changed its path or credentials")
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client, err := NewAttestationClient(ClientOptions{BaseURL: server.URL + "/v1", APIKey: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = client.FetchCompletionSignature(context.Background(), "missing", Ed25519)
+
+	requireCode(t, err, "api.http_status")
+	if !err.(*Error).Retryable || err.(*Error).Details["status"] != http.StatusNotFound {
+		t.Fatal("signature 404 must retain the existing retryable HTTP error")
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("signature lookup sent %d requests, want 1", requests.Load())
 	}
 }
 

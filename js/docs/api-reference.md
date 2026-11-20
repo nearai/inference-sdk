@@ -262,6 +262,15 @@ Gateway attestation report requests omit `Authorization`, `api-key`,
 and `x-api-key`. Model reports fetched through the Gateway, model metadata,
 inference, and response signatures use the configured credentials.
 
+**Gateway signature requests require a bearer credential.** Configure
+`apiKey`, or supply an `Authorization` header through `headers.Authorization`
+while leaving the API key option unset. A configured API key takes precedence
+over the supplied header. Optional constructor credentials allow unauthenticated
+attestation report retrieval; signature lookup requires authentication. For
+workspace-scoped lookup, use credentials from the completion's organization and
+workspace, and configure a separate attestation client explicitly. See
+[signature lookup access](./verification-guide.md#signature-lookup-access-and-retries).
+
 ### Methods
 
 | Method | Params | Resolves to | Behavior |

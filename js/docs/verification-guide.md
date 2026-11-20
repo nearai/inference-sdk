@@ -677,6 +677,11 @@ bodies. For browser access, allow `Accept` and `X-GitHub-Api-Version` and expose
 
 ### Verify the response signature
 
+Configure the `client` below with `apiKey` or, with that option unset,
+`headers.Authorization` for Gateway signature lookup.
+For workspace-scoped lookup, use a key from the completion's organization and
+workspace, even when inference uses a separate client.
+
 `signature.kind` identifies the signer and therefore the proof made by a
 successful verification:
 
@@ -728,6 +733,36 @@ console.log(plaintext);
 For model-signed `verifyResponse()` results (`signatureKind === 'provider_tee'`),
 read the matching model reports from `result.attestations`. For `'gateway'`,
 read the Gateway report from `result.attestation`.
+
+## Signature lookup access and retries
+
+**A bearer credential is required for the Gateway signature API.** Configure
+`apiKey`, or supply an `Authorization` header through `headers.Authorization`
+while leaving the API key option unset. Both paths authenticate signature
+requests; a configured API key takes precedence over the supplied header. The
+constructor permits omitted credentials for unauthenticated attestation report
+retrieval, but Gateway signature lookup requires authentication.
+
+For workspace-scoped lookup, use a key from the organization and workspace that
+created the completion. A different key in that same workspace is sufficient.
+When inference and attestation use separate clients, configure credentials on
+both; the attestation client does not inherit the inference client's key. The
+SDK cannot infer a workspace from a completion ID or check key ownership locally.
+
+A signature HTTP 404 can mean that the signature is not ready, the ID is unknown,
+the caller is outside its owning workspace, or the stored signature has no owner
+metadata. These cases are indistinguishable to the SDK. The existing retryable
+classification permits another attempt; it does not promise eventual success.
+Signature fetch methods make one request per call and do not switch credentials
+or automatically retry a 404. Bound application retries by both attempt count
+and a deadline, and retry only when a signature is reasonably expected to become
+available. Do not repeat inference to recover a missing receipt.
+
+Use the original workspace's credentials for later retrieval, including after
+switching workspaces. Historical signatures without recorded ownership may remain
+unavailable regardless of retries. Already retrieved signatures can still be
+verified locally with the corresponding bytes and attestation evidence. These
+Gateway access rules do not change the Direct endpoint's authentication policy.
 
 ## Handle errors
 
