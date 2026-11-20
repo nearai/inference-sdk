@@ -82,12 +82,12 @@ async def _verify_model_cpu(
         nonce=nonce,
         signer=verified_quote.signer,
     )
-    return await verify_model_deployment(
+    return await _verify_model_deployment(
         attestation, verified_quote, nonce, policy, verifiers
     )
 
 
-async def verify_model_deployment(
+async def _verify_model_deployment(
     attestation: ModelAttestation,
     verified_quote: VerifiedDstackQuote,
     nonce: str,

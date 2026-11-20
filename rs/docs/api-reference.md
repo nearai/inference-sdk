@@ -137,6 +137,9 @@ The Gateway's report and signature endpoints have different defaults.
 
 ## Gateway client
 
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
+
 `AttestationClient` owns the optional API key, Gateway base URL, and its internal
 reqwest clients. Create it once and reuse it for all signature and evidence
 requests in a flow. The client only fetches evidence; it does not send

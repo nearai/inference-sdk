@@ -167,7 +167,7 @@ async function captureSystemOne({
   });
   let response: Response;
   try {
-    response = await session.transport.fetch(httpRequest);
+    response = await session.fetch(httpRequest);
   } catch (cause) {
     request.signal.throwIfAborted();
     if (isApiError(cause) || isVerificationError(cause)) throw cause;

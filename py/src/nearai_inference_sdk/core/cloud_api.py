@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -123,13 +124,17 @@ class AttestationClient:
         *,
         headers: Mapping[str, str],
         _capture_peer_spki: bool = False,
+        allow_redirects: bool = False,
     ) -> FetchResponse:
         if self._http_client is None or _capture_peer_spki:
             return await default_fetch(
-                url, headers=headers, _capture_peer_spki=_capture_peer_spki
+                url,
+                headers=headers,
+                _capture_peer_spki=_capture_peer_spki,
+                allow_redirects=allow_redirects,
             )
         response = await self._http_client.get(
-            url, headers=headers, follow_redirects=False
+            url, headers=headers, follow_redirects=allow_redirects
         )
         return FetchResponse(
             status=response.status_code, body=response.content, headers=response.headers
@@ -156,11 +161,13 @@ class AttestationClient:
             # Bootstrap must observe the peer on its own evidence connection;
             # a caller-supplied ordinary API transport cannot replace it.
             fetch = default_fetch if resource == 'gateway_attestation' else self._fetch
-            response = await fetch(
-                url,
-                headers=headers,
-                _capture_peer_spki=capture_peer_spki,
-            )
+            async with asyncio.timeout(120):
+                response = await fetch(
+                    url,
+                    headers=headers,
+                    _capture_peer_spki=capture_peer_spki,
+                    allow_redirects=False,
+                )
         except VerificationError:
             # A pinned internal transport has already started TLS verification.
             raise

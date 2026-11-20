@@ -30,7 +30,11 @@ pub const NO_ALIASING_HEADER: &str = "x-no-aliasing";
 /// Model reports through the Gateway use configured authentication.
 #[derive(Clone)]
 pub struct AttestationClient {
-    api: ApiClient,
+    headers: HeaderMap,
+    api_key: Option<String>,
+    base_url: Url,
+    client: Client,
+    tls_client: Client,
 }
 
 impl AttestationClient {
@@ -38,9 +42,7 @@ impl AttestationClient {
     pub fn new(api_key: impl Into<Option<String>>) -> Self {
         let base_url = parse_base_url(DEFAULT_NEAR_AI_CLOUD_BASE_URL)
             .expect("the SDK's default Cloud API URL is valid");
-        Self {
-            api: ApiClient::new(api_key.into(), base_url),
-        }
+        Self::from_parts(api_key.into(), base_url)
     }
 
     /// Create a client for an absolute Cloud API base URL, such as a staging
@@ -50,14 +52,12 @@ impl AttestationClient {
         base_url: &str,
     ) -> Result<Self, ApiError> {
         let base_url = parse_base_url(base_url)?;
-        Ok(Self {
-            api: ApiClient::new(api_key.into(), base_url),
-        })
+        Ok(Self::from_parts(api_key.into(), base_url))
     }
 
     /// Use additional headers; Gateway reports omit authentication headers.
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
-        self.api = self.api.with_headers(headers);
+        self.headers = headers;
         self
     }
 
@@ -65,7 +65,8 @@ impl AttestationClient {
     /// [`crate::create_pinned_tls_client`] to pin requests to verified TLS fingerprints.
     /// Custom clients need `tls_info(true)` when fetching TLS-bound attestations.
     pub fn with_http_client(mut self, client: Client) -> Self {
-        self.api = self.api.with_http_client(client);
+        self.client = client.clone();
+        self.tls_client = client;
         self
     }
 
@@ -76,13 +77,12 @@ impl AttestationClient {
         if model.is_empty() || matches!(model, "." | "..") {
             return Err(invalid_api_input("model", "invalid_model", None, None));
         }
-        let mut url = self.api.endpoint("model/")?;
+        let mut url = self.endpoint("model/")?;
         url.path_segments_mut()
             .map_err(|_| invalid_base_url())?
             .pop_if_empty()
             .push(model);
         let response = self
-            .api
             .get(url, ApiResource::ModelMetadata, None, false, true)
             .await?;
         #[derive(Deserialize)]
@@ -110,7 +110,7 @@ impl AttestationClient {
             validate_input_signing_address(signing_address, signing_algo, "signing_address")?;
         }
         let nonce = generate_nonce();
-        let mut url = self.api.endpoint("attestation/report")?;
+        let mut url = self.endpoint("attestation/report")?;
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("model", model);
@@ -125,7 +125,6 @@ impl AttestationClient {
             }
         }
         let cloud_response = self
-            .api
             .get(
                 url,
                 ApiResource::ModelAttestation,
@@ -169,7 +168,7 @@ impl AttestationClient {
         options: GatewayAttestationFetchOptions,
     ) -> Result<FetchedGatewayAttestation, ApiError> {
         let nonce = generate_nonce();
-        let mut url = self.api.endpoint("attestation/report")?;
+        let mut url = self.endpoint("attestation/report")?;
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("nonce", &nonce);
@@ -186,7 +185,6 @@ impl AttestationClient {
             );
         }
         let cloud_response = self
-            .api
             .get(
                 url,
                 ApiResource::GatewayAttestation,
@@ -248,7 +246,7 @@ impl AttestationClient {
         completion_id: &str,
         signing_algo: Option<SigningAlgo>,
     ) -> Result<CompletionSignature, ApiError> {
-        let mut url = self.api.endpoint("signature")?;
+        let mut url = self.endpoint("signature")?;
         url.path_segments_mut()
             .map_err(|_| invalid_base_url())?
             .push(completion_id);
@@ -257,7 +255,6 @@ impl AttestationClient {
                 .append_pair("signing_algo", &signing_algo.to_string());
         }
         let cloud_response = self
-            .api
             .get(url, ApiResource::CompletionSignature, None, false, true)
             .await?;
         decode_completion_signature(&cloud_response.body)
@@ -302,17 +299,8 @@ pub fn find_model_attestation_for_signature<'a>(
     Ok(find_model_attestations_for_signature(attestations, signature)?[0])
 }
 
-#[derive(Clone)]
-pub(crate) struct ApiClient {
-    headers: HeaderMap,
-    api_key: Option<String>,
-    base_url: Url,
-    client: Client,
-    tls_client: Client,
-}
-
-impl ApiClient {
-    pub(crate) fn new(api_key: Option<String>, base_url: Url) -> Self {
+impl AttestationClient {
+    fn from_parts(api_key: Option<String>, base_url: Url) -> Self {
         Self {
             api_key,
             base_url,
@@ -331,22 +319,11 @@ impl ApiClient {
         }
     }
 
-    pub(crate) fn with_headers(mut self, headers: HeaderMap) -> Self {
-        self.headers = headers;
-        self
-    }
-
-    pub(crate) fn with_http_client(mut self, client: Client) -> Self {
-        self.client = client.clone();
-        self.tls_client = client;
-        self
-    }
-
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
+    fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
         self.base_url.join(path).map_err(|_| invalid_base_url())
     }
 
-    pub(crate) async fn get(
+    async fn get(
         &self,
         url: Url,
         resource: ApiResource,
@@ -362,6 +339,7 @@ impl ApiClient {
         };
         let response = http_client
             .get(url)
+            .timeout(std::time::Duration::from_secs(120))
             .headers(headers)
             .send()
             .await
@@ -388,7 +366,7 @@ impl ApiClient {
 }
 
 fn build_api_headers(
-    client: &ApiClient,
+    client: &AttestationClient,
     authenticate: bool,
     extra_header: Option<(&str, &str)>,
 ) -> Result<HeaderMap, ApiError> {
@@ -920,7 +898,7 @@ mod tests {
         let client = AttestationClient::new("test-key".to_owned());
 
         assert_eq!(
-            client.api.endpoint("attestation/report").unwrap().as_str(),
+            client.endpoint("attestation/report").unwrap().as_str(),
             "https://cloud-api.near.ai/v1/attestation/report",
         );
     }

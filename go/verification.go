@@ -114,31 +114,36 @@ func verifyResponse(sig CompletionSignature, kind, text string, signer SigningId
 
 // VerifyGatewayAttestation verifies quote, nonce, deployment measurements and
 // (when advertised) the observed TLS peer's SHA-256 SPKI fingerprint.
-func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error) {
-	v, err := verifyAttestation(ctx, a, b, o, true)
+func VerifyGatewayAttestation(ctx context.Context, a GatewayAttestation, b GatewayClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error) {
+	evidence, err := verifyAttestation(ctx, a.AttestationEvidence, b.Nonce, a.SPKIFingerprint, o)
 	if err != nil {
 		return VerifiedGatewayAttestation{}, err
 	}
 	if a.SPKIFingerprint != "" && !sameHex(a.SPKIFingerprint, b.SPKIFingerprint) {
 		return VerifiedGatewayAttestation{}, failure("binding.spki_fingerprint_mismatch", nil)
 	}
-	return VerifiedGatewayAttestation{VerifiedAttestationEvidence: v.VerifiedAttestationEvidence, Report: &a, SPKIFingerprint: a.SPKIFingerprint}, nil
-}
-
-func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedModelAttestation, error) {
-	if a.SPKIFingerprint != "" {
-		return VerifiedModelAttestation{}, failure("input.invalid", nil)
+	evidence.DeploymentProvenance, err = runDeploymentVerifier(ctx, evidence.Deployment, o.DeploymentVerifier)
+	if err != nil {
+		return VerifiedGatewayAttestation{}, err
 	}
-	return verifyAttestation(ctx, a, b, o, false)
+	return VerifiedGatewayAttestation{VerifiedAttestationEvidence: evidence, Report: &a, SPKIFingerprint: a.SPKIFingerprint}, ctx.Err()
 }
 
-func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, gateway bool) (VerifiedModelAttestation, error) {
-	var v VerifiedModelAttestation
-	nonce, e := hexSize(b.Nonce, 32)
+func VerifyModelAttestation(ctx context.Context, a ModelAttestation, b ModelClientBinding, o VerificationOptions) (VerifiedModelAttestation, error) {
+	evidence, err := verifyAttestation(ctx, a.AttestationEvidence, b.Nonce, "", o)
+	if err != nil {
+		return VerifiedModelAttestation{}, err
+	}
+	return verifyModelEvidence(ctx, a, b, o, VerifiedModelAttestation{VerifiedAttestationEvidence: evidence, Report: &a})
+}
+
+func verifyAttestation(ctx context.Context, a AttestationEvidence, expectedNonce, fingerprint string, o VerificationOptions) (VerifiedAttestationEvidence, error) {
+	var v VerifiedAttestationEvidence
+	nonce, e := hexSize(expectedNonce, 32)
 	if e != nil {
 		return v, e
 	}
-	if !sameHex(a.Nonce, b.Nonce) {
+	if !sameHex(a.Nonce, expectedNonce) {
 		return v, failure("binding.nonce_mismatch", nil)
 	}
 	signer, e := signingBytes(a.Signer)
@@ -160,8 +165,8 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	}
 	binding := make([]byte, 32)
 	copy(binding, signer)
-	if a.SPKIFingerprint != "" {
-		fp, e := hexSize(a.SPKIFingerprint, 32)
+	if fingerprint != "" {
+		fp, e := hexSize(fingerprint, 32)
 		if e != nil {
 			return v, e
 		}
@@ -175,28 +180,16 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	if e != nil {
 		return v, e
 	}
-	v = VerifiedModelAttestation{
-		Report: &a,
-		VerifiedAttestationEvidence: VerifiedAttestationEvidence{
-			Signer:               a.Signer,
-			TCBStatus:            q.TCBStatus,
-			AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
-			Deployment:           deployment,
-			DeploymentProvenance: "not_checked",
-		},
-	}
-
-	if !gateway {
-		return verifyModelEvidence(ctx, a, b, o, v, signer)
-	}
-	v.DeploymentProvenance, e = runDeploymentVerifier(ctx, v.Deployment, o.DeploymentVerifier)
-	if e != nil {
-		return VerifiedModelAttestation{}, e
-	}
-	return v, ctx.Err()
+	return VerifiedAttestationEvidence{
+		Signer:               a.Signer,
+		TCBStatus:            q.TCBStatus,
+		AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
+		Deployment:           deployment,
+		DeploymentProvenance: "not_checked",
+	}, ctx.Err()
 }
 
-func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, v VerifiedModelAttestation, signer []byte) (VerifiedModelAttestation, error) {
+func verifyModelEvidence(ctx context.Context, a ModelAttestation, b ModelClientBinding, o VerificationOptions, v VerifiedModelAttestation) (VerifiedModelAttestation, error) {
 	if a.ComposeManagerAttestation != nil {
 		manager, err := verifyComposeManager(ctx, *a.ComposeManagerAttestation, a.AppCompose, b.Nonce, o)
 		if err != nil {
@@ -231,6 +224,10 @@ func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o 
 		v.GPUEvidence = "verified"
 	}
 	if a.SigningPublicKey != "" {
+		signer, err := signingBytes(a.Signer)
+		if err != nil {
+			return VerifiedModelAttestation{}, err
+		}
 		pub, e := unhex(a.SigningPublicKey)
 		if e != nil {
 			return VerifiedModelAttestation{}, e
@@ -255,7 +252,7 @@ func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o 
 	return v, ctx.Err()
 }
 
-func verifyDstackDeployment(a Attestation, q QuoteVerificationResult) (MeasuredDeployment, error) {
+func verifyDstackDeployment(a AttestationEvidence, q QuoteVerificationResult) (MeasuredDeployment, error) {
 	compose := sha256.Sum256([]byte(a.AppCompose))
 	if q.MRConfigID[0] != 1 || !bytes.Equal(q.MRConfigID[1:33], compose[:]) {
 		return MeasuredDeployment{}, failure("measurement.app_compose_mrconfigid_mismatch", nil)

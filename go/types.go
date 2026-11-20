@@ -23,19 +23,26 @@ type SigningIdentity struct {
 	SigningAlgo    SigningAlgo `json:"signingAlgo"`
 	SigningAddress string      `json:"signingAddress"`
 }
-type Attestation struct {
+type AttestationEvidence struct {
+	Nonce             string
+	Signer            SigningIdentity
+	IntelQuote        string
+	EventLog          json.RawMessage
+	AppCompose        string
+	ReportedQuoteData string
+}
+type GatewayAttestation struct {
+	AttestationEvidence
+	SPKIFingerprint string
+}
+type ModelAttestation struct {
+	AttestationEvidence
 	ComposeManagerAttestation *ComposeManagerAttestation
-	Nonce                     string
-	Signer                    SigningIdentity
-	IntelQuote                string
-	EventLog                  json.RawMessage
-	AppCompose                string
-	ReportedQuoteData         string
 	SigningPublicKey          string
 	NvidiaPayload             *string
-	SPKIFingerprint           string
 }
-type ClientBinding struct{ Nonce, SPKIFingerprint string }
+type GatewayClientBinding struct{ Nonce, SPKIFingerprint string }
+type ModelClientBinding struct{ Nonce string }
 type OHTTPAttestation struct {
 	SigningAlgo SigningAlgo `json:"signing_algo"`
 	SigningKey  string      `json:"signing_key"`
@@ -43,13 +50,13 @@ type OHTTPAttestation struct {
 	Signature   string      `json:"signature"`
 }
 type FetchedGatewayAttestation struct {
-	Attestation      Attestation
-	ClientBinding    ClientBinding
+	Attestation      GatewayAttestation
+	ClientBinding    GatewayClientBinding
 	OHTTPAttestation *OHTTPAttestation
 }
 type FetchedModelAttestations struct {
-	Attestations  []Attestation
-	ClientBinding ClientBinding
+	Attestations  []ModelAttestation
+	ClientBinding ModelClientBinding
 }
 type ModelMetadata struct {
 	ModelID              string `json:"model_id"`
@@ -101,14 +108,14 @@ type VerifiedAttestationEvidence struct {
 
 type VerifiedModelAttestation struct {
 	VerifiedAttestationEvidence
-	Report           *Attestation
+	Report           *ModelAttestation
 	GPUEvidence      string
 	SigningPublicKey string
 }
 
 type VerifiedGatewayAttestation struct {
 	VerifiedAttestationEvidence
-	Report          *Attestation
+	Report          *GatewayAttestation
 	SPKIFingerprint string
 }
 

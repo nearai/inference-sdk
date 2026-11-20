@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from aiohttp import web
 
 from nearai_inference_sdk import (
     ApiError,
@@ -48,7 +49,7 @@ def cloud_client() -> AttestationClient:
 async def test_gateway_bootstrap_keeps_its_own_peer_capturing_transport(
     monkeypatch, include_spki_fingerprint
 ):
-    async def bootstrap_fetch(url, *, headers, _capture_peer_spki):
+    async def bootstrap_fetch(url, *, headers, _capture_peer_spki, allow_redirects):
         assert _capture_peer_spki is include_spki_fingerprint
         assert 'authorization' not in headers
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
@@ -1083,3 +1084,27 @@ async def test_non_utf8_success_response_is_an_api_error(
 
     assert raised.value.failure.code == 'api.invalid_json'
     assert raised.value.failure.details == {'resource': 'model_attestation'}
+
+
+async def test_default_client_does_not_follow_evidence_redirects():
+    paths = []
+
+    async def redirect(request):
+        paths.append(request.path)
+        raise web.HTTPFound('/redirected')
+
+    app = web.Application()
+    app.router.add_get('/{path:.*}', redirect)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    try:
+        site = web.TCPSite(runner, '127.0.0.1', 0)
+        await site.start()
+        host, port = runner.addresses[0]
+        client = AttestationClient(base_url=f'http://{host}:{port}')
+        with pytest.raises(ApiError) as rejected:
+            await client.fetch_model_metadata('model')
+        assert rejected.value.failure.code == 'api.http_status'
+        assert paths == ['/model/model']
+    finally:
+        await runner.cleanup()

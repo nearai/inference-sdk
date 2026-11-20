@@ -387,7 +387,11 @@ export class CloudApiClient {
       requestHeaders: extraHeaders,
       authenticate,
     });
-    return new Request(url, { headers });
+    return new Request(url, {
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(120_000),
+    });
   }
 }
 

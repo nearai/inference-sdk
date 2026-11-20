@@ -303,6 +303,9 @@ signature verification.
 
 ## AttestationClient
 
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
+
 The client does not send completion requests or retain completion bytes. It
 creates a fresh nonce for every attestation fetch.
 

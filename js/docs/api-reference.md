@@ -299,6 +299,9 @@ contains the decoded inner status, headers, and body.
 
 ## `AttestationClient`
 
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
+
 Fetches model metadata, attestations, and response signatures.
 
 For manual verification in Node, pass the verified Gateway `spkiFingerprint` to
