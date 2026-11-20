@@ -801,7 +801,10 @@ async def test_fetch_completion_signature_maps_unavailable_response_to_api_error
 async def test_fetch_completion_signature_marks_not_found_as_retryable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def not_found(_: str, __: Mapping[str, str]) -> FetchResponse:
+    requests: list[tuple[str, Mapping[str, str]]] = []
+
+    async def not_found(url: str, headers: Mapping[str, str]) -> FetchResponse:
+        requests.append((url, headers))
         return FetchResponse(status=404, body=b'not found')
 
     use_fake_cloud_api_fetch(monkeypatch, not_found)
@@ -815,6 +818,9 @@ async def test_fetch_completion_signature_marks_not_found_as_retryable(
         'status': 404,
     }
     assert not_found_error.value.retryable is True
+    assert len(requests) == 1
+    assert urlsplit(requests[0][0]).path == '/v1/signature/completion-id'
+    assert requests[0][1]['authorization'] == 'Bearer test'
 
 
 @pytest.mark.parametrize(

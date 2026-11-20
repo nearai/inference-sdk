@@ -3,16 +3,16 @@ module example.com/nearai-inference-example
 go 1.27.0
 
 require (
-	github.com/anthropics/anthropic-sdk-go/v2 v2.5.0
+	github.com/anthropics/anthropic-sdk-go/v2 v2.9.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/nearai/inference-sdk/go v0.0.0
-	github.com/openai/openai-go/v3 v3.92.0
+	github.com/openai/openai-go/v3 v3.98.0
 	golang.org/x/crypto v0.58.0
 )
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
-	github.com/andybalholm/brotli v1.2.7 // indirect
+	github.com/andybalholm/brotli v1.3.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect

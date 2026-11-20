@@ -1129,8 +1129,12 @@ describe('AttestationClient', () => {
       });
     });
 
-    test('marks a 404 completion-signature response as retryable', async () => {
-      const api = cloudFor(() => new Response('', { status: 404 }));
+    test('returns a retryable signature 404 without retrying or changing credentials', async () => {
+      const requests: Request[] = [];
+      const api = cloudFor((request) => {
+        requests.push(request);
+        return new Response('', { status: 404 });
+      });
 
       await expect(
         api.client.fetchCompletionSignature({
@@ -1143,6 +1147,10 @@ describe('AttestationClient', () => {
           retryable: true,
         },
       });
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.headers.get('authorization')).toBe('Bearer test');
+      expect(new URL(requests[0]!.url).pathname).toBe('/v1/signature/chat-1');
     });
   });
 
