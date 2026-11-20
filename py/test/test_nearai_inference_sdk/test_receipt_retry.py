@@ -37,3 +37,21 @@ async def test_receipt_retry_is_bounded_and_rejects_crypto_failures(monkeypatch)
         await helpers.retry_receipt(lookup)
     assert lookup.await_count == 1
     wait.assert_not_awaited()
+
+
+async def test_persistent_signature_404_stops_and_preserves_error(monkeypatch):
+    wait = AsyncMock()
+    monkeypatch.setattr(helpers.asyncio, 'sleep', wait)
+    missing = api_failure(
+        'api.http_status',
+        details={'resource': 'completion_signature', 'status': 404},
+        retryable=True,
+    )
+    lookup = AsyncMock(side_effect=missing)
+
+    with pytest.raises(type(missing)) as caught:
+        await helpers.retry_receipt(lookup)
+
+    assert caught.value is missing
+    assert lookup.await_count == 5
+    assert [call.args[0] for call in wait.await_args_list] == [0.5, 1, 2, 4]

@@ -320,7 +320,10 @@ impl AttestationClient {
     /// A valid 2xx unavailable envelope becomes
     /// [`ApiError::CompletionSignatureUnavailable`]. A 404 remains a
     /// retryable HTTP error because the completion may not have reached its
-    /// terminal state yet.
+    /// terminal state yet. It can also mean an inaccessible or unowned historical
+    /// signature. Workspace-scoped lookup requires credentials from the completion's
+    /// organization and workspace. This method does not retry or change credentials;
+    /// bound application retries.
     pub async fn fetch_completion_signature(
         &self,
         completion_id: &str,

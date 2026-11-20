@@ -396,6 +396,15 @@ verification failures raise `VerificationError`.
 
 ### Completion-signature methods
 
+**Gateway signature requests require a bearer credential.** Configure
+`api_key`, or supply an `Authorization` header through `headers["Authorization"]`
+while leaving the API key option unset. A configured API key takes precedence
+over the supplied header. Optional constructor credentials allow unauthenticated
+attestation report retrieval; signature lookup requires authentication. For
+workspace-scoped lookup, use credentials from the completion's organization and
+workspace, and configure a separate attestation client explicitly. See
+[signature lookup access](./verification-guide.md#signature-lookup-access-and-retries).
+
 | API | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `fetch_completion_signature` | `completion_id` | `str` | Yes | Completion ID returned by the API response. Fetch after the completion reaches a terminal state. |
