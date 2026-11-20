@@ -607,8 +607,7 @@ available. Do not repeat inference to recover a missing receipt.
 Use the original workspace's credentials for later retrieval, including after
 switching workspaces. Historical signatures without recorded ownership may remain
 unavailable regardless of retries. Already retrieved signatures can still be
-verified locally with the corresponding bytes and attestation evidence. These
-Gateway access rules do not change the Direct endpoint's authentication policy.
+verified locally with the corresponding bytes and attestation evidence.
 
 ## Handle errors
 
