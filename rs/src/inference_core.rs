@@ -1,4 +1,4 @@
-//! Shared inference transport, capture, cache, and receipt lifecycle.
+//! Gateway inference transport, capture, cache, and receipt lifecycle.
 use crate::*;
 use crate::{
     e2ee::{decode_request, decrypt_response, invalid_response, remove_e2ee_headers},
@@ -56,7 +56,7 @@ pub trait DeploymentPolicy: Send + Sync {
     ) -> Result<(), VerificationError>;
 }
 pub(crate) struct Session {
-    pub gateway: Option<VerifiedGatewayAttestation>,
+    pub gateway: VerifiedGatewayAttestation,
     pub models: Vec<VerifiedModelAttestation>,
     pub selected: Option<VerifiedModelAttestation>,
     pub verified_at: u64,
@@ -103,11 +103,11 @@ struct Inner {
     state: Mutex<State>,
 }
 #[derive(Clone)]
-pub(crate) struct InferenceCore {
+pub struct InferenceClient {
     inner: Arc<Inner>,
 }
-impl InferenceCore {
-    pub(crate) fn new(mut options: InferenceClientOptions) -> Result<Self, InferenceError> {
+impl InferenceClient {
+    pub fn with_options(mut options: InferenceClientOptions) -> Result<Self, InferenceError> {
         options.base_url = crate::cloud_api::parse_base_url(&options.base_url)?.to_string();
         if options.ohttp && options.signing_algo != SigningAlgo::Ed25519 {
             return Err(input("signing_algo", "OHTTP requires Ed25519").into());
@@ -127,11 +127,11 @@ impl InferenceCore {
             }),
         })
     }
-    pub(crate) fn base_url(&self) -> &str {
+    pub fn base_url(&self) -> &str {
         &self.inner.options.base_url
     }
     /// Clear captured response verification records.
-    pub(crate) async fn clear_response_cache(&self) {
+    pub async fn clear_response_cache(&self) {
         let mut state = self.inner.state.lock().await;
         state.response_generation = state.response_generation.wrapping_add(1);
         state.responses.clear();
@@ -185,7 +185,7 @@ impl InferenceCore {
         result
     }
     /// OpenAI-compatible JSON Chat request. Use `send` for a byte-stream response.
-    pub(crate) async fn chat_completions(&self, body: Value) -> Result<Value, InferenceError> {
+    pub async fn chat_completions(&self, body: Value) -> Result<Value, InferenceError> {
         if body.get("stream") == Some(&Value::Bool(true)) {
             return Err(input("stream", "use send for streaming Chat").into());
         }
@@ -200,7 +200,7 @@ impl InferenceCore {
         }
         response.json().await
     }
-    pub(crate) fn chat_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+    pub fn chat_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
         self.json_request("chat/completions", body)
     }
     pub(crate) fn json_request(
@@ -220,7 +220,7 @@ impl InferenceCore {
     }
     /// Transport adapter for Chat, Responses, and Messages requests. Authentication
     /// is always supplied by this client, including evidence and signature calls.
-    pub(crate) async fn send(
+    pub async fn send(
         &self,
         mut request: reqwest::Request,
     ) -> Result<InferenceResponse, InferenceError> {
@@ -461,7 +461,7 @@ impl InferenceCore {
         );
         Ok(())
     }
-    pub(crate) async fn verify_receipt(
+    pub async fn verify_response(
         &self,
         id: &str,
     ) -> Result<VerifiedCompletionResult, InferenceError> {
@@ -507,12 +507,7 @@ impl InferenceCore {
                         let mut attestations = Vec::new();
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {
-                                let gateway = session.gateway.as_ref().ok_or(
-                                    VerificationError::SignatureKindMismatch {
-                                        expected: CompletionSignatureKind::ProviderTee,
-                                        actual: signature.kind,
-                                    },
-                                )?;
+                                let gateway = &session.gateway;
                                 verify_gateway_response(&request, &response, &signature, gateway)?;
                                 VerifiedCompletionAttestation::Gateway(gateway.clone())
                             }
@@ -637,10 +632,13 @@ mod cache_tests {
     use super::*;
     use std::future::{poll_fn, Future};
 
-    async fn captured_client() -> (InferenceCore, Arc<Record>) {
-        let client = InferenceCore::new(InferenceClientOptions::default()).unwrap();
+    async fn captured_client() -> (InferenceClient, Arc<Record>) {
+        let client = InferenceClient::with_options(InferenceClientOptions::default()).unwrap();
         let session = Arc::new(Session {
-            gateway: None,
+            gateway: match verified_result().attestation {
+                VerifiedCompletionAttestation::Gateway(gateway) => gateway,
+                _ => unreachable!(),
+            },
             models: Vec::new(),
             selected: None,
             verified_at: 0,
@@ -735,7 +733,7 @@ mod cache_tests {
                 refs
             };
             for _ in 0..2 {
-                let actual = client.verify_receipt("receipt").await;
+                let actual = client.verify_response("receipt").await;
                 match &result {
                     Ok(expected) => assert_eq!(actual.unwrap().id, expected.id),
                     Err(expected) => assert_eq!(actual.unwrap_err().code(), expected.code()),
@@ -751,7 +749,7 @@ mod cache_tests {
             ));
             client.clear_response_cache().await;
             assert_eq!(
-                client.verify_receipt("receipt").await.unwrap_err().code(),
+                client.verify_response("receipt").await.unwrap_err().code(),
                 "api.completion_not_found"
             );
         }
@@ -785,7 +783,7 @@ mod cache_tests {
                 state.verification = Some(verification.clone());
                 refs
             };
-            let mut caller = Box::pin(client.verify_receipt("receipt"));
+            let mut caller = Box::pin(client.verify_response("receipt"));
             // Dropping a pending caller models timeout/select cancellation at the yield point.
             let _ = poll_fn(|cx| std::task::Poll::Ready(caller.as_mut().poll(cx))).await;
             drop(caller);
@@ -799,7 +797,7 @@ mod cache_tests {
             );
             assert!(response.upgrade().is_none());
             assert!(session.upgrade().is_none());
-            let cached = client.verify_receipt("receipt").await;
+            let cached = client.verify_response("receipt").await;
             match result {
                 Ok(expected) => assert_eq!(cached.unwrap().id, expected.id),
                 Err(expected) => assert_eq!(cached.unwrap_err().code(), expected.code()),
@@ -834,7 +832,7 @@ mod cache_tests {
                 );
                 refs
             };
-            client.verify_receipt("receipt").await.unwrap_err();
+            client.verify_response("receipt").await.unwrap_err();
             assert!(record
                 .state
                 .lock()
@@ -852,7 +850,7 @@ mod cache_tests {
                     .boxed()
                     .shared(),
             );
-            client.verify_receipt("receipt").await.unwrap();
+            client.verify_response("receipt").await.unwrap();
             assert!(request.upgrade().is_none());
             assert!(response.upgrade().is_none());
         }

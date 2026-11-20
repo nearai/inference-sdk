@@ -19,7 +19,6 @@ from pydantic import ValidationError
 
 from ..schemas import CompletionResponseIdSchema
 from ..types.attestation_common import SigningAlgo
-from ..types.chat import CompletionSignature
 from ..types.cloud_api import (
     DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     NO_ALIASING_HEADER,
@@ -85,9 +84,7 @@ class _VerifiedSession:
     model_key: E2eeModelKey | None
     http_client: httpx.AsyncClient
     attestation_client: AttestationClient
-    verify_response: Callable[
-        [str, bytes, bytes, CompletionSignature], VerifiedCompletionResult
-    ]
+    selected_model_attestation: VerifiedModelAttestation | None
     attestation_result: AttestationVerificationResult
 
 
@@ -185,7 +182,7 @@ class InferenceClient:
             str,
             asyncio.Task[_VerifiedSession],
         ] = {}
-        self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
+        self._http_clients: dict[str | None, httpx.AsyncClient] = {}
         self._responses: dict[str, _ResponseRecord] = {}
         self._response_generation = 0
         self._drains: set[asyncio.Task[None]] = set()
@@ -536,8 +533,31 @@ class InferenceClient:
                     'signature.kind_mismatch',
                     {'expected': 'gateway', 'actual': signature.kind},
                 )
-            return record.session.verify_response(
-                id, record.request_body, body, signature
+            selected_model_attestation = record.session.selected_model_attestation
+            gateway_attestation = record.session.attestation_result.gateway
+            model_attestations = record.session.attestation_result.models
+            if signature.kind == 'provider_tee':
+                if selected_model_attestation is None:
+                    raise verification_failure(
+                        'signature.kind_mismatch',
+                        {'expected': 'gateway', 'actual': signature.kind},
+                    )
+                verify_model_response(
+                    record.request_body, body, signature, selected_model_attestation
+                )
+                return VerifiedModelCompletionResult(
+                    id=id,
+                    signature=signature,
+                    attestations=find_model_attestations_for_signature(
+                        model_attestations, signature
+                    ),
+                    attestation=selected_model_attestation,
+                )
+            verify_gateway_response(
+                record.request_body, body, signature, gateway_attestation
+            )
+            return VerifiedGatewayCompletionResult(
+                id=id, signature=signature, attestation=gateway_attestation
             )
         except ApiError as error:
             # Reset shared retry state even when every waiter has been cancelled.
@@ -631,41 +651,11 @@ class InferenceClient:
         elif model_attestations:
             raise verification_failure('e2ee.model_public_key_required')
 
-        def verify_response(
-            id: str,
-            request_body: bytes,
-            response_body: bytes,
-            signature: CompletionSignature,
-        ) -> VerifiedCompletionResult:
-            if signature.kind == 'provider_tee':
-                if selected_model_attestation is None:
-                    raise verification_failure(
-                        'signature.kind_mismatch',
-                        {'expected': 'gateway', 'actual': signature.kind},
-                    )
-                verify_model_response(
-                    request_body, response_body, signature, selected_model_attestation
-                )
-                return VerifiedModelCompletionResult(
-                    id=id,
-                    signature=signature,
-                    attestations=find_model_attestations_for_signature(
-                        model_attestations, signature
-                    ),
-                    attestation=selected_model_attestation,
-                )
-            verify_gateway_response(
-                request_body, response_body, signature, gateway_attestation
-            )
-            return VerifiedGatewayCompletionResult(
-                id=id, signature=signature, attestation=gateway_attestation
-            )
-
         return _VerifiedSession(
             model_key=model_key,
             http_client=completion_client,
             attestation_client=attestation_client,
-            verify_response=verify_response,
+            selected_model_attestation=selected_model_attestation,
             attestation_result=AttestationVerificationResult(
                 gateway=gateway_attestation,
                 models=model_attestations,

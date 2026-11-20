@@ -85,7 +85,7 @@ func TestManagerEvidenceAuthenticatesEverySignedField(t *testing.T) {
 		}
 		return q, nil
 	}}
-	verified, e := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, o)
+	verified, e := VerifyModelAttestation(context.Background(), a, ModelClientBinding{Nonce: a.Nonce}, o)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -93,11 +93,11 @@ func TestManagerEvidenceAuthenticatesEverySignedField(t *testing.T) {
 		t.Fatal("manager evidence missing")
 	}
 	a.ComposeManagerAttestation.Actions[0]["tag"] = "altered"
-	_, e = VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, o)
+	_, e = VerifyModelAttestation(context.Background(), a, ModelClientBinding{Nonce: a.Nonce}, o)
 	requireCode(t, e, "binding.compose_manager_actions_mismatch")
 	a.ComposeManagerAttestation.Actions = loadManagerFixture(t).Actions
 	a.ComposeManagerAttestation.Nonce = strings.Repeat("aa", 32)
-	_, e = VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, o)
+	_, e = VerifyModelAttestation(context.Background(), a, ModelClientBinding{Nonce: a.Nonce}, o)
 	requireCode(t, e, "binding.nonce_mismatch")
 	// HTML and Unicode separators must remain exact UTF-8 in the canonical log.
 	raw := []byte("[{\"action\":\"x\",\"timestamp\":\"<>&\u2028\u2029\",\"__proto__\":\"signed\",\"10\":\"ten\",\"2\":\"two\"}]")

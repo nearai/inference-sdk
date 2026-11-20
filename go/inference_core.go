@@ -15,11 +15,11 @@ import (
 )
 
 type session struct {
-	gateway    *VerifiedGatewayAttestation
+	gateway    VerifiedGatewayAttestation
 	models     []VerifiedModelAttestation
 	verifiedAt time.Time
 	selected   *VerifiedModelAttestation
-	api        *apiClient
+	api        *AttestationClient
 	transport  http.RoundTripper
 	expires    time.Time
 }
@@ -37,22 +37,14 @@ type responseRecord struct {
 }
 type pendingResponse struct {
 	done  chan struct{}
-	value verifiedResponse
+	value VerifiedCompletionResult
 	err   error
 }
 
-// Cached response verification result.
-type verifiedResponse struct {
-	id           string
-	signature    CompletionSignature
-	attestation  VerifiedCompletionAttestation
-	attestations []VerifiedModelAttestation
-}
-
-// inferenceCore owns shared transport, capture, cache, and cancellation.
-type inferenceCore struct {
+// InferenceClient verifies Gateway inference and manages response verification.
+type InferenceClient struct {
 	options                     InferenceOptions
-	api                         *apiClient
+	api                         *AttestationClient
 	ctx                         context.Context
 	cancel                      context.CancelFunc
 	mu                          sync.Mutex
@@ -66,14 +58,14 @@ type inferenceCore struct {
 	attestationTTL, responseTTL time.Duration
 }
 
-func newInferenceCore(o InferenceOptions) (*inferenceCore, error) {
+func NewInferenceClient(o InferenceOptions) (*InferenceClient, error) {
 	if o.SigningAlgo == "" {
 		o.SigningAlgo = Ed25519
 	}
 	if (o.SigningAlgo != Ed25519 && o.SigningAlgo != ECDSA) || (o.OHTTP && o.SigningAlgo != Ed25519) {
 		return nil, failure("api.invalid_input", nil)
 	}
-	a, e := newAPIClient(o.ClientOptions)
+	a, e := NewAttestationClient(o.ClientOptions)
 	if e != nil {
 		return nil, e
 	}
@@ -88,7 +80,7 @@ func newInferenceCore(o InferenceOptions) (*inferenceCore, error) {
 		return nil, failure("api.invalid_input", nil)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &inferenceCore{
+	c := &InferenceClient{
 		options:        o,
 		api:            a,
 		ctx:            ctx,
@@ -120,7 +112,7 @@ func newInferenceCore(o InferenceOptions) (*inferenceCore, error) {
 	return c, nil
 }
 
-func (c *inferenceCore) prune(now time.Time) {
+func (c *InferenceClient) prune(now time.Time) {
 	for k, v := range c.sessions {
 		if !now.Before(v.expires) {
 			delete(c.sessions, k)
@@ -133,23 +125,23 @@ func (c *inferenceCore) prune(now time.Time) {
 	}
 }
 
-func (c *inferenceCore) BaseURL() string { return c.api.base.String() }
+func (c *InferenceClient) BaseURL() string { return c.api.base.String() }
 
 // ClearResponseCache clears captured response verification records.
-func (c *inferenceCore) ClearResponseCache() {
+func (c *InferenceClient) ClearResponseCache() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.responseGeneration++
 	clear(c.responses)
 }
 
-func (c *inferenceCore) responseCacheGeneration() uint64 {
+func (c *InferenceClient) responseCacheGeneration() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.responseGeneration
 }
 
-func (c *inferenceCore) Close() error {
+func (c *InferenceClient) Close() error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -168,7 +160,7 @@ func (c *inferenceCore) Close() error {
 	return nil
 }
 
-func (c *inferenceCore) getSession(ctx context.Context, model string) (*session, error) {
+func (c *InferenceClient) getSession(ctx context.Context, model string) (*session, error) {
 	key := model
 
 	if model == "" {
@@ -193,7 +185,7 @@ func (c *inferenceCore) getSession(ctx context.Context, model string) (*session,
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
+			ctx, cancel := context.WithCancel(c.ctx)
 			defer cancel()
 			s, e := c.createSession(ctx, model)
 			c.mu.Lock()
@@ -219,7 +211,7 @@ func (c *inferenceCore) getSession(ctx context.Context, model string) (*session,
 	}
 }
 
-func (c *inferenceCore) createSession(ctx context.Context, model string) (*session, error) {
+func (c *InferenceClient) createSession(ctx context.Context, model string) (*session, error) {
 	o := c.options
 	s := &session{api: c.api}
 	transport := c.api.http.Transport
@@ -239,7 +231,7 @@ func (c *inferenceCore) createSession(ctx context.Context, model string) (*sessi
 			return o.DeploymentPolicy(ctx, model, d)
 		}
 	}
-	fetchedModelAttestations, err := gatewayPreflight(ctx, c, s, model, o.GatewayVerification, o.DisableTLSBinding)
+	fetchedModelAttestations, err := c.gatewayPreflight(ctx, s, model)
 	if err != nil {
 		return nil, err
 	}
@@ -262,12 +254,12 @@ func (c *inferenceCore) createSession(ctx context.Context, model string) (*sessi
 	return s, nil
 }
 
-func (c *inferenceCore) pinSession(s *session, fingerprints []string) error {
+func (c *InferenceClient) pinSession(s *session, fingerprint string) error {
 	base, ok := s.transport.(*http.Transport)
 	if !ok {
 		return detail("api.invalid_input", "reason", "TLS pinning requires *http.Transport")
 	}
-	key := strings.Join(fingerprints, ",")
+	key := fingerprint
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -276,7 +268,7 @@ func (c *inferenceCore) pinSession(s *session, fingerprints []string) error {
 	pinned := c.transports[key]
 	if pinned == nil {
 		var err error
-		pinned, err = NewPinnedTransport(base, fingerprints...)
+		pinned, err = NewPinnedTransport(base, fingerprint)
 		if err != nil {
 			return err
 		}
@@ -298,7 +290,7 @@ func (c *inferenceCore) pinSession(s *session, fingerprints []string) error {
 	return nil
 }
 
-func (c *inferenceCore) configureOHTTP(s *session, attestation *OHTTPAttestation, signer SigningIdentity) error {
+func (c *InferenceClient) configureOHTTP(s *session, attestation *OHTTPAttestation, signer SigningIdentity) error {
 	if !c.options.OHTTP {
 		return nil
 	}
@@ -322,7 +314,7 @@ func headerNames(h http.Header) []string {
 }
 
 // RoundTrip accepts supported inference POSTs on the configured endpoint.
-func (c *inferenceCore) RoundTrip(req *http.Request) (*http.Response, error) {
+func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	generation := c.responseCacheGeneration()
 	expected := *c.api.base
 	expected.Path += "chat/completions"
@@ -554,7 +546,7 @@ type cancelBody struct {
 
 func (b *cancelBody) Close() error { e := b.ReadCloser.Close(); b.once.Do(b.cancel); return e }
 
-func (c *inferenceCore) register(id string, request, response []byte, s *session, gatewayOnly bool, generation uint64) error {
+func (c *InferenceClient) register(id string, request, response []byte, s *session, gatewayOnly bool, generation uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -580,12 +572,12 @@ func (c *inferenceCore) register(id string, request, response []byte, s *session
 	return nil
 }
 
-func (c *inferenceCore) verifyResponse(ctx context.Context, id string) (verifiedResponse, error) {
+func (c *InferenceClient) verifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
 	c.mu.Lock()
 	record := c.responses[id]
 	if record == nil || !time.Now().Before(record.expires) {
 		c.mu.Unlock()
-		return verifiedResponse{}, failure("api.completion_not_found", nil)
+		return VerifiedCompletionResult{}, failure("api.completion_not_found", nil)
 	}
 	p := record.verifying
 	if p == nil {
@@ -594,7 +586,7 @@ func (c *inferenceCore) verifyResponse(ctx context.Context, id string) (verified
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
+			ctx, cancel := context.WithCancel(c.ctx)
 			defer cancel()
 			value, e := c.verifyRecord(ctx, id, record)
 			c.mu.Lock()
@@ -616,61 +608,58 @@ func (c *inferenceCore) verifyResponse(ctx context.Context, id string) (verified
 	c.mu.Unlock()
 	select {
 	case <-ctx.Done():
-		return verifiedResponse{}, ctx.Err()
+		return VerifiedCompletionResult{}, ctx.Err()
 	case <-c.ctx.Done():
-		return verifiedResponse{}, failure("api.client_closed", nil)
+		return VerifiedCompletionResult{}, failure("api.client_closed", nil)
 	case <-p.done:
 		result := p.value
-		result.attestations = slices.Clone(result.attestations)
+		result.Attestations = slices.Clone(result.Attestations)
 		return result, p.err
 	}
 }
 
-func (c *inferenceCore) verifyRecord(ctx context.Context, id string, r *responseRecord) (verifiedResponse, error) {
+func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *responseRecord) (VerifiedCompletionResult, error) {
 	sig, e := r.session.api.FetchCompletionSignature(ctx, id, c.options.SigningAlgo)
 	if e != nil {
-		return verifiedResponse{}, e
+		return VerifiedCompletionResult{}, e
 	}
 	if sig.Signer.SigningAlgo != c.options.SigningAlgo {
-		return verifiedResponse{}, failure("signature.signer_mismatch", nil)
+		return VerifiedCompletionResult{}, failure("signature.signer_mismatch", nil)
 	}
 	if r.gatewayOnly && sig.Kind != "gateway" {
-		return verifiedResponse{}, failure("signature.kind_mismatch", nil)
+		return VerifiedCompletionResult{}, failure("signature.kind_mismatch", nil)
 	}
 
 	var attestation VerifiedCompletionAttestation
 	var attestations []VerifiedModelAttestation
 	if sig.Kind == "gateway" {
-		if r.session.gateway == nil {
-			return verifiedResponse{}, failure("signature.kind_mismatch", nil)
+		if err := VerifyGatewayResponse(r.request, r.response, sig, r.session.gateway); err != nil {
+			return VerifiedCompletionResult{}, err
 		}
-		if err := VerifyGatewayResponse(r.request, r.response, sig, *r.session.gateway); err != nil {
-			return verifiedResponse{}, err
-		}
-		attestation = r.session.gateway
+		attestation = &r.session.gateway
 	} else {
 		if r.session.selected == nil {
-			return verifiedResponse{}, failure("signature.kind_mismatch", nil)
+			return VerifiedCompletionResult{}, failure("signature.kind_mismatch", nil)
 		}
 		if err := VerifyModelResponse(r.request, r.response, sig, *r.session.selected); err != nil {
-			return verifiedResponse{}, err
+			return VerifiedCompletionResult{}, err
 		}
 		attestations, e = FindModelAttestationsForSignature(r.session.models, sig)
 		if e != nil {
-			return verifiedResponse{}, e
+			return VerifiedCompletionResult{}, e
 		}
 		attestation = r.session.selected
 	}
-	return verifiedResponse{id: id, signature: sig, attestation: attestation, attestations: attestations}, nil
+	return VerifiedCompletionResult{ID: id, CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: attestation, Attestations: attestations}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.
 // For streaming or typed requests, use HTTPClient with the official Go OpenAI SDK.
-func (c *inferenceCore) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error) {
+func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error) {
 	return c.createJSON(ctx, "chat/completions", request)
 }
 
-func (c *inferenceCore) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
+func (c *InferenceClient) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
 	body, e := json.Marshal(request)
 	if e != nil {
 		return nil, e

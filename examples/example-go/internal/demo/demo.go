@@ -36,10 +36,7 @@ func ConfigurationForModel(defaultModel string) (Config, error) {
 		OHTTP:   os.Getenv("NEARAI_OHTTP") == "true",
 	}
 	if c.Key == "" {
-		c.Key = os.Getenv("NEAR_AI_API_KEY")
-	}
-	if c.Key == "" {
-		return c, fmt.Errorf("set NEARAI_API_KEY (or NEAR_AI_API_KEY)")
+		return c, fmt.Errorf("set NEARAI_API_KEY")
 	}
 	if c.BaseURL == "" {
 		c.BaseURL = nearai.DefaultBaseURL

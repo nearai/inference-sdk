@@ -16,11 +16,11 @@ func TestGatewayAttestationTLSBinding(t *testing.T) {
 	key, _ := unhex(a.Signer.SigningAddress)
 	binding := sha256.Sum256(append(key, fp...))
 	copy(q.ReportData, binding[:])
-	a.SPKIFingerprint = hex.EncodeToString(fp)
+	gateway := GatewayAttestation{a.AttestationEvidence, hex.EncodeToString(fp)}
 	o.QuoteVerifier = fixedQuote(q)
-	if _, e := VerifyGatewayAttestation(context.Background(), a, ClientBinding{a.Nonce, a.SPKIFingerprint}, o); e != nil {
+	if _, e := VerifyGatewayAttestation(context.Background(), gateway, GatewayClientBinding{a.Nonce, gateway.SPKIFingerprint}, o); e != nil {
 		t.Fatal(e)
 	}
-	_, e := VerifyGatewayAttestation(context.Background(), a, ClientBinding{a.Nonce, strings.Repeat("22", 32)}, o)
+	_, e := VerifyGatewayAttestation(context.Background(), gateway, GatewayClientBinding{a.Nonce, strings.Repeat("22", 32)}, o)
 	requireCode(t, e, "binding.spki_fingerprint_mismatch")
 }

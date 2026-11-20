@@ -113,7 +113,10 @@ method while the response remains cached.
 
 ## Evidence retrieval
 
-Fetching reports does not verify them. Keep the returned `ClientBinding` with
+Metadata, evidence, and signature requests have a two-minute timeout. Default
+transports do not follow redirects.
+
+Fetching reports does not verify them. Keep the returned client binding with
 its reports and pass both to the verification functions.
 
 ```go
@@ -136,8 +139,8 @@ supported.
 ## Standalone verification
 
 ```go
-func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error)
-func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedModelAttestation, error)
+func VerifyGatewayAttestation(ctx context.Context, a GatewayAttestation, b GatewayClientBinding, o VerificationOptions) (VerifiedGatewayAttestation, error)
+func VerifyModelAttestation(ctx context.Context, a ModelAttestation, b ModelClientBinding, o VerificationOptions) (VerifiedModelAttestation, error)
 
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedModelAttestation) error
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedGatewayAttestation) error
@@ -222,7 +225,7 @@ repository names to policies and verifies every selected service image.
 ## Public data types
 
 These structures describe options, fetched evidence, verified results, and
-verification callbacks. A fetched `Attestation` is untrusted until verified.
+verification callbacks. Fetched Gateway and model reports are untrusted until verified.
 `VerifiedAttestationEvidence.Deployment` contains measured app-compose text and runtime
 hashes; applications decide whether those measurements are acceptable.
 
@@ -242,18 +245,26 @@ type SigningIdentity struct {
 	SigningAddress string      `json:"signingAddress"`
 }
 
-type Attestation struct {
+type AttestationEvidence struct {
+	Nonce             string
+	Signer            SigningIdentity
+	IntelQuote        string
+	EventLog          json.RawMessage
+	AppCompose        string
+	ReportedQuoteData string
+}
+type GatewayAttestation struct {
+	AttestationEvidence
+	SPKIFingerprint string
+}
+type ModelAttestation struct {
+	AttestationEvidence
 	ComposeManagerAttestation *ComposeManagerAttestation
-	Nonce                     string
-	Signer                    SigningIdentity
-	IntelQuote                string
-	EventLog                  json.RawMessage
-	AppCompose                string
-	ReportedQuoteData         string
 	SigningPublicKey          string
 	NvidiaPayload             *string
-	SPKIFingerprint           string
 }
+type GatewayClientBinding struct{ Nonce, SPKIFingerprint string }
+type ModelClientBinding struct{ Nonce string }
 
 type ComposeManagerAction map[string]any
 
@@ -273,8 +284,6 @@ type VerifiedComposeManagerAttestation struct {
 	RuntimeMeasurements RuntimeMeasurements
 }
 
-type ClientBinding struct{ Nonce, SPKIFingerprint string }
-
 type OHTTPAttestation struct {
 	SigningAlgo SigningAlgo `json:"signing_algo"`
 	SigningKey  string      `json:"signing_key"`
@@ -283,14 +292,14 @@ type OHTTPAttestation struct {
 }
 
 type FetchedGatewayAttestation struct {
-	Attestation      Attestation
-	ClientBinding    ClientBinding
+	Attestation      GatewayAttestation
+	ClientBinding    GatewayClientBinding
 	OHTTPAttestation *OHTTPAttestation
 }
 
 type FetchedModelAttestations struct {
-	Attestations       []Attestation
-	ClientBinding      ClientBinding
+	Attestations       []ModelAttestation
+	ClientBinding      ModelClientBinding
 }
 
 type ModelMetadata struct {
@@ -346,14 +355,14 @@ type VerifiedAttestationEvidence struct {
 
 type VerifiedModelAttestation struct {
 	VerifiedAttestationEvidence
-	Report           *Attestation
+	Report           *ModelAttestation
 	GPUEvidence      string
 	SigningPublicKey string
 }
 
 type VerifiedGatewayAttestation struct {
 	VerifiedAttestationEvidence
-	Report          *Attestation
+	Report          *GatewayAttestation
 	SPKIFingerprint string
 }
 
@@ -570,7 +579,7 @@ checked before and after it, not during its network operation.
 
 ### Compose Manager deployment provenance
 
-`Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
+`ModelAttestation.ComposeManagerAttestation` holds optional raw manager evidence.
 When present in a model report, verification checks its quote/TCB, nonce, canonical
 action hash, event log, and binding to the model's measured app-compose. The
 callback receives `MeasuredDeployment.ComposeManager`, including authenticated
