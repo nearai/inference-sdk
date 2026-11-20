@@ -45,6 +45,32 @@ test('an unavailable receipt stops after five lookups', async () => {
   assert.deepEqual(waits, [500, 1000, 2000, 4000]);
 });
 
+test('a persistent signature 404 stops after five lookups and preserves the error', async () => {
+  let lookups = 0;
+  const waits: number[] = [];
+  const error = new ApiError({
+    code: 'api.http_status',
+    details: { resource: 'completion_signature', status: 404 },
+    retryable: true,
+  });
+
+  await assert.rejects(
+    retryReceipt(
+      async () => {
+        lookups++;
+        throw error;
+      },
+      async (ms) => {
+        waits.push(ms);
+      },
+    ),
+    (caught) => caught === error,
+  );
+
+  assert.equal(lookups, 5);
+  assert.deepEqual(waits, [500, 1000, 2000, 4000]);
+});
+
 test('verification failures are not retried', async () => {
   let lookups = 0;
   const error = new VerificationError({

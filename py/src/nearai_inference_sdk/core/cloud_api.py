@@ -101,7 +101,12 @@ class AttestationClient:
         *,
         signing_algo: SigningAlgo | None = None,
     ) -> CompletionSignature:
-        """Fetch one completion signature or raise an ``ApiError`` if unavailable."""
+        """Fetch a signature using this client's configured credentials.
+
+        Workspace-scoped lookup requires the completion's organization and workspace.
+        A retryable 404 can also mean inaccessible or unowned historical data. This
+        method does not retry or change credentials; bound application retries.
+        """
 
         query: dict[str, str] = {}
         if signing_algo is not None:

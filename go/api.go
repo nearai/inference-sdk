@@ -294,6 +294,10 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 	return out, nil
 }
 
+// FetchCompletionSignature uses the client's configured credentials. Workspace-scoped
+// lookup requires the completion's organization and workspace. A retryable 404 can
+// also mean inaccessible or unowned historical data. This method does not retry or
+// change credentials; bound application retries.
 func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
 	var sig CompletionSignature
 	if id == "" || id == "." || id == ".." {

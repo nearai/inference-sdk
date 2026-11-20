@@ -799,7 +799,9 @@ async fn client_marks_a_completion_signature_404_as_retryable() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/signature/missing"))
+        .and(header("authorization", "Bearer test-key"))
         .respond_with(ResponseTemplate::new(404))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -807,8 +809,10 @@ async fn client_marks_a_completion_signature_404_as_retryable() {
         .fetch_completion_signature("missing", None)
         .await
         .unwrap_err();
+
     assert_eq!(error.code(), "api.http_status");
     assert!(error.retryable());
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]

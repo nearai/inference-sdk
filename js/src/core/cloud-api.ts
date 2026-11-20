@@ -280,7 +280,12 @@ export class CloudApiClient {
     };
   }
 
-  /** Fetch one completion signature or throw when Cloud API does not provide one. */
+  /**
+   * Fetch one completion signature using this client's configured credentials.
+   * Workspace-scoped lookup requires the completion's organization and workspace.
+   * A retryable 404 can also mean inaccessible or unowned historical data; this
+   * method does not retry or change credentials. Bound any application retries.
+   */
   async fetchCompletionSignature({
     completionId,
     signingAlgo,

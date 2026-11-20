@@ -116,6 +116,15 @@ method while the response remains cached.
 Metadata, evidence, and signature requests have a two-minute timeout. Default
 transports do not follow redirects.
 
+**Gateway signature requests require a bearer credential.** Configure
+`ClientOptions.APIKey`, or supply an `Authorization` header through
+`ClientOptions.Headers` while leaving the API key option unset. A configured API key takes precedence
+over the supplied header. Optional constructor credentials allow unauthenticated
+attestation report retrieval; signature lookup requires authentication. For
+workspace-scoped lookup, use credentials from the completion's organization and
+workspace, and configure a separate attestation client explicitly. See
+[signature lookup access](./verification-guide.md#signature-lookup-access-and-retries).
+
 Fetching reports does not verify them. Keep the returned client binding with
 its reports and pass both to the verification functions.
 
