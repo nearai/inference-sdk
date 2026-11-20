@@ -73,8 +73,13 @@ class _CloudApiJsonResponse:
     peer_spki_fingerprint: str | None
 
 
-class _ApiClient:
-    """Shared HTTP configuration and signature retrieval for both endpoint types."""
+class AttestationClient:
+    """Fetch Gateway evidence, model reports, metadata, and signatures.
+
+    ``http_client`` supplies the transport for model reports, metadata, and
+    completion signatures.
+    Gateway evidence uses the default transport to capture its own TLS peer.
+    """
 
     def __init__(
         self,
@@ -110,7 +115,7 @@ class _ApiClient:
             ),
             'completion_signature',
         )
-        return self._decode_signature(response.json)
+        return _decode_completion_signature(response.json)
 
     async def _fetch(
         self,
@@ -182,19 +187,6 @@ class _ApiClient:
             json=json_body,
             peer_spki_fingerprint=response.peer_spki_fingerprint,
         )
-
-    @staticmethod
-    def _decode_signature(value: object) -> CompletionSignature:
-        return _decode_completion_signature(value)
-
-
-class AttestationClient(_ApiClient):
-    """Fetch Gateway evidence, model reports, metadata, and signatures.
-
-    ``http_client`` supplies the transport for model reports, metadata, and
-    completion signatures.
-    Gateway evidence uses the default transport to capture its own TLS peer.
-    """
 
     async def fetch_model_metadata(self, model: str) -> ModelMetadata:
         """Read catalog capabilities; metadata alone is not model verification."""

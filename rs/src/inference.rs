@@ -301,8 +301,8 @@ impl InferenceClient {
 pub(crate) async fn create_session(
     model: &str,
     options: InferenceClientOptions,
-    gateway_options: GatewayVerificationOptions,
 ) -> Result<Arc<Session>, InferenceError> {
+    let gateway_options = &options.gateway_verification;
     let api = AttestationClient::with_base_url(options.api_key.clone(), &options.base_url)?
         .with_headers(options.headers.clone());
     let fetched = api
@@ -323,7 +323,7 @@ pub(crate) async fn create_session(
     };
     let api = api.with_http_client(client.clone());
     let gateway = async {
-        let o = &gateway_options;
+        let o = gateway_options;
         let result = verify_gateway_attestation(
             &fetched.attestation,
             &fetched.client_binding,

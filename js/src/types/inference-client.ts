@@ -102,7 +102,7 @@ export type InferenceClientCommonOptions = {
   readonly modelVerification?: ModelVerificationOptions;
 };
 
-/** OHTTP key attestations are signed with Ed25519 on both endpoint types. */
+/** OHTTP key attestations are signed with Ed25519. */
 export type InferenceEncryptionOptions =
   | {
       /** Encapsulate Chat requests with OHTTP. Defaults to false. Independent of field-level E2EE. */
