@@ -1,6 +1,10 @@
 //! Experimental Direct endpoint inference and attestation verification.
 use crate::*;
 use crate::{
+    cloud_api::{
+        decode_completion_signature, decode_wire_response, invalid_api_input, invalid_base_url,
+        parse_base_url, require_provider_signature, ApiClient,
+    },
     errors::protocol,
     inference_core::{
         input, ordinary_client, verified_at, CoreOptions, EvidenceApi, InferenceCore,
@@ -59,7 +63,7 @@ impl VerifiedDirectCompletionResult {
 }
 #[derive(Clone)]
 pub struct DirectAttestationClient {
-    api: AttestationClient,
+    api: ApiClient,
 }
 
 pub struct DirectAttestationFetchOptions<'a> {
@@ -81,7 +85,7 @@ impl Default for DirectAttestationFetchOptions<'_> {
 impl DirectAttestationClient {
     pub fn new(base_url: &str, api_key: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
-            api: AttestationClient::with_base_url(api_key, base_url)?,
+            api: ApiClient::new(api_key, parse_base_url(base_url)?),
         })
     }
     pub fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
@@ -131,15 +135,23 @@ impl DirectAttestationClient {
         if let Some(address) = address {
             query.push(("signing_address", address.into()));
         }
-        let (value, peer_spki_fingerprint) = self
+        let mut url = self.api.endpoint("attestation/report")?;
+        url.query_pairs_mut().extend_pairs(&query);
+        let response = self
             .api
-            .fetch_value(
-                "attestation/report",
-                &query,
+            .get(
+                url,
                 ApiResource::ModelAttestation,
+                None,
                 include_spki_fingerprint,
+                false,
             )
             .await?;
+        let value = decode_wire_response(
+            &response.body,
+            ApiResource::ModelAttestation,
+            "attestation/report",
+        )?;
         let serving = decode(&value)?;
         let reports = value
             .get("all_attestations")
@@ -188,7 +200,7 @@ impl DirectAttestationClient {
             attestations,
             client_binding: DirectClientBinding {
                 nonce,
-                spki_fingerprint: peer_spki_fingerprint,
+                spki_fingerprint: response.peer_spki_fingerprint,
             },
             ohttp_attestation,
         })
@@ -198,7 +210,32 @@ impl DirectAttestationClient {
         id: &str,
         algo: Option<SigningAlgo>,
     ) -> Result<CompletionSignature, ApiError> {
-        self.api.direct_signature(id, algo).await
+        let mut url = self.api.endpoint("signature")?;
+        url.path_segments_mut()
+            .map_err(|_| invalid_base_url())?
+            .push(id);
+        if let Some(algo) = algo {
+            url.query_pairs_mut()
+                .append_pair("signing_algo", &algo.to_string());
+        }
+        let response = self
+            .api
+            .get(url, ApiResource::CompletionSignature, None, false, true)
+            .await?;
+        let mut value: serde_json::Value = decode_wire_response(
+            &response.body,
+            ApiResource::CompletionSignature,
+            "signature",
+        )?;
+        if value.get("signature").is_some() && value.get("signature_kind").is_none() {
+            value
+                .as_object_mut()
+                .ok_or_else(|| invalid_api_input("signature", "expected object", None, None))?
+                .insert("signature_kind".into(), serde_json::json!("provider_tee"));
+        }
+        let signature = decode_completion_signature(&value.to_string())?;
+        require_provider_signature(&signature)?;
+        Ok(signature)
     }
 }
 fn invalid(path: &str) -> ApiError {
