@@ -32,8 +32,7 @@ type VerifyPinnedPeerParams = {
   readonly expectedSpkiFingerprints: readonly Uint8Array[];
 };
 
-/** Internal HTTPS result shared by the Node attestation clients. */
-export type HttpsResponse = {
+type HttpsResponse = {
   readonly response: Response;
   readonly peerSpkiFingerprint?: string;
 };
@@ -98,7 +97,7 @@ export function createPinnedTlsFetch(
   };
 }
 
-export function requestHttps({
+function requestHttps({
   request,
   capturePeerSpkiFingerprint = false,
   expectedSpkiFingerprints,

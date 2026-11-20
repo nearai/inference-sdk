@@ -29,6 +29,7 @@ import os
 
 from nearai_inference_sdk import InferenceClient
 
+
 async def main() -> None:
     async with InferenceClient(
         os.environ['NEARAI_API_KEY'],
@@ -43,6 +44,7 @@ async def main() -> None:
         verified = await client.verify_response(completion.id)
         print(f'Verified {verified.signature_kind} response')
         print(completion.choices[0].message.content or '')
+
 
 if __name__ == '__main__':
     asyncio.run(main())

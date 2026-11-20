@@ -14,6 +14,7 @@ when your application needs to inspect evidence and control each step.
 ```python
 from nearai_inference_sdk import InferenceClient
 
+
 async def chat(api_key: str) -> None:
     async with InferenceClient(api_key, e2ee=True) as inference_client:
         completion = await inference_client.chat.completions.create(
@@ -270,6 +271,7 @@ actual credentials on `InferenceClient`.
 from nearai_inference_sdk import InferenceClient
 from typesafe_sdk import AsyncTypeSafeClient, Noul, RetryPolicy
 
+
 async def decide(api_key: str, model: str) -> None:
     async with InferenceClient(
         api_key,
@@ -427,6 +429,7 @@ from nearai_inference_sdk import (
 MODEL = 'z-ai/glm-5.3-flash'
 SIGNING_ALGO = 'ecdsa'
 
+
 async def verify_deployments(client: AttestationClient):
     fetched_gateway = await client.fetch_gateway_attestation(
         signing_algo=SIGNING_ALGO,
@@ -452,6 +455,7 @@ async def verify_deployments(client: AttestationClient):
             )
         )
     return verified_gateway, tuple(model_attestations)
+
 
 verified_gateway, model_attestations = await verify_deployments(client)
 ```
@@ -540,8 +544,10 @@ image_policies = {
     ),
 }
 
+
 async def check_gateway_images(deployment: MeasuredDeployment) -> None:
     await verify_deployment_image_provenance(deployment.app_compose, image_policies)
+
 
 verified_gateway = await verify_gateway_attestation(
     fetched_gateway.attestation,
@@ -600,6 +606,7 @@ model_image_policies = {
     ),
 }
 
+
 async def check_model_images(deployment: MeasuredDeployment) -> None:
     await verify_compose_manager_deployment_image_provenance(
         deployment,
@@ -610,6 +617,7 @@ async def check_model_images(deployment: MeasuredDeployment) -> None:
             workflow='.github/workflows/build.yml',
         ),
     )
+
 
 # Replace the model-verification loop inside verify_deployments with:
 model_attestations = []

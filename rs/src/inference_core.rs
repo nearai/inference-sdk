@@ -156,12 +156,9 @@ impl InferenceCore {
             } else {
                 let owned = model.to_owned();
                 let options = options.clone();
-                let verification = options.gateway_verification.clone();
-                let future = async move {
-                    crate::inference::create_session(&owned, options, verification).await
-                }
-                .boxed()
-                .shared();
+                let future = async move { crate::inference::create_session(&owned, options).await }
+                    .boxed()
+                    .shared();
                 state
                     .pending
                     .insert(cache_key.clone(), future.downgrade().expect("live future"));
@@ -670,7 +667,7 @@ mod cache_tests {
         VerifiedCompletionResult {
             id: "receipt".into(),
             signature: CompletionSignature {
-                kind: CompletionSignatureKind::ProviderTee,
+                kind: CompletionSignatureKind::Gateway,
                 signed_text: "fixture hashes".into(),
                 signature: "fixture signature".into(),
                 signer: SigningIdentity {
@@ -716,10 +713,6 @@ mod cache_tests {
         }
     }
 
-    fn receipt_id(receipt: &VerifiedCompletionResult) -> &str {
-        &receipt.id
-    }
-
     #[tokio::test]
     async fn terminal_receipts_release_bytes_and_session_but_keep_result_and_expiry() {
         for result in [
@@ -744,7 +737,7 @@ mod cache_tests {
             for _ in 0..2 {
                 let actual = client.verify_receipt("receipt").await;
                 match &result {
-                    Ok(expected) => assert_eq!(receipt_id(&actual.unwrap()), receipt_id(expected)),
+                    Ok(expected) => assert_eq!(actual.unwrap().id, expected.id),
                     Err(expected) => assert_eq!(actual.unwrap_err().code(), expected.code()),
                 }
             }
@@ -808,7 +801,7 @@ mod cache_tests {
             assert!(session.upgrade().is_none());
             let cached = client.verify_receipt("receipt").await;
             match result {
-                Ok(expected) => assert_eq!(receipt_id(&cached.unwrap()), receipt_id(&expected)),
+                Ok(expected) => assert_eq!(cached.unwrap().id, expected.id),
                 Err(expected) => assert_eq!(cached.unwrap_err().code(), expected.code()),
             }
         }
