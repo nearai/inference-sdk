@@ -4,8 +4,6 @@ Use `InferenceClient` for Chat Completions with deployment verification and opti
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
-For a model endpoint, use the experimental [Direct client](#use-a-direct-model-endpoint).
-
 `InferenceClient` first verifies Gateway evidence without authentication headers.
 On a model-session cache miss, it then uses configured authentication for model
 reports and reads model metadata from `GET /v1/model/{model}` using a URL-encoded
@@ -62,7 +60,7 @@ selecting a key for the chosen algorithm.
 ### Use OHTTP
 
 Set `ohttp: true` to encapsulate Chat requests and responses in OHTTP. Both
-`InferenceClient` and `DirectInferenceClient` support this option for ordinary
+`InferenceClient` supports this option for ordinary
 and streaming completions:
 
 ```ts
@@ -74,15 +72,15 @@ const client = new InferenceClient({
 
 OHTTP is disabled by default and requires `signingAlgo: 'ed25519'` (the default).
 The client verifies the advertised OHTTP key configuration against the attested
-Gateway signer, or the serving model signer for a direct endpoint. Missing or
+Gateway signer. Missing or
 invalid OHTTP evidence prevents the inference request from being sent. The
 authenticated configuration is cached with the deployment verification result.
 
-`e2ee` is independent and defaults to `false` for both clients.
+`e2ee` is independent and defaults to `false`.
 Through the Gateway, OHTTP protects the HTTP exchange to the Gateway, while E2EE
 encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
-encryption. With a direct endpoint, both terminate at the model service.
+encryption.
 
 Chat, Gateway Responses, and Messages can use OHTTP; metadata, attestation, and signature
 requests keep their normal HTTP paths. Your endpoint or proxy must support
@@ -119,7 +117,6 @@ const completion = await client.chat.completions.create({
 
 `verify(model)` returns Gateway evidence, every verified model report, and `verifiedAt`
 (Unix milliseconds). Incognito models return Gateway evidence and an empty `models` list.
-For a direct endpoint, `DirectInferenceClient.verify(model)` returns the model reports and TLS binding.
 
 Each verified attestation includes its original input under `report`, including
 the quote, event log, and any NVIDIA payload. The sibling fields such as
@@ -172,7 +169,7 @@ Anthropic model execution inside a TEE. Failed, incomplete, and cancelled stream
 cannot yield a verified complete response. If receipt lookup is temporarily
 unavailable, retry verification without sending inference again.
 
-Messages field-level E2EE and Direct clients are rejected before network I/O,
+Messages field-level E2EE is rejected before network I/O,
 matching the server's supported contract. Only Messages creation is supported.
 
 ```ts
@@ -212,7 +209,7 @@ still have an unavailable receipt; retry receipt lookup when appropriate without
 repeating inference. Consume the entire SSE stream before verifying its nested
 `event.response.id`; output item IDs are not receipt IDs.
 
-Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+Field-level E2EE is rejected before network I/O. OHTTP is
 supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
 as opaque data and is separate from NEAR field encryption. Only creation is
 supported; response retrieval, cancellation, deletion, and history endpoints are
@@ -558,61 +555,12 @@ Streaming uses the same ID-based verification as the built-in client.
 
 Configure authentication on the inference client. Its `apiKey` or
 `headers.Authorization` supplies bearer authorization for model reports, metadata, Chat, and
-signature requests. Gateway and direct attestation requests omit `Authorization`, `api-key`, and
+signature requests. Gateway attestation requests omit `Authorization`, `api-key`, and
 `x-api-key`. Without configured bearer authentication, no Authorization header is sent, including
 when an external OpenAI client adds one. OpenAI's required `apiKey` can therefore
 be a placeholder when a proxy uses custom headers. Other per-request headers can
 override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
-
-## Use a direct model endpoint
-
-`DirectInferenceClient` connects to a model endpoint and verifies every returned
-model report. Set `e2ee: true` to enable encryption. Direct clients are
-experimental. The Node client pins requests to the verified model TLS fingerprints.
-
-```ts
-import { DirectInferenceClient } from '@nearai/inference-sdk/node';
-
-const client = new DirectInferenceClient({
-  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
-  apiKey: process.env.NEARAI_API_KEY,
-  e2ee: true,
-});
-```
-
-Use `client.chat.completions.create()`, `client.fetch`, and
-`client.verifyResponse(id)` as above. Direct endpoints may require different
-credentials from the Gateway and use separate fetch and verification APIs.
-
-### Verify direct evidence manually
-
-```ts
-import {
-  DirectAttestationClient,
-  verifyDirectModelAttestations,
-} from '@nearai/inference-sdk/node';
-
-const client = new DirectAttestationClient({
-  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
-  apiKey: process.env.NEARAI_API_KEY,
-});
-const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
-const verified = await verifyDirectModelAttestations(fetched);
-```
-
-Send Chat with `fetch` and retain the exact request and response bytes.
-Then fetch its signature with `client.fetchCompletionSignature()`. Select matching
-reports with `findDirectModelAttestationsForSignature()` and pass one matching
-report, the signature, and the bytes to `verifyDirectModelResponse()`.
-
-`verifyDirectModelAttestation()` verifies one report;
-`verifyDirectModelAttestations()` verifies the returned set.
-
-The runnable [direct/chat-completions.ts](../../examples/example-js/direct/chat-completions.ts),
-[direct/chat-completions-with-openai-sdk.ts](../../examples/example-js/direct/chat-completions-with-openai-sdk.ts),
-and [direct/chat-completions-bare.ts](../../examples/example-js/direct/chat-completions-bare.ts) examples each
-include streaming and non-streaming calls. The bare example omits E2EE.
 
 ## Verify Gateway requests manually
 
@@ -865,7 +813,7 @@ deployment record, including the manager's startup image.
 
 Use `composeFile` to select a project's file and `composeRepository` to change the
 trusted repository. Configure this callback as `modelVerification.verifiers.deployment`
-on Gateway or Direct inference clients. The policy runs for every model report
+on Gateway inference clients. The policy runs for every model report
 and requires Compose Manager evidence in each one.
 
 The evidence covers recorded deployment actions and the configured image builds;

@@ -17,7 +17,7 @@ use std::{
     collections::HashMap,
     pin::Pin,
     sync::{Arc, Mutex as StdMutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
 
@@ -55,71 +55,13 @@ pub trait DeploymentPolicy: Send + Sync {
         deployment: &MeasuredDeployment,
     ) -> Result<(), VerificationError>;
 }
-#[derive(Clone)]
-pub(crate) struct CoreOptions {
-    pub(crate) api_key: Option<String>,
-    pub(crate) base_url: String,
-    pub(crate) headers: HeaderMap,
-    pub(crate) e2ee: bool,
-    pub(crate) ohttp: bool,
-    pub(crate) signing_algo: SigningAlgo,
-    pub(crate) attestation_cache_ttl: Duration,
-    pub(crate) response_cache_ttl: Duration,
-    pub(crate) model_verification: ModelVerificationOptions,
-    pub(crate) deployment_policy: Option<Arc<dyn DeploymentPolicy>>,
-}
-impl Default for CoreOptions {
-    fn default() -> Self {
-        Self {
-            api_key: None,
-            base_url: DEFAULT_NEAR_AI_CLOUD_BASE_URL.into(),
-            headers: HeaderMap::new(),
-            e2ee: false,
-            ohttp: false,
-            signing_algo: SigningAlgo::Ed25519,
-            attestation_cache_ttl: Duration::from_secs(3600),
-            response_cache_ttl: Duration::from_secs(3600),
-            model_verification: ModelVerificationOptions::default(),
-            deployment_policy: None,
-        }
-    }
-}
-#[derive(Clone)]
-pub(crate) enum SessionProvider {
-    Gateway(GatewayVerificationOptions),
-    Direct { include_spki_fingerprint: bool },
-}
-impl SessionProvider {
-    fn is_direct(&self) -> bool {
-        matches!(self, Self::Direct { .. })
-    }
-}
-#[derive(Clone)]
-pub(crate) enum EvidenceApi {
-    Gateway(AttestationClient),
-    Direct(crate::direct::DirectAttestationClient),
-}
-impl EvidenceApi {
-    async fn signature(
-        &self,
-        id: &str,
-        algo: SigningAlgo,
-    ) -> Result<CompletionSignature, ApiError> {
-        match self {
-            Self::Gateway(api) => api.fetch_completion_signature(id, Some(algo)).await,
-            Self::Direct(api) => api.fetch_completion_signature(id, Some(algo)).await,
-        }
-    }
-}
 pub(crate) struct Session {
     pub gateway: Option<VerifiedGatewayAttestation>,
     pub models: Vec<VerifiedModelAttestation>,
     pub selected: Option<VerifiedModelAttestation>,
-    pub direct: Option<crate::direct::DirectAttestationVerificationResult>,
-    pub selected_direct_attestations: Vec<VerifiedDirectModelAttestation>,
     pub verified_at: u64,
     pub client: reqwest::Client,
-    pub api: EvidenceApi,
+    pub api: AttestationClient,
     pub ohttp: Option<crate::OhttpClient>,
 }
 impl Session {
@@ -133,12 +75,7 @@ impl Session {
     }
 }
 type PendingSession = WeakShared<BoxFuture<'static, Result<Arc<Session>, InferenceError>>>;
-#[derive(Clone, Debug)]
-pub(crate) enum VerifiedReceipt {
-    Gateway(Box<VerifiedCompletionResult>),
-    Direct(VerifiedDirectCompletionResult),
-}
-type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedReceipt, InferenceError>>>;
+type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedCompletionResult, InferenceError>>>;
 struct Record {
     finished: Instant,
     // A synchronous lock prevents cancellation between terminal verification and capture release.
@@ -162,8 +99,7 @@ struct State {
     response_generation: u64,
 }
 struct Inner {
-    options: CoreOptions,
-    provider: SessionProvider,
+    options: InferenceClientOptions,
     state: Mutex<State>,
 }
 #[derive(Clone)]
@@ -171,10 +107,7 @@ pub(crate) struct InferenceCore {
     inner: Arc<Inner>,
 }
 impl InferenceCore {
-    pub(crate) fn new(
-        mut options: CoreOptions,
-        provider: SessionProvider,
-    ) -> Result<Self, InferenceError> {
+    pub(crate) fn new(mut options: InferenceClientOptions) -> Result<Self, InferenceError> {
         options.base_url = crate::cloud_api::parse_base_url(&options.base_url)?.to_string();
         if options.ohttp && options.signing_algo != SigningAlgo::Ed25519 {
             return Err(input("signing_algo", "OHTTP requires Ed25519").into());
@@ -190,7 +123,6 @@ impl InferenceCore {
         Ok(Self {
             inner: Arc::new(Inner {
                 options,
-                provider,
                 state: Mutex::new(State::default()),
             }),
         })
@@ -224,19 +156,9 @@ impl InferenceCore {
             } else {
                 let owned = model.to_owned();
                 let options = options.clone();
-                let provider = self.inner.provider.clone();
+                let verification = options.gateway_verification.clone();
                 let future = async move {
-                    match provider {
-                        SessionProvider::Direct {
-                            include_spki_fingerprint,
-                        } => {
-                            crate::direct::create_session(&owned, options, include_spki_fingerprint)
-                                .await
-                        }
-                        SessionProvider::Gateway(verification) => {
-                            crate::inference::create_session(&owned, options, verification).await
-                        }
-                    }
+                    crate::inference::create_session(&owned, options, verification).await
                 }
                 .boxed()
                 .shared();
@@ -327,7 +249,7 @@ impl InferenceCore {
             )
             .into());
         }
-        if gateway_only && (self.inner.provider.is_direct() || self.inner.options.e2ee) {
+        if gateway_only && self.inner.options.e2ee {
             return Err(input(
                 "request",
                 "Responses and Messages require a Gateway client with field-level E2EE disabled",
@@ -542,7 +464,10 @@ impl InferenceCore {
         );
         Ok(())
     }
-    pub(crate) async fn verify_receipt(&self, id: &str) -> Result<VerifiedReceipt, InferenceError> {
+    pub(crate) async fn verify_receipt(
+        &self,
+        id: &str,
+    ) -> Result<VerifiedCompletionResult, InferenceError> {
         let record = {
             let mut state = self.inner.state.lock().await;
             state
@@ -567,7 +492,10 @@ impl InferenceCore {
                 let algo = self.inner.options.signing_algo;
                 state.verification = Some(
                     async move {
-                        let signature = session.api.signature(&id, algo).await?;
+                        let signature = session
+                            .api
+                            .fetch_completion_signature(&id, Some(algo))
+                            .await?;
                         if signature.signer.signing_algo != algo {
                             return Err(VerificationError::SignatureSignerMismatch.into());
                         }
@@ -578,26 +506,7 @@ impl InferenceCore {
                             }
                             .into());
                         }
-                        if session.direct.is_some() {
-                            verify_direct_model_response(
-                                &request,
-                                &response,
-                                &signature,
-                                &session.selected_direct_attestations[0],
-                            )?;
-                            let attestations = find_direct_model_attestations_for_signature(
-                                &session.selected_direct_attestations,
-                                &signature,
-                            )?
-                            .into_iter()
-                            .cloned()
-                            .collect();
-                            return Ok(VerifiedReceipt::Direct(VerifiedDirectCompletionResult {
-                                id,
-                                signature,
-                                attestations,
-                            }));
-                        }
+
                         let mut attestations = Vec::new();
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {
@@ -638,14 +547,12 @@ impl InferenceCore {
                                 representative
                             }
                         };
-                        Ok(VerifiedReceipt::Gateway(Box::new(
-                            VerifiedCompletionResult {
-                                id,
-                                signature,
-                                attestation,
-                                attestations,
-                            },
-                        )))
+                        Ok(VerifiedCompletionResult {
+                            id,
+                            signature,
+                            attestation,
+                            attestations,
+                        })
                     }
                     .boxed()
                     .shared(),
@@ -677,7 +584,7 @@ impl InferenceCore {
         }
         result
     }
-    pub(crate) fn options(&self) -> &CoreOptions {
+    pub(crate) fn options(&self) -> &InferenceClientOptions {
         &self.inner.options
     }
     pub(crate) async fn response_generation(&self) -> u64 {
@@ -734,20 +641,14 @@ mod cache_tests {
     use std::future::{poll_fn, Future};
 
     async fn captured_client() -> (InferenceCore, Arc<Record>) {
-        let client = InferenceCore::new(
-            CoreOptions::default(),
-            SessionProvider::Gateway(GatewayVerificationOptions::default()),
-        )
-        .unwrap();
+        let client = InferenceCore::new(InferenceClientOptions::default()).unwrap();
         let session = Arc::new(Session {
             gateway: None,
             models: Vec::new(),
             selected: None,
-            direct: None,
-            selected_direct_attestations: Vec::new(),
             verified_at: 0,
             client: reqwest::Client::new(),
-            api: EvidenceApi::Gateway(AttestationClient::new(None)),
+            api: AttestationClient::new(None),
             ohttp: None,
         });
         client
@@ -765,8 +666,8 @@ mod cache_tests {
         (client, record)
     }
 
-    fn verified_result() -> VerifiedReceipt {
-        VerifiedReceipt::Direct(VerifiedDirectCompletionResult {
+    fn verified_result() -> VerifiedCompletionResult {
+        VerifiedCompletionResult {
             id: "receipt".into(),
             signature: CompletionSignature {
                 kind: CompletionSignatureKind::ProviderTee,
@@ -777,15 +678,46 @@ mod cache_tests {
                     signing_address: "fixture signer".into(),
                 },
             },
+            attestation: VerifiedCompletionAttestation::Gateway(VerifiedGatewayAttestation {
+                evidence: VerifiedAttestationEvidence {
+                    signer: SigningIdentity {
+                        signing_algo: SigningAlgo::Ed25519,
+                        signing_address: "fixture signer".into(),
+                    },
+                    tcb_status: TcbStatus::UpToDate,
+                    advisory_ids: Vec::new(),
+                    deployment: MeasuredDeployment {
+                        app_compose: "fixture".into(),
+                        runtime_measurements: RuntimeMeasurements {
+                            os_image_hash: None,
+                            compose_hash: None,
+                        },
+                        compose_manager: None,
+                    },
+                    deployment_provenance: DeploymentProvenanceStatus::NotChecked,
+                },
+                tls_binding: GatewayTlsBinding::None,
+                report: Arc::new(GatewayAttestation {
+                    evidence: AttestationEvidence {
+                        nonce: String::new(),
+                        signer: SigningIdentity {
+                            signing_algo: SigningAlgo::Ed25519,
+                            signing_address: String::new(),
+                        },
+                        intel_quote: String::new(),
+                        event_log: AttestationEventLog::Entries(Vec::new()),
+                        app_compose: String::new(),
+                    },
+                    reported_quote_data: String::new(),
+                    spki_fingerprint: None,
+                }),
+            }),
             attestations: Vec::new(),
-        })
+        }
     }
 
-    fn receipt_id(receipt: &VerifiedReceipt) -> &str {
-        match receipt {
-            VerifiedReceipt::Gateway(receipt) => &receipt.id,
-            VerifiedReceipt::Direct(receipt) => &receipt.id,
-        }
+    fn receipt_id(receipt: &VerifiedCompletionResult) -> &str {
+        &receipt.id
     }
 
     #[tokio::test]

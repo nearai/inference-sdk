@@ -11,14 +11,10 @@ from nearai_inference_sdk import (
     ApiError,
     ComposeManagerAttestation,
     ComposeManagerImagePolicy,
-    DirectClientBinding,
-    DirectModelAttestation,
-    FetchedDirectModelAttestations,
     ImageProvenancePolicy,
     ModelAttestationVerifiers,
     VerificationError,
     verify_compose_manager_deployment_image_provenance,
-    verify_direct_model_attestations,
     verify_model_attestation,
 )
 from nearai_inference_sdk.core import compose_manager_provenance, provenance
@@ -145,7 +141,6 @@ async def test_rejects_unpinned_manager_image_before_any_request(
     fetch.assert_not_awaited()
 
 
-@pytest.mark.parametrize('direct', [False, True])
 @pytest.mark.parametrize(
     'github_api_url',
     [
@@ -156,7 +151,6 @@ async def test_rejects_unpinned_manager_image_before_any_request(
 )
 async def test_verifies_recorded_compose_and_real_image_proof_through_deployment_policy(
     monkeypatch,
-    direct,
     github_api_url,
 ):
     root = TrustedRoot.from_file(str(FIXTURES / 'provenance/trusted-root.json'))
@@ -186,35 +180,13 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
         )
 
     attestation = create_model_attestation(compose_manager_attestation=manager_report())
-    if direct:
-        serving = DirectModelAttestation(**vars(attestation), model_name='glm-5.2')
-        fetched = FetchedDirectModelAttestations(
-            serving_attestation=serving,
-            attestations=(serving,),
-            client_binding=DirectClientBinding(nonce=NONCE),
-        )
-        verifiers = ModelAttestationVerifiers(
+    verified = await verify_model_attestation(
+        attestation,
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(
             tdx_quote=quote_verifier, deployment=deployment_policy
-        )
-        result = await verify_direct_model_attestations(fetched, verifiers=verifiers)
-        sibling = replace(serving, intel_quote='cc', compose_manager_attestation=None)
-        with pytest.raises(VerificationError) as error:
-            await verify_direct_model_attestations(
-                replace(fetched, attestations=(sibling, serving)), verifiers=verifiers
-            )
-        assert (
-            error.value.failure.code == 'provenance.compose_manager_deployment_invalid'
-        )
-        assert error.value.failure.details['reason'] == 'attestation_missing'
-        verified = result.serving_attestation
-    else:
-        verified = await verify_model_attestation(
-            attestation,
-            MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(
-                tdx_quote=quote_verifier, deployment=deployment_policy
-            ),
-        )
+        ),
+    )
 
     assert verified.deployment_provenance == 'verified'
     assert verified.deployment.compose_manager.actions == manager_report().actions

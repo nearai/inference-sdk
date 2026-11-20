@@ -12,19 +12,7 @@ import (
 type InferenceClient struct{ *inferenceCore }
 
 func NewInferenceClient(o InferenceOptions) (*InferenceClient, error) {
-	core, err := newInferenceCore(inferenceOptions{
-		ClientOptions:     o.ClientOptions,
-		SigningAlgo:       o.SigningAlgo,
-		E2EE:              o.E2EE,
-		OHTTP:             o.OHTTP,
-		AttestationTTL:    o.AttestationTTL,
-		ResponseTTL:       o.ResponseTTL,
-		ModelVerification: o.ModelVerification,
-		DeploymentPolicy:  o.DeploymentPolicy,
-	}, false,
-		func(ctx context.Context, core *inferenceCore, s *session, model string) (FetchedModelAttestations, error) {
-			return gatewayPreflight(ctx, core, s, model, o.GatewayVerification, o.DisableTLSBinding)
-		})
+	core, err := newInferenceCore(o)
 	if err != nil {
 		return nil, err
 	}

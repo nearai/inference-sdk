@@ -409,7 +409,7 @@ func TestSystemOneFailuresAndUnsupportedRequests(t *testing.T) {
 				}
 			}
 			want := int32(1)
-			if mode == "bad-model" || mode == "missing-key" || mode == "e2ee" || mode == "ohttp" || mode == "stream" || mode == "direct" {
+			if mode == "bad-model" || mode == "missing-key" || mode == "e2ee" || mode == "ohttp" || mode == "stream" {
 				want = 0
 			}
 			if f.calls.Load() != want {

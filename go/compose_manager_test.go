@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -185,60 +184,6 @@ func TestComposeManagerImagePolicyAndProxy(t *testing.T) {
 	f.Compose += " "
 	e = VerifyComposeManagerDeploymentImageProvenance(context.Background(), deployment, policies, options)
 	requireCode(t, e, "provenance.compose_file_hash_mismatch")
-}
-
-func TestDirectPreservesPerReportManagerEvidence(t *testing.T) {
-	for _, mode := range []string{"reports", "envelope", "invalid sibling"} {
-		t.Run(mode, func(t *testing.T) {
-			f := loadManagerFixture(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				nonce := r.URL.Query().Get("nonce")
-				report := map[string]any{
-					"model_name": "test", "request_nonce": nonce, "signing_algo": "ed25519",
-					"signing_address": strings.Repeat("aa", 32), "intel_quote": "bb", "event_log": []any{},
-					"info": map[string]any{"tcb_info": map[string]any{"app_compose": "{}"}},
-				}
-				first, second := maps.Clone(report), maps.Clone(report)
-				second["intel_quote"] = "ee"
-				manager := ComposeManagerAttestation{Actions: f.Actions, ActionsHash: f.ActionsHash, Nonce: nonce, IntelQuote: "cc", EventLog: json.RawMessage(`[]`)}
-				if mode == "envelope" {
-					report["compose_manager_attestation"] = manager
-				} else {
-					first["compose_manager_attestation"] = manager
-					manager.IntelQuote = "dd"
-					second["compose_manager_attestation"] = manager
-					if mode == "invalid sibling" {
-						second["compose_manager_attestation"] = "invalid"
-					}
-				}
-				report["all_attestations"] = []any{first, second}
-				json.NewEncoder(w).Encode(report)
-			}))
-			defer server.Close()
-			client, err := NewDirectAttestationClient(ClientOptions{BaseURL: server.URL})
-			if err != nil {
-				t.Fatal(err)
-			}
-			result, err := client.FetchModelAttestations(context.Background(), FetchOptions{DisableTLSBinding: true})
-			if mode == "invalid sibling" {
-				requireCode(t, err, "api.invalid_response")
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(result.Attestations) != 2 || result.ServingAttestation != &result.Attestations[0] || result.Attestations[0].ComposeManagerAttestation.IntelQuote != "cc" {
-				t.Fatal("serving report or manager evidence was lost")
-			}
-			sibling := result.Attestations[1].ComposeManagerAttestation
-			if mode == "reports" && (sibling == nil || sibling.IntelQuote != "dd") {
-				t.Fatal("sibling manager evidence was lost")
-			}
-			if mode == "envelope" && sibling != nil {
-				t.Fatal("envelope evidence must only belong to its serving report")
-			}
-		})
-	}
 }
 
 func TestComposeFileSizeBoundPrecedesHashAndParsing(t *testing.T) {

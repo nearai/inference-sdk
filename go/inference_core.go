@@ -14,29 +14,14 @@ import (
 	"time"
 )
 
-// inferenceOptions contains only settings shared by both inference clients.
-type inferenceOptions struct {
-	ClientOptions
-	SigningAlgo       SigningAlgo
-	E2EE              bool
-	OHTTP             bool
-	AttestationTTL    *time.Duration
-	ResponseTTL       *time.Duration
-	ModelVerification VerificationOptions
-	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
-}
-type sessionPreflight func(context.Context, *inferenceCore, *session, string) (FetchedModelAttestations, error)
-
 type session struct {
-	gateway                    *VerifiedGatewayAttestation
-	models                     []VerifiedModelAttestation
-	verifiedAt                 time.Time
-	direct                     *VerifiedDirectModelAttestations
-	selectedDirectAttestations []VerifiedDirectModelAttestation
-	selected                   *VerifiedModelAttestation
-	api                        *apiClient
-	transport                  http.RoundTripper
-	expires                    time.Time
+	gateway    *VerifiedGatewayAttestation
+	models     []VerifiedModelAttestation
+	verifiedAt time.Time
+	selected   *VerifiedModelAttestation
+	api        *apiClient
+	transport  http.RoundTripper
+	expires    time.Time
 }
 type pendingSession struct {
 	done  chan struct{}
@@ -56,19 +41,17 @@ type pendingResponse struct {
 	err   error
 }
 
-// Cached verification outcomes are independent of either public client result.
+// Cached response verification result.
 type verifiedResponse struct {
-	id                 string
-	signature          CompletionSignature
-	attestation        VerifiedCompletionAttestation
-	attestations       []VerifiedModelAttestation
-	directAttestations []VerifiedDirectModelAttestation
+	id           string
+	signature    CompletionSignature
+	attestation  VerifiedCompletionAttestation
+	attestations []VerifiedModelAttestation
 }
 
 // inferenceCore owns shared transport, capture, cache, and cancellation.
 type inferenceCore struct {
-	options                     inferenceOptions
-	preflight                   sessionPreflight
+	options                     InferenceOptions
 	api                         *apiClient
 	ctx                         context.Context
 	cancel                      context.CancelFunc
@@ -83,14 +66,14 @@ type inferenceCore struct {
 	attestationTTL, responseTTL time.Duration
 }
 
-func newInferenceCore(o inferenceOptions, direct bool, preflight sessionPreflight) (*inferenceCore, error) {
+func newInferenceCore(o InferenceOptions) (*inferenceCore, error) {
 	if o.SigningAlgo == "" {
 		o.SigningAlgo = Ed25519
 	}
 	if (o.SigningAlgo != Ed25519 && o.SigningAlgo != ECDSA) || (o.OHTTP && o.SigningAlgo != Ed25519) {
 		return nil, failure("api.invalid_input", nil)
 	}
-	a, e := newAPIClient(o.ClientOptions, direct)
+	a, e := newAPIClient(o.ClientOptions)
 	if e != nil {
 		return nil, e
 	}
@@ -106,7 +89,6 @@ func newInferenceCore(o inferenceOptions, direct bool, preflight sessionPrefligh
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &inferenceCore{
-		preflight:      preflight,
 		options:        o,
 		api:            a,
 		ctx:            ctx,
@@ -257,52 +239,23 @@ func (c *inferenceCore) createSession(ctx context.Context, model string) (*sessi
 			return o.DeploymentPolicy(ctx, model, d)
 		}
 	}
-	fetchedModelAttestations, err := c.preflight(ctx, c, s, model)
+	fetchedModelAttestations, err := gatewayPreflight(ctx, c, s, model, o.GatewayVerification, o.DisableTLSBinding)
 	if err != nil {
 		return nil, err
 	}
-	if c.api.direct {
-		verified, err := VerifyDirectModelAttestations(ctx, fetchedModelAttestations, opts)
+	for _, report := range fetchedModelAttestations.Attestations {
+		verified, err := VerifyModelAttestation(ctx, report, fetchedModelAttestations.ClientBinding, opts)
 		if err != nil {
 			return nil, err
 		}
-		s.direct = &verified
-		serving := verified.ServingAttestation
-		requiresServingSigner := o.OHTTP || serving.SPKIFingerprint != ""
-		for _, attestation := range verified.Attestations {
-			if attestation.Signer.SigningAlgo == o.SigningAlgo && attestation.SigningPublicKey != "" &&
-				(!requiresServingSigner || (attestation.Signer.SigningAlgo == serving.Signer.SigningAlgo && sameHex(attestation.Signer.SigningAddress, serving.Signer.SigningAddress))) {
-				selected := attestation.VerifiedModelAttestation
-				s.selected = &selected
-				break
-			}
+		s.models = append(s.models, verified)
+		if s.selected == nil && verified.Signer.SigningAlgo == o.SigningAlgo && verified.SigningPublicKey != "" {
+			selected := verified
+			s.selected = &selected
 		}
-		if s.selected == nil {
-			return nil, failure("e2ee.model_public_key_required", nil)
-		}
-		for _, attestation := range verified.Attestations {
-			if attestation.Signer.SigningAlgo == s.selected.Signer.SigningAlgo && sameHex(attestation.Signer.SigningAddress, s.selected.Signer.SigningAddress) {
-				s.selectedDirectAttestations = append(s.selectedDirectAttestations, attestation)
-			}
-		}
-		if err := c.configureDirectSession(s, fetchedModelAttestations); err != nil {
-			return nil, err
-		}
-	} else {
-		for _, report := range fetchedModelAttestations.Attestations {
-			verified, err := VerifyModelAttestation(ctx, report, fetchedModelAttestations.ClientBinding, opts)
-			if err != nil {
-				return nil, err
-			}
-			s.models = append(s.models, verified)
-			if s.selected == nil && verified.Signer.SigningAlgo == o.SigningAlgo && verified.SigningPublicKey != "" {
-				selected := verified
-				s.selected = &selected
-			}
-		}
-		if len(s.models) > 0 && s.selected == nil {
-			return nil, failure("e2ee.model_public_key_required", nil)
-		}
+	}
+	if len(s.models) > 0 && s.selected == nil {
+		return nil, failure("e2ee.model_public_key_required", nil)
 	}
 
 	s.verifiedAt = time.Now()
@@ -387,7 +340,7 @@ func (c *inferenceCore) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
-	if gatewayOnly && (c.api.direct || c.options.E2EE) {
+	if gatewayOnly && (c.options.E2EE) {
 		return nil, detail("api.invalid_input", "expected", "Gateway Responses or Messages with field-level E2EE disabled")
 	}
 	body, e := io.ReadAll(req.Body)
@@ -669,7 +622,6 @@ func (c *inferenceCore) verifyResponse(ctx context.Context, id string) (verified
 	case <-p.done:
 		result := p.value
 		result.attestations = slices.Clone(result.attestations)
-		result.directAttestations = slices.Clone(result.directAttestations)
 		return result, p.err
 	}
 }
@@ -685,16 +637,7 @@ func (c *inferenceCore) verifyRecord(ctx context.Context, id string, r *response
 	if r.gatewayOnly && sig.Kind != "gateway" {
 		return verifiedResponse{}, failure("signature.kind_mismatch", nil)
 	}
-	if r.session.direct != nil {
-		if err := VerifyDirectModelResponse(r.request, r.response, sig, r.session.selectedDirectAttestations[0]); err != nil {
-			return verifiedResponse{}, err
-		}
-		attestations, err := FindDirectModelAttestationsForSignature(r.session.selectedDirectAttestations, sig)
-		if err != nil {
-			return verifiedResponse{}, err
-		}
-		return verifiedResponse{id: id, signature: sig, directAttestations: attestations}, nil
-	}
+
 	var attestation VerifiedCompletionAttestation
 	var attestations []VerifiedModelAttestation
 	if sig.Kind == "gateway" {

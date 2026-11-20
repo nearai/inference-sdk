@@ -7,7 +7,6 @@ use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use futures_util::StreamExt;
 use nearai_inference_sdk::*;
 use serde_json::{json, Value};
-use sha2::Digest;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -59,12 +58,10 @@ struct Fixture {
     retry_signature: bool,
     wrong_signer: bool,
     wrong_algo: bool,
-    direct: bool,
     header_auth: bool,
     ecdsa: bool,
     ohttp: Option<ohttp::KeyConfig>,
     wrong_ohttp_signer: bool,
-    alternate_direct_signer: bool,
     response_body: Option<Vec<u8>>,
     response_provider_receipt: bool,
     response_tamper: bool,
@@ -120,13 +117,7 @@ impl Fixture {
     fn with_ohttp(&self, mut value: Value) -> Value {
         if let Some(config) = &self.ohttp {
             let bytes = config.encode().unwrap();
-            let signer = key(if self.wrong_ohttp_signer {
-                8
-            } else if self.direct {
-                7
-            } else {
-                9
-            });
+            let signer = key(if self.wrong_ohttp_signer { 8 } else { 9 });
             value["ohttp_attestation"] = json!({"signing_algo":"ed25519","signing_key":hex::encode(signer.verifying_key().as_bytes()),"key_config":hex::encode(&bytes),"signature":hex::encode(signer.sign(&bytes).to_bytes())});
         }
         value
@@ -135,7 +126,7 @@ impl Fixture {
 impl Respond for Fixture {
     fn respond(&self, r: &Request) -> ResponseTemplate {
         if r.url.path() == "/v1/attestation/report"
-            && (self.direct || !r.url.query_pairs().any(|(name, _)| name == "model"))
+            && !r.url.query_pairs().any(|(name, _)| name == "model")
         {
             for name in ["authorization", "api-key", "x-api-key"] {
                 assert!(r.headers.get(name).is_none(), "attestation sent {name}");
@@ -156,51 +147,7 @@ impl Respond for Fixture {
             "/v1/attestation/report" => {
                 let q: std::collections::HashMap<_, _> = r.url.query_pairs().collect();
                 let nonce = &q["nonce"];
-                if self.direct {
-                    self.model.fetch_add(1, Ordering::SeqCst);
-                    let mut root = self.report(nonce, 7);
-                    root["info"]["instance_id"] = json!("serving");
-                    if self.alternate_direct_signer {
-                        root.as_object_mut().unwrap().remove("signing_public_key");
-                    }
-                    let mut other = self.report(nonce, 7);
-                    other["info"]["instance_id"] = json!("other");
-                    if self.alternate_direct_signer {
-                        other["signing_address"] = json!(format!(
-                            "0X{}",
-                            other["signing_address"].as_str().unwrap().to_uppercase()
-                        ));
-                    }
-                    if q["include_tls_fingerprint"] == "true" {
-                        for (report, pin) in
-                            [(&mut root, "11".repeat(32)), (&mut other, "22".repeat(32))]
-                        {
-                            let signer = hex::decode(
-                                report["signing_address"]
-                                    .as_str()
-                                    .unwrap()
-                                    .trim_start_matches("0X"),
-                            )
-                            .unwrap();
-                            let binding =
-                                sha2::Sha256::digest([signer, hex::decode(&pin).unwrap()].concat());
-                            let data = format!("{}{nonce}", hex::encode(binding));
-                            report["report_data"] = json!(data);
-                            report["intel_quote"] = json!(data);
-                            report["tls_cert_fingerprint"] = json!(pin);
-                        }
-                    }
-                    if self.bad_model {
-                        other["report_data"] = json!("ff".repeat(64));
-                    }
-                    let mut value = root.clone();
-                    value["all_attestations"] = if self.extra_model {
-                        json!([root, self.report(nonce, 8), other])
-                    } else {
-                        json!([root, other])
-                    };
-                    return ResponseTemplate::new(200).set_body_json(self.with_ohttp(value));
-                }
+
                 assert_eq!(q["include_tls_fingerprint"], "false");
                 if q.contains_key("model") {
                     let generation = self.model.fetch_add(1, Ordering::SeqCst);
@@ -246,11 +193,7 @@ impl Respond for Fixture {
                 assert_eq!(r.headers.get("accept-encoding").unwrap(), "identity");
                 assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
                 if self.metadata.lock().unwrap().is_none() {
-                    let seed = if self.extra_model && !self.direct {
-                        8
-                    } else {
-                        7
-                    };
+                    let seed = if self.extra_model { 8 } else { 7 };
                     let public = if self.ecdsa {
                         encryption::ecdsa_identity(seed).1
                     } else {
@@ -491,9 +434,9 @@ impl Respond for Fixture {
                     value["signing_address"] = json!(encryption::ecdsa_identity(seed).0);
                     value["signature"] = json!(encryption::ecdsa_signature(&text, seed));
                 }
-                if !self.direct {
-                    value["signature_kind"] = json!(kind);
-                }
+
+                value["signature_kind"] = json!(kind);
+
                 if self.wrong_algo {
                     value["signing_algo"] = json!("ecdsa");
                     value["signing_address"] = json!("00".repeat(20));
@@ -592,51 +535,6 @@ async fn setup(fixture: Fixture) -> (MockServer, Arc<Fixture>, InferenceClientOp
 fn body() -> Value {
     json!({"model":"vendor/model","messages":[{"role":"user","content":"Hello"}]})
 }
-struct DeploymentCheck(Arc<AtomicUsize>);
-#[async_trait]
-impl DeploymentVerifier for DeploymentCheck {
-    async fn verify(&self, _: &MeasuredDeployment) -> Result<(), VerificationError> {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-}
-#[test]
-fn direct_requires_explicit_endpoint() {
-    let error = DirectInferenceClient::with_options(Default::default())
-        .err()
-        .expect("Direct requires a model endpoint URL");
-    assert_eq!(error.code(), "api.invalid_input");
-    let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
-        base_url: "https://model.test/v1".into(),
-        ..Default::default()
-    })
-    .unwrap();
-    assert_eq!(client.base_url(), "https://model.test/v1/");
-}
-
-#[tokio::test]
-async fn direct_deployment_verifier_checks_every_report() {
-    let (_server, _fixture, mut options) = setup(Fixture {
-        direct: true,
-        ..Default::default()
-    })
-    .await;
-    let calls = Arc::new(AtomicUsize::new(0));
-    options.model_verification.deployment = Some(Arc::new(DeploymentCheck(calls.clone())));
-    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
-    let verified = client.verify("vendor/model").await.unwrap();
-    assert_eq!(verified.attestations.len(), 2);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    client.chat_completions(body()).await.unwrap();
-    let receipt: VerifiedDirectCompletionResult = client.verify_response("chat-0").await.unwrap();
-    assert_eq!(receipt.attestations.len(), 2);
-    assert!(receipt.attestations.iter().all(|report| report
-        .attestation
-        .evidence
-        .deployment_provenance
-        == DeploymentProvenanceStatus::Verified));
-}
-
 #[tokio::test]
 async fn chat_http_errors_keep_completion_resource_and_retryability() {
     for status in [429, 503] {
@@ -1211,77 +1109,6 @@ async fn zero_response_ttl_disables_retention() {
         "api.completion_not_found"
     );
 }
-#[tokio::test]
-async fn direct_receipt_uses_only_the_selected_signer_group() {
-    for e2ee in [false, true] {
-        for wrong_signer in [false, true] {
-            let (_server, _, mut options) = setup(Fixture {
-                direct: true,
-                extra_model: true,
-                wrong_signer,
-                ..Default::default()
-            })
-            .await;
-            options.e2ee = e2ee;
-            let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
-            let verified = client.verify("vendor/model").await.unwrap();
-            assert_eq!(verified.attestations.len(), 3);
-            client.chat_completions(body()).await.unwrap();
-            let receipt = client.verify_response("chat-0").await;
-            if wrong_signer {
-                assert_eq!(receipt.unwrap_err().code(), "signature.signer_mismatch");
-            } else {
-                let attestations = receipt.unwrap().attestations;
-                assert_eq!(attestations.len(), 2);
-                assert_eq!(attestations[0].instance_id.as_deref(), Some("serving"));
-                assert_eq!(attestations[1].instance_id.as_deref(), Some("other"));
-            }
-        }
-    }
-}
-
-#[tokio::test]
-async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
-    let (_server, f, options) = setup(Fixture {
-        direct: true,
-        ..Default::default()
-    })
-    .await;
-    let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
-        include_spki_fingerprint: false,
-        api_key: options.api_key,
-        base_url: options.base_url,
-        headers: options.headers,
-        model_verification: options.model_verification,
-        ..Default::default()
-    })
-    .unwrap();
-    let verified = client.verify("vendor/model").await.unwrap();
-    assert_eq!(verified.attestations.len(), 2);
-    assert_eq!(verified.tls_binding, GatewayTlsBinding::None);
-    client.chat_completions(body()).await.unwrap();
-    let receipt = client.verify_response("chat-0").await.unwrap();
-    assert_eq!(receipt.attestations.len(), 2);
-    assert_eq!(receipt.id, "chat-0");
-    assert_eq!(
-        receipt.signature_kind(),
-        CompletionSignatureKind::ProviderTee
-    );
-    assert_eq!(
-        client
-            .verify_response("chat-0")
-            .await
-            .unwrap()
-            .attestations
-            .len(),
-        2
-    );
-    assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
-    assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
-    let receipts = f.receipts.lock().unwrap();
-    let request: Value = serde_json::from_slice(&receipts["chat-0"].0).unwrap();
-    assert_eq!(request["messages"][0]["content"], "Hello");
-}
 
 #[tokio::test]
 async fn canceled_verifications_keep_other_waiters_alive() {
@@ -1326,18 +1153,7 @@ async fn header_credentials_override_adapted_requests_and_disable_compression() 
     client.send(request).await.unwrap().bytes().await.unwrap();
     client.verify_response("chat-0").await.unwrap();
 }
-#[tokio::test]
-async fn direct_rejects_invalid_nonserving_report_before_chat() {
-    let (_server, f, options) = setup(Fixture {
-        direct: true,
-        bad_model: true,
-        ..Default::default()
-    })
-    .await;
-    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
-    assert!(client.chat_completions(body()).await.is_err());
-    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
-}
+
 #[tokio::test]
 async fn shares_concurrent_receipt_fetches_and_retries_transient_failures() {
     let (_server, f, options) = setup(Fixture {
@@ -1420,73 +1236,50 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
 }
 #[tokio::test]
 async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
-    for direct in [false, true] {
-        for case in ["valid", "alternate_spelling", "missing", "wrong_signer"] {
-            let (_server, f, mut options) = setup(Fixture {
-                direct,
-                ohttp: if case == "missing" {
-                    None
-                } else {
-                    Some(ohttp_config())
-                },
-                wrong_ohttp_signer: case == "wrong_signer",
-                alternate_direct_signer: direct && case == "alternate_spelling",
-                ..Default::default()
-            })
-            .await;
-            options.ohttp = true;
-            options.e2ee = true;
-            // Exercise JSON and SSE, with encryption inside the OHTTP tunnel.
-            for streaming in [false, true] {
-                let mut request = body();
-                request["stream"] = json!(streaming);
-                let (result, receipt) = if direct {
-                    let client =
-                        DirectInferenceClient::with_options(direct_options(options.clone()))
-                            .unwrap();
-                    let result = match client.send(client.chat_request(request).unwrap()).await {
-                        Ok(r) => r.bytes().await,
-                        Err(e) => Err(e),
-                    };
-                    let receipt = if result.is_ok() {
-                        Some(
-                            client
-                                .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await
-                                .map(|receipt| receipt.attestations.len()),
-                        )
-                    } else {
-                        None
-                    };
-                    (result, receipt)
-                } else {
-                    let client = InferenceClient::with_options(options.clone()).unwrap();
-                    let result = match client.send(client.chat_request(request).unwrap()).await {
-                        Ok(r) => r.bytes().await,
-                        Err(e) => Err(e),
-                    };
-                    let receipt = if result.is_ok() {
-                        Some(
-                            client
-                                .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await
-                                .map(|receipt| receipt.attestations.len()),
-                        )
-                    } else {
-                        None
-                    };
-                    (result, receipt)
+    for case in ["valid", "missing", "wrong_signer"] {
+        let (_server, f, mut options) = setup(Fixture {
+            ohttp: if case == "missing" {
+                None
+            } else {
+                Some(ohttp_config())
+            },
+            wrong_ohttp_signer: case == "wrong_signer",
+            ..Default::default()
+        })
+        .await;
+        options.ohttp = true;
+        options.e2ee = true;
+        // Exercise JSON and SSE, with encryption inside the OHTTP tunnel.
+        for streaming in [false, true] {
+            let mut request = body();
+            request["stream"] = json!(streaming);
+            let (result, receipt) = {
+                let client = InferenceClient::with_options(options.clone()).unwrap();
+                let result = match client.send(client.chat_request(request).unwrap()).await {
+                    Ok(r) => r.bytes().await,
+                    Err(e) => Err(e),
                 };
-                if case == "valid" || case == "alternate_spelling" {
-                    assert!(String::from_utf8(result.unwrap())
-                        .unwrap()
-                        .contains("Hello"));
-                    let attestation_count = receipt.unwrap().unwrap();
-                    assert_eq!(attestation_count, if direct { 2 } else { 1 });
+                let receipt = if result.is_ok() {
+                    Some(
+                        client
+                            .verify_response(&format!("chat-{}", usize::from(streaming)))
+                            .await
+                            .map(|receipt| receipt.attestations.len()),
+                    )
                 } else {
-                    assert!(result.is_err());
-                    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
-                }
+                    None
+                };
+                (result, receipt)
+            };
+            if case == "valid" {
+                assert!(String::from_utf8(result.unwrap())
+                    .unwrap()
+                    .contains("Hello"));
+                let attestation_count = receipt.unwrap().unwrap();
+                assert_eq!(attestation_count, 1);
+            } else {
+                assert!(result.is_err());
+                assert_eq!(f.chat.load(Ordering::SeqCst), 0);
             }
         }
     }
@@ -2207,7 +2000,6 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
     );
 
     options.e2ee = false;
-    let direct = DirectInferenceClient::with_options(direct_options(options.clone())).unwrap();
     let client = InferenceClient::with_options(options).unwrap();
 
     assert_eq!(
@@ -2215,19 +2007,6 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
             .create_response(response_request_body(true))
             .await
             .unwrap_err()
-            .code(),
-        "api.invalid_input"
-    );
-    assert_eq!(
-        direct
-            .send(
-                client
-                    .response_request(response_request_body(false))
-                    .unwrap()
-            )
-            .await
-            .err()
-            .unwrap()
             .code(),
         "api.invalid_input"
     );
@@ -2455,7 +2234,6 @@ async fn messages_unsupported_modes_are_rejected_before_preflight() {
     );
 
     options.e2ee = false;
-    let direct = DirectInferenceClient::with_options(direct_options(options.clone())).unwrap();
     let client = InferenceClient::with_options(options).unwrap();
 
     assert_eq!(
@@ -2463,15 +2241,6 @@ async fn messages_unsupported_modes_are_rejected_before_preflight() {
             .create_message(message_request_body(true))
             .await
             .unwrap_err()
-            .code(),
-        "api.invalid_input"
-    );
-    assert_eq!(
-        direct
-            .send(client.message_request(message_request_body(false)).unwrap())
-            .await
-            .err()
-            .unwrap()
             .code(),
         "api.invalid_input"
     );
@@ -2615,70 +2384,5 @@ async fn messages_zero_response_ttl_disables_retention() {
             assert_eq!(error.code(), "api.completion_not_found");
         }
         assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
-    }
-}
-
-fn direct_options(options: InferenceClientOptions) -> DirectInferenceClientOptions {
-    DirectInferenceClientOptions {
-        include_spki_fingerprint: false,
-        api_key: options.api_key,
-        base_url: options.base_url,
-        headers: options.headers,
-        e2ee: options.e2ee,
-        ohttp: options.ohttp,
-        signing_algo: options.signing_algo,
-        attestation_cache_ttl: options.attestation_cache_ttl,
-        response_cache_ttl: options.response_cache_ttl,
-        model_verification: options.model_verification,
-        deployment_policy: options.deployment_policy,
-    }
-}
-
-#[tokio::test]
-async fn direct_tls_verifies_every_report_and_the_serving_peer() {
-    for case in ["valid", "wrong peer", "invalid sibling"] {
-        let (_server, _, options) = setup(Fixture {
-            direct: true,
-            bad_model: case == "invalid sibling",
-            ..Default::default()
-        })
-        .await;
-        let api = DirectAttestationClient::new(&options.base_url, options.api_key.clone())
-            .unwrap()
-            .with_headers(options.headers);
-        let mut fetched = api
-            .fetch_model_attestations(Some(SigningAlgo::Ed25519), None)
-            .await
-            .unwrap();
-        fetched.client_binding.spki_fingerprint =
-            Some(if case == "wrong peer" { "33" } else { "11" }.repeat(32));
-        let result = verify_direct_model_attestations(
-            &fetched,
-            None,
-            ModelAttestationVerifiers {
-                tdx_quote: options.model_verification.tdx_quote.as_deref(),
-                ..Default::default()
-            },
-        )
-        .await;
-        match case {
-            "valid" => {
-                let verified = result.unwrap();
-                assert_eq!(verified.attestations.len(), 2);
-                assert_eq!(
-                    verified.spki_fingerprints,
-                    ["11".repeat(32), "22".repeat(32)]
-                );
-                assert!(matches!(
-                    verified.tls_binding,
-                    GatewayTlsBinding::Attested { .. }
-                ));
-            }
-            "wrong peer" => assert_eq!(
-                result.unwrap_err().code(),
-                "binding.spki_fingerprint_mismatch"
-            ),
-            _ => assert_eq!(result.unwrap_err().code(), "binding.report_data_mismatch"),
-        }
     }
 }

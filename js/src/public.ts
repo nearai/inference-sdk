@@ -1,105 +1,19 @@
+export { verifyGatewayAttestation } from './core/attestation-gateway';
+export { verifyModelAttestation } from './core/attestation-model';
+export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export {
   DEFAULT_NEAR_AI_CLOUD_BASE_URL,
   findModelAttestationForSignature,
   findModelAttestationsForSignature,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
-export { InferenceClient } from './core/inference-client';
-export {
-  DirectInferenceClient,
-  findDirectModelAttestationsForSignature,
-  verifyDirectModelResponse,
-} from './core/direct-inference-client';
-export {
-  verifyDirectModelAttestation,
-  verifyDirectModelAttestations,
-} from './core/attestation-direct';
-export type {
-  DirectAttestationClientOptions,
-  DirectClientBinding,
-  DirectModelAttestation,
-  DirectModelAttestations,
-  FetchedDirectModelAttestations,
-} from './types/direct-api';
-export type {
-  VerifiedDirectModelAttestation,
-  VerifiedDirectModelAttestations,
-  DirectTlsBinding,
-  VerifyDirectModelAttestationParams,
-  VerifyDirectModelAttestationsParams,
-} from './types/direct-verification';
-export type {
-  DirectInferenceClientOptions,
-  DirectModelVerificationOptions,
-  VerifiedDirectCompletionResult,
-  DirectAttestationVerificationResult,
-  FindDirectModelAttestationsForSignatureParams,
-  VerifyDirectModelResponseParams,
-} from './types/direct-inference-client';
+export { verifyComposeManagerDeploymentImageProvenance } from './core/compose-manager-provenance';
+export { verifyDeploymentImageProvenance } from './core/deployment-provenance';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
+export { InferenceClient } from './core/inference-client';
 export { verifyOhttpKeyConfig } from './core/ohttp-attestation';
 export { createOhttpFetch } from './core/ohttp-fetch';
-export type {
-  CreateOhttpFetchParams,
-  OhttpAttestation,
-  VerifyOhttpKeyConfigParams,
-} from './types/ohttp';
-export type {
-  E2eeModelKey,
-  PrepareE2eeChatRequestParams,
-  PreparedE2eeChatRequest,
-} from './types/e2ee';
-export type {
-  AttestationClientOptions,
-  FetchCompletionSignatureParams,
-  FetchedGatewayAttestation,
-  FetchedModelAttestations,
-  FetchModelAttestationsParams,
-  FindModelAttestationForSignatureParams,
-  FindModelAttestationsForSignatureParams,
-  ModelMetadata,
-} from './types/cloud-api';
-export type {
-  DeploymentPolicy,
-  DeploymentPolicyParams,
-  ModelVerificationOptions,
-  InferenceChat,
-  InferenceChatCompletions,
-  InferenceResponses,
-  InferenceMessages,
-  InferenceClientOptions,
-  VerifiedCompletionResult,
-  AttestationVerificationResult,
-  VerifiedGatewayCompletionResult,
-  VerifiedModelCompletionResult,
-} from './types/inference-client';
-export type { Awaitable } from './types/shared';
-
-export { verifyModelAttestation } from './core/attestation-model';
-export { verifyGatewayAttestation } from './core/attestation-gateway';
-export { createTdxQuoteVerifier } from './utils/intel';
-export { createGpuEvidenceVerifier } from './utils/nvidia';
-export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';
-export { verifyDeploymentImageProvenance } from './core/deployment-provenance';
-export { verifyComposeManagerDeploymentImageProvenance } from './core/compose-manager-provenance';
-export type {
-  ComposeManagerAction,
-  ComposeManagerAttestation,
-  ComposeManagerDeploymentFailureReason,
-  VerifiedComposeManagerAttestation,
-  VerifyComposeManagerDeploymentImageProvenanceParams,
-} from './types/compose-manager';
-export type {
-  DeploymentImagesFailureReason,
-  FetchImageProvenanceParams,
-  ImageProvenanceFailureReason,
-  ImageProvenancePolicy,
-  VerifiedImageProvenance,
-  VerifyImageProvenanceParams,
-  VerifyDeploymentImageProvenanceParams,
-} from './types/provenance';
-
 export type {
   AttestationEventLog,
   AttestationEvidence,
@@ -114,10 +28,72 @@ export type {
   CompletionSignatureReference,
 } from './types/chat';
 export type {
+  AttestationClientOptions,
+  FetchCompletionSignatureParams,
+  FetchedGatewayAttestation,
+  FetchedModelAttestations,
+  FetchModelAttestationsParams,
+  FindModelAttestationForSignatureParams,
+  FindModelAttestationsForSignatureParams,
+  ModelMetadata,
+} from './types/cloud-api';
+export type {
+  ComposeManagerAction,
+  ComposeManagerAttestation,
+  ComposeManagerDeploymentFailureReason,
+  VerifiedComposeManagerAttestation,
+  VerifyComposeManagerDeploymentImageProvenanceParams,
+} from './types/compose-manager';
+export type {
+  E2eeModelKey,
+  PreparedE2eeChatRequest,
+  PrepareE2eeChatRequestParams,
+} from './types/e2ee';
+export type {
+  AttestationVerificationResult,
+  DeploymentPolicy,
+  DeploymentPolicyParams,
+  InferenceChat,
+  InferenceChatCompletions,
+  InferenceClientOptions,
+  InferenceMessages,
+  InferenceResponses,
+  ModelVerificationOptions,
+  VerifiedCompletionResult,
+  VerifiedGatewayCompletionResult,
+  VerifiedModelCompletionResult,
+} from './types/inference-client';
+export type {
+  CreateOhttpFetchParams,
+  OhttpAttestation,
+  VerifyOhttpKeyConfigParams,
+} from './types/ohttp';
+export type {
+  DeploymentImagesFailureReason,
+  FetchImageProvenanceParams,
+  ImageProvenanceFailureReason,
+  ImageProvenancePolicy,
+  VerifiedImageProvenance,
+  VerifyDeploymentImageProvenanceParams,
+  VerifyImageProvenanceParams,
+} from './types/provenance';
+export type { Awaitable } from './types/shared';
+export type {
+  InferenceSystemOne,
+  SystemOneAnswer,
+  SystemOneBoxCoordinates,
+  SystemOneImageAsset,
+  SystemOneQuestion,
+  SystemOneRequest,
+  SystemOneRequestOptions,
+  SystemOneResponse,
+  SystemOneResult,
+} from './types/systemone';
+export type {
   AttestationPolicy,
   AttestationVerifiers,
-  CreateTdxQuoteVerifierParams,
   CreateGpuEvidenceVerifierParams,
+  CreateTdxQuoteVerifierParams,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   GatewayClientBinding,
@@ -125,13 +101,13 @@ export type {
   GpuEvidenceStatus,
   GpuEvidenceVerifier,
   MeasuredDeployment,
-  ModelClientBinding,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
-  TdxQuoteVerifier,
-  TdxQuoteVerificationResult,
+  ModelClientBinding,
   RuntimeMeasurements,
   TcbStatus,
+  TdxQuoteVerificationResult,
+  TdxQuoteVerifier,
   VerifiedAttestationEvidence,
   VerifiedGatewayAttestation,
   VerifiedModelAttestation,
@@ -140,14 +116,6 @@ export type {
   VerifyModelAttestationParams,
   VerifyModelResponseParams,
 } from './types/verification';
-
-export {
-  ApiError,
-  isApiError,
-  getSdkError,
-  isVerificationError,
-  VerificationError,
-} from './utils/errors';
 export type {
   ApiErrorCode,
   ApiErrorJson,
@@ -158,14 +126,12 @@ export type {
   VerificationFailure,
 } from './utils/errors';
 
-export type {
-  InferenceSystemOne,
-  SystemOneRequest,
-  SystemOneQuestion,
-  SystemOneResponse,
-  SystemOneAnswer,
-  SystemOneBoxCoordinates,
-  SystemOneImageAsset,
-  SystemOneRequestOptions,
-  SystemOneResult,
-} from './types/systemone';
+export {
+  ApiError,
+  getSdkError,
+  isApiError,
+  isVerificationError,
+  VerificationError,
+} from './utils/errors';
+export { createTdxQuoteVerifier } from './utils/intel';
+export { createGpuEvidenceVerifier } from './utils/nvidia';

@@ -29,7 +29,6 @@ import os
 
 from nearai_inference_sdk import InferenceClient
 
-
 async def main() -> None:
     async with InferenceClient(
         os.environ['NEARAI_API_KEY'],
@@ -44,7 +43,6 @@ async def main() -> None:
         verified = await client.verify_response(completion.id)
         print(f'Verified {verified.signature_kind} response')
         print(completion.choices[0].message.content or '')
-
 
 if __name__ == '__main__':
     asyncio.run(main())
@@ -139,10 +137,6 @@ can keep their current dependencies and calls.
 - **Standalone E2EE:** `prepare_e2ee_chat_request()` encrypts a raw HTTPX Chat
   request and supplies its JSON/SSE decryptor. Key verification and response
   signature verification remain the application's responsibility.
-- **Direct endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect without Gateway verification.
-  `DirectInferenceClient` pins verified model TLS fingerprints by default. See
-  the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#direct-model-endpoints).
 
 ## Documentation
 
@@ -151,7 +145,7 @@ can keep their current dependencies and calls.
 - [API reference](https://github.com/nearai/inference-sdk/blob/main/py/docs/api-reference.md):
   client options, public functions, defaults, and result fields.
 - [Runnable Python examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#python-setup):
-  Gateway and direct clients, standalone verification, and OpenAI integration.
+  Gateway clients, standalone verification, and OpenAI integration.
 - [Error handling](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#handle-retrieval-and-verification-errors):
   SDK errors, OpenAI exception wrapping, and receipt-only retries.
 

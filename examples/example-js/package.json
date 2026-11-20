@@ -17,15 +17,9 @@
     "start:messages-with-anthropic-sdk": "node gateway/messages-with-anthropic-sdk.ts",
     "start:responses": "node gateway/responses.ts",
     "start:responses-with-openai-sdk": "node gateway/responses-with-openai-sdk.ts",
-    "start:direct-chat-completions-bare": "node direct/chat-completions-bare.ts",
-    "start:direct-chat-completions": "node direct/chat-completions.ts",
-    "start:direct-chat-completions-with-openai-sdk": "node direct/chat-completions-with-openai-sdk.ts",
     "start:bare": "node gateway/chat-completions-bare.ts",
     "start:client": "node gateway/chat-completions.ts",
-    "start:client-openai-sdk": "node gateway/chat-completions-with-openai-sdk.ts",
-    "start:direct-bare": "node direct/chat-completions-bare.ts",
-    "start:direct-client": "node direct/chat-completions.ts",
-    "start:direct-client-openai-sdk": "node direct/chat-completions-with-openai-sdk.ts"
+    "start:client-openai-sdk": "node gateway/chat-completions-with-openai-sdk.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.4.0",

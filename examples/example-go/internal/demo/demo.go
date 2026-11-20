@@ -23,11 +23,11 @@ type Config struct {
 	OHTTP               bool
 }
 
-func Configuration(direct bool) (Config, error) {
-	return ConfigurationForModel(direct, "z-ai/glm-5.3-flash")
+func Configuration() (Config, error) {
+	return ConfigurationForModel("z-ai/glm-5.3-flash")
 }
 
-func ConfigurationForModel(direct bool, defaultModel string) (Config, error) {
+func ConfigurationForModel(defaultModel string) (Config, error) {
 	c := Config{
 		Key:     os.Getenv("NEARAI_API_KEY"),
 		BaseURL: os.Getenv("NEARAI_BASE_URL"),
@@ -43,9 +43,7 @@ func ConfigurationForModel(direct bool, defaultModel string) (Config, error) {
 	}
 	if c.BaseURL == "" {
 		c.BaseURL = nearai.DefaultBaseURL
-		if direct {
-			c.BaseURL = "https://glm-5-3-flash.completions.near.ai/v1"
-		}
+
 	}
 	if c.Model == "" {
 		c.Model = defaultModel
@@ -269,76 +267,29 @@ func DisplayChat(raw []byte, stream bool) error {
 	return nil
 }
 
-type chatTransport interface {
-	HTTPClient() *http.Client
-	BaseURL() string
-	Close() error
-}
-
-// The two clients have distinct evidence types. Shared examples only need their
-// HTTP adapter, successful preflight, and the verified response's signer kind.
-type chatExampleClient struct {
-	transport      chatTransport
-	verify         func(context.Context, string) error
-	verifyResponse func(context.Context, string) error
-}
-
-func newChatExampleClient(c Config, direct bool) (chatExampleClient, error) {
-	if direct {
-		client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-			ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
-			SigningAlgo:   c.Algo, E2EE: true, OHTTP: c.OHTTP,
-		})
-		if err != nil {
-			return chatExampleClient{}, err
-		}
-		return chatExampleClient{
-			transport: client,
-			verify: func(ctx context.Context, model string) error {
-				_, err := client.Verify(ctx, model)
-				return err
-			},
-			verifyResponse: func(ctx context.Context, id string) error {
-				verified, err := client.VerifyResponse(ctx, id)
-				if err == nil {
-					fmt.Printf("Verified response against %d matching reports.\n", len(verified.Attestations))
-				}
-				return err
-			},
-		}, nil
-	}
-	opts := nearai.InferenceOptions{
+func newChatExampleClient(c Config) (*nearai.InferenceClient, error) {
+	return nearai.NewInferenceClient(nearai.InferenceOptions{
 		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
 		SigningAlgo:   c.Algo, E2EE: true, OHTTP: c.OHTTP,
+	})
+}
+
+func verifyResponse(ctx context.Context, client *nearai.InferenceClient, id string) error {
+	verified, err := client.VerifyResponse(ctx, id)
+	if err == nil {
+		fmt.Printf("Verified %s receipt.\n", verified.SignatureKind)
 	}
-	client, err := nearai.NewInferenceClient(opts)
-	if err != nil {
-		return chatExampleClient{}, err
-	}
-	return chatExampleClient{
-		transport: client,
-		verify: func(ctx context.Context, model string) error {
-			_, err := client.Verify(ctx, model)
-			return err
-		},
-		verifyResponse: func(ctx context.Context, id string) error {
-			verified, err := client.VerifyResponse(ctx, id)
-			if err == nil {
-				fmt.Printf("Verified %s receipt.\n", verified.SignatureKind)
-			}
-			return err
-		},
-	}, nil
+	return err
 }
 
 // RunIntegrated uses the verified transport for both JSON and SSE.
-func RunIntegrated(ctx context.Context, c Config, direct bool) error {
-	client, err := newChatExampleClient(c, direct)
+func RunIntegrated(ctx context.Context, c Config) error {
+	client, err := newChatExampleClient(c)
 	if err != nil {
 		return err
 	}
-	defer client.transport.Close()
-	if err = client.verify(ctx, c.Model); err != nil {
+	defer client.Close()
+	if _, err = client.Verify(ctx, c.Model); err != nil {
 		return err
 	}
 	for _, stream := range []bool{false, true} {
@@ -346,7 +297,7 @@ func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 		if err != nil {
 			return err
 		}
-		res, err := client.transport.HTTPClient().Do(r)
+		res, err := client.HTTPClient().Do(r)
 		if err != nil {
 			return err
 		}
@@ -362,7 +313,7 @@ func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 		if err != nil {
 			return err
 		}
-		if err := client.verifyResponse(ctx, id); err != nil {
+		if err := verifyResponse(ctx, client, id); err != nil {
 			return err
 		}
 		if err = DisplayChat(raw, stream); err != nil {
@@ -374,99 +325,66 @@ func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 
 // RunBare authenticates reports before selecting an E2EE key, pins attested TLS,
 // captures exact ciphertext below decryption, and verifies receipts after EOF.
-func RunBare(ctx context.Context, c Config, direct bool) error {
+func RunBare(ctx context.Context, c Config) error {
 	opts := nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL}
-	var signatures interface {
-		FetchCompletionSignature(context.Context, string, nearai.SigningAlgo) (nearai.CompletionSignature, error)
-	}
 	var gateway nearai.VerifiedGatewayAttestation
 	var modelAttestations []nearai.VerifiedModelAttestation
-	var directAttestations []nearai.VerifiedDirectModelAttestation
 	transport := http.DefaultTransport.(*http.Transport)
-	if direct {
-		api, err := nearai.NewDirectAttestationClient(opts)
-		if err != nil {
-			return err
-		}
-		fetched, err := api.FetchModelAttestations(ctx, nearai.FetchOptions{SigningAlgo: c.Algo})
-		if err != nil {
-			return err
-		}
-		verified, err := nearai.VerifyDirectModelAttestations(ctx, fetched, nearai.VerificationOptions{})
-		if err != nil {
-			return err
-		}
-		directAttestations = verified.Attestations
-		pinned, err := nearai.NewPinnedTransport(transport, verified.SPKIFingerprints...)
-		if err != nil {
-			return err
-		}
-		defer pinned.CloseIdleConnections()
-		transport = pinned
-		opts.HTTPClient = &http.Client{Transport: pinned}
-		api, err = nearai.NewDirectAttestationClient(opts)
-		if err != nil {
-			return err
-		}
-		signatures = api
-		fmt.Printf("Verified %d model reports.\n", len(directAttestations))
-	} else {
-		api, err := nearai.NewAttestationClient(opts)
-		if err != nil {
-			return err
-		}
-		gatewayReport, err := api.FetchGatewayAttestation(ctx, nearai.FetchOptions{SigningAlgo: c.Algo})
-		if err != nil {
-			return err
-		}
-		gateway, err = nearai.VerifyGatewayAttestation(ctx, gatewayReport.Attestation, gatewayReport.ClientBinding, nearai.VerificationOptions{})
-		if err != nil {
-			return err
-		}
-		fmt.Println("Gateway attestation verified.")
-		if gateway.SPKIFingerprint == "" {
-			return fmt.Errorf("Gateway did not supply attested TLS binding")
-		}
-		pinned, err := nearai.NewPinnedTransport(transport, gateway.SPKIFingerprint)
-		if err != nil {
-			return err
-		}
-		defer pinned.CloseIdleConnections()
-		transport = pinned
-		opts.HTTPClient = &http.Client{Transport: pinned}
-		api, err = nearai.NewAttestationClient(opts)
-		if err != nil {
-			return err
-		}
-		signatures = api
-		fetched, err := api.FetchModelAttestations(ctx, c.Model, nearai.FetchOptions{SigningAlgo: c.Algo})
-		if err != nil {
-			return err
-		}
-		if len(fetched.Attestations) == 0 {
-			return fmt.Errorf("Gateway returned no model attestations")
-		}
-		for _, report := range fetched.Attestations {
-			verified, err := nearai.VerifyModelAttestation(ctx, report, fetched.ClientBinding, nearai.VerificationOptions{})
-			if err != nil {
-				return err
-			}
-			modelAttestations = append(modelAttestations, verified)
-		}
-		fmt.Printf("Verified %d model attestations.\n", len(modelAttestations))
+	api, err := nearai.NewAttestationClient(opts)
+	if err != nil {
+		return err
 	}
+	gatewayReport, err := api.FetchGatewayAttestation(ctx, nearai.FetchOptions{SigningAlgo: c.Algo})
+	if err != nil {
+		return err
+	}
+	gateway, err = nearai.VerifyGatewayAttestation(ctx, gatewayReport.Attestation, gatewayReport.ClientBinding, nearai.VerificationOptions{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("Gateway attestation verified.")
+	if gateway.SPKIFingerprint == "" {
+		return fmt.Errorf("Gateway did not supply attested TLS binding")
+	}
+	pinned, err := nearai.NewPinnedTransport(transport, gateway.SPKIFingerprint)
+	if err != nil {
+		return err
+	}
+	defer pinned.CloseIdleConnections()
+	transport = pinned
+	opts.HTTPClient = &http.Client{Transport: pinned}
+	api, err = nearai.NewAttestationClient(opts)
+	if err != nil {
+		return err
+	}
+	fetched, err := api.FetchModelAttestations(ctx, c.Model, nearai.FetchOptions{SigningAlgo: c.Algo})
+	if err != nil {
+		return err
+	}
+	if len(fetched.Attestations) == 0 {
+		return fmt.Errorf("Gateway returned no model attestations")
+	}
+	for _, report := range fetched.Attestations {
+		verified, err := nearai.VerifyModelAttestation(ctx, report, fetched.ClientBinding, nearai.VerificationOptions{})
+		if err != nil {
+			return err
+		}
+		modelAttestations = append(modelAttestations, verified)
+	}
+	fmt.Printf("Verified %d model attestations.\n", len(modelAttestations))
+
 	var selectedModelAttestation *nearai.VerifiedModelAttestation
-	if !direct {
-		for i := range modelAttestations {
-			if modelAttestations[i].Signer.SigningAlgo == c.Algo && modelAttestations[i].SigningPublicKey != "" {
-				selectedModelAttestation = &modelAttestations[i]
-				break
-			}
-		}
-		if selectedModelAttestation == nil {
-			return fmt.Errorf("no verified model public key")
+
+	for i := range modelAttestations {
+		if modelAttestations[i].Signer.SigningAlgo == c.Algo && modelAttestations[i].SigningPublicKey != "" {
+			selectedModelAttestation = &modelAttestations[i]
+			break
 		}
 	}
+	if selectedModelAttestation == nil {
+		return fmt.Errorf("no verified model public key")
+	}
+
 	httpClient := &http.Client{
 		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -477,14 +395,14 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			return err
 		}
 		var prepared *nearai.PreparedE2EEChatRequest
-		if !direct {
-			modelKey := nearai.E2EEModelKey{SigningAlgo: c.Algo, PublicKey: selectedModelAttestation.SigningPublicKey}
-			prepared, err = nearai.PrepareE2EEChatRequest(r, modelKey)
-			if err != nil {
-				return err
-			}
-			r = prepared.Request
+
+		modelKey := nearai.E2EEModelKey{SigningAlgo: c.Algo, PublicKey: selectedModelAttestation.SigningPublicKey}
+		prepared, err = nearai.PrepareE2EEChatRequest(r, modelKey)
+		if err != nil {
+			return err
 		}
+		r = prepared.Request
+
 		wireRequest, err := io.ReadAll(r.Body)
 		r.Body.Close()
 		if err != nil {
@@ -501,9 +419,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		}
 		var wire bytes.Buffer
 		var plain []byte
-		if direct {
-			plain, err = ReadBody(io.TeeReader(res.Body, &wire), stream)
-		} else if stream {
+		if stream {
 			decrypted := prepared.DecryptSSE(io.NopCloser(io.TeeReader(res.Body, &wire)))
 			plain, err = ReadBody(decrypted, true)
 			decrypted.Close()
@@ -523,19 +439,12 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		if err != nil {
 			return err
 		}
-		sig, err := signatures.FetchCompletionSignature(ctx, id, c.Algo)
+		sig, err := api.FetchCompletionSignature(ctx, id, c.Algo)
 		if err != nil {
 			return err
 		}
 		var matchingCount int
 		switch {
-		case direct:
-			var matching []nearai.VerifiedDirectModelAttestation
-			matching, err = nearai.FindDirectModelAttestationsForSignature(directAttestations, sig)
-			if err == nil {
-				err = nearai.VerifyDirectModelResponse(wireRequest, wire.Bytes(), sig, matching[0])
-			}
-			matchingCount = len(matching)
 		case sig.Kind == "gateway":
 			err = nearai.VerifyGatewayResponse(wireRequest, wire.Bytes(), sig, gateway)
 		default:
@@ -563,24 +472,15 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 
 // RunOpenAI covers the official OpenAI SDK through the verified Gateway transport.
 func RunOpenAI(ctx context.Context, c Config) error {
-	return runOpenAI(ctx, c, false)
-}
-
-// RunDirectOpenAI uses the verified Direct transport with the OpenAI client.
-func RunDirectOpenAI(ctx context.Context, c Config) error {
-	return runOpenAI(ctx, c, true)
-}
-
-func runOpenAI(ctx context.Context, c Config, direct bool) error {
-	client, err := newChatExampleClient(c, direct)
+	client, err := newChatExampleClient(c)
 	if err != nil {
 		return err
 	}
-	defer client.transport.Close()
+	defer client.Close()
 	ai := openai.NewClient(
 		option.WithAPIKey(c.Key),
-		option.WithBaseURL(client.transport.BaseURL()),
-		option.WithHTTPClient(client.transport.HTTPClient()),
+		option.WithBaseURL(client.BaseURL()),
+		option.WithHTTPClient(client.HTTPClient()),
 		option.WithMaxRetries(0),
 	)
 	params := openai.ChatCompletionNewParams{
@@ -592,7 +492,7 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 	if err != nil {
 		return err
 	}
-	if err := client.verifyResponse(ctx, completion.ID); err != nil {
+	if err := verifyResponse(ctx, client, completion.ID); err != nil {
 		return err
 	}
 	text := ""
@@ -619,5 +519,5 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 	if id == "" {
 		return fmt.Errorf("stream returned no completion ID")
 	}
-	return client.verifyResponse(ctx, id)
+	return verifyResponse(ctx, client, id)
 }

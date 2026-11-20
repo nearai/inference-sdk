@@ -159,24 +159,6 @@ func TestFindModelAttestationsForSignature(t *testing.T) {
 	}
 }
 
-func TestStructuralAttestationComparison(t *testing.T) {
-	a := Attestation{EventLog: json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740993}}]`)}
-	b := a
-	b.EventLog = json.RawMessage(`[ {"nested": {"a":9007199254740993,"b":2}, "imr":3} ]`)
-	if !sameAttestation(a, b) {
-		t.Fatal("JSON serialization changed report identity")
-	}
-	b.EventLog = json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740992}}]`)
-	if sameAttestation(a, b) {
-		t.Fatal("different integer values matched")
-	}
-	a.EventLog = json.RawMessage(`[1,2]`)
-	b.EventLog = json.RawMessage(`[2,1]`)
-	if sameAttestation(a, b) {
-		t.Fatal("array order ignored")
-	}
-}
-
 func TestReadBoundedMaximumLimit(t *testing.T) {
 	body, err := readBounded(strings.NewReader("completion"), math.MaxInt64)
 	if err != nil || string(body) != "completion" {
@@ -223,75 +205,64 @@ func TestUnlistedModelReportUsesConfiguredOrganizationKey(t *testing.T) {
 }
 
 func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
-	for _, direct := range []bool{false, true} {
-		for _, apiKey := range []string{"", "test"} {
-			for _, customHeaders := range []bool{false, true} {
-				t.Run(fmt.Sprintf("direct=%t/key=%s/headers=%t", direct, apiKey, customHeaders), func(t *testing.T) {
-					fixture := newFakeCloud(t)
-					fixture.direct = direct
-					fixture.authorization = ""
+
+	for _, apiKey := range []string{"", "test"} {
+		for _, customHeaders := range []bool{false, true} {
+			t.Run(fmt.Sprintf("key=%s/headers=%t", apiKey, customHeaders), func(t *testing.T) {
+				fixture := newFakeCloud(t)
+				fixture.authorization = ""
+				if apiKey != "" {
+					fixture.authorization = "Bearer test"
+				} else if customHeaders {
+					fixture.authorization = "Bearer custom"
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if customHeaders && r.Header.Get("X-Tenant") != "tenant" {
+						t.Error("custom header missing")
+					}
+					if r.URL.Path == "/v1/attestation/report" {
+						fixture.ServeHTTP(w, r)
+						return
+					}
+					want := ""
 					if apiKey != "" {
-						fixture.authorization = "Bearer test"
+						want = "Bearer test"
 					} else if customHeaders {
-						fixture.authorization = "Bearer custom"
+						want = "Bearer custom"
 					}
-					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						if customHeaders && r.Header.Get("X-Tenant") != "tenant" {
-							t.Error("custom header missing")
-						}
-						if r.URL.Path == "/v1/attestation/report" {
-							fixture.ServeHTTP(w, r)
-							return
-						}
-						want := ""
-						if apiKey != "" {
-							want = "Bearer test"
-						} else if customHeaders {
-							want = "Bearer custom"
-						}
-						if r.Header.Get("Authorization") != want {
-							t.Errorf("signature authorization = %q, want %q", r.Header.Get("Authorization"), want)
-						}
-						json.NewEncoder(w).Encode(map[string]string{
-							"text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
-							"signing_algo": "ed25519", "signing_address": strings.Repeat("22", 32),
-						})
-					}))
-					defer server.Close()
-					options := ClientOptions{BaseURL: server.URL + "/v1", APIKey: apiKey}
-					if customHeaders {
-						options.Headers = http.Header{"Authorization": {"Bearer custom"}, "Api-Key": {"api-key"}, "X-Api-Key": {"x-api-key"}, "X-Tenant": {"tenant"}}
+					if r.Header.Get("Authorization") != want {
+						t.Errorf("signature authorization = %q, want %q", r.Header.Get("Authorization"), want)
 					}
-					ctx := context.Background()
-					fetch := FetchOptions{DisableTLSBinding: true}
-					var client *apiClient
-					if direct {
-						api, err := NewDirectAttestationClient(options)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if _, err := api.FetchModelAttestations(ctx, fetch); err != nil {
-							t.Fatal(err)
-						}
-						client = api.apiClient
-					} else {
-						api, err := NewAttestationClient(options)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if _, err := api.FetchGatewayAttestation(ctx, fetch); err != nil {
-							t.Fatal(err)
-						}
-						if _, err := api.FetchModelAttestations(ctx, "canonical/model", fetch); err != nil {
-							t.Fatal(err)
-						}
-						client = api.apiClient
-					}
-					if _, err := client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
-						t.Fatal(err)
-					}
-				})
-			}
+					json.NewEncoder(w).Encode(map[string]string{
+						"text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
+						"signing_algo": "ed25519", "signing_address": strings.Repeat("22", 32),
+					})
+				}))
+				defer server.Close()
+				options := ClientOptions{BaseURL: server.URL + "/v1", APIKey: apiKey}
+				if customHeaders {
+					options.Headers = http.Header{"Authorization": {"Bearer custom"}, "Api-Key": {"api-key"}, "X-Api-Key": {"x-api-key"}, "X-Tenant": {"tenant"}}
+				}
+				ctx := context.Background()
+				fetch := FetchOptions{DisableTLSBinding: true}
+				var client *apiClient
+				api, err := NewAttestationClient(options)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := api.FetchGatewayAttestation(ctx, fetch); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := api.FetchModelAttestations(ctx, "canonical/model", fetch); err != nil {
+					t.Fatal(err)
+				}
+				client = api.apiClient
+
+				if _, err := client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
+					t.Fatal(err)
+				}
+			})
 		}
 	}
+
 }

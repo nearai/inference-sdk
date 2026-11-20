@@ -185,125 +185,86 @@ async fn optional_keys_are_omitted_from_bootstrap_but_retained_for_model_reports
     test_api_key();
     let _ = AttestationClient::new(None);
     nearai_inference_sdk::InferenceClient::new(None).unwrap();
-    for direct in [false, true] {
-        for api_key in [None, Some("test-key".to_owned())] {
-            for custom_headers in [false, true] {
-                let server = MockServer::start().await;
-                Mock::given(path("/v1/attestation/report"))
-                    .respond_with(move |request: &Request| {
-                        if direct {
-                            let nonce = request
-                                .url
-                                .query_pairs()
-                                .find(|(key, _)| key == "nonce")
-                                .unwrap()
-                                .1
-                                .into_owned();
-                            let report = json!({
-                                "model_name": "test", "request_nonce": nonce,
-                                "signing_algo": "ed25519", "signing_address": "22".repeat(32),
-                                "intel_quote": "aa", "event_log": [],
-                                "info": {"tcb_info": {"app_compose": "{}"}},
-                            });
-                            let mut payload = report.clone();
-                            payload["all_attestations"] = json!([report]);
-                            ResponseTemplate::new(200).set_body_json(payload)
-                        } else if request.url.query_pairs().any(|(key, _)| key == "model") {
-                            ModelAttestationResponder.respond(request)
-                        } else {
-                            GatewayAttestationResponder.respond(request)
-                        }
-                    })
-                    .mount(&server)
-                    .await;
-                Mock::given(path("/v1/signature/test"))
-                    .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                        "text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
-                        "signing_algo": "ed25519", "signing_address": "22".repeat(32),
-                    })))
-                    .mount(&server).await;
-                let mut headers = reqwest::header::HeaderMap::new();
-                if custom_headers {
-                    for (name, value) in [
-                        ("authorization", "Bearer custom"),
-                        ("api-key", "api-key"),
-                        ("x-api-key", "x-api-key"),
-                        ("x-tenant", "tenant"),
-                    ] {
-                        headers.insert(name, value.parse().unwrap());
-                    }
-                }
-                if direct {
-                    let client = nearai_inference_sdk::DirectAttestationClient::new(
-                        &base_url(&server),
-                        api_key.clone(),
-                    )
-                    .unwrap()
-                    .with_headers(headers);
-                    client
-                        .fetch_model_attestations_with_options(
-                            nearai_inference_sdk::DirectAttestationFetchOptions {
-                                include_spki_fingerprint: false,
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                        .unwrap();
-                    client
-                        .fetch_completion_signature("test", None)
-                        .await
-                        .unwrap();
-                } else {
-                    let client =
-                        AttestationClient::with_base_url(api_key.clone(), &base_url(&server))
-                            .unwrap()
-                            .with_headers(headers);
-                    client
-                        .fetch_gateway_attestation(GatewayAttestationFetchOptions {
-                            include_spki_fingerprint: false,
-                            ..Default::default()
-                        })
-                        .await
-                        .unwrap();
-                    client
-                        .fetch_model_attestations("test", None, None)
-                        .await
-                        .unwrap();
-                    client
-                        .fetch_completion_signature("test", None)
-                        .await
-                        .unwrap();
-                }
-                let requests = server.received_requests().await.unwrap();
-                assert_eq!(requests.len(), if direct { 2 } else { 3 });
-                for request in requests {
-                    assert_eq!(
-                        request.headers.get("x-tenant").map(|v| v.to_str().unwrap()),
-                        custom_headers.then_some("tenant")
-                    );
-                    if request.url.path() == "/v1/attestation/report"
-                        && (direct || !request.url.query_pairs().any(|(name, _)| name == "model"))
-                    {
-                        for name in ["authorization", "api-key", "x-api-key"] {
-                            assert!(
-                                request.headers.get(name).is_none(),
-                                "attestation sent {name}"
-                            );
-                        }
+
+    for api_key in [None, Some("test-key".to_owned())] {
+        for custom_headers in [false, true] {
+            let server = MockServer::start().await;
+            Mock::given(path("/v1/attestation/report"))
+                .respond_with(move |request: &Request| {
+                    if request.url.query_pairs().any(|(key, _)| key == "model") {
+                        ModelAttestationResponder.respond(request)
                     } else {
-                        let expected = if api_key.is_some() {
-                            Some("Bearer test-key")
-                        } else {
-                            custom_headers.then_some("Bearer custom")
-                        };
-                        assert_eq!(
-                            request
-                                .headers
-                                .get("authorization")
-                                .map(|v| v.to_str().unwrap()),
-                            expected
+                        GatewayAttestationResponder.respond(request)
+                    }
+                })
+                .mount(&server)
+                .await;
+            Mock::given(path("/v1/signature/test"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
+                    "signing_algo": "ed25519", "signing_address": "22".repeat(32),
+                })))
+                .mount(&server)
+                .await;
+            let mut headers = reqwest::header::HeaderMap::new();
+            if custom_headers {
+                for (name, value) in [
+                    ("authorization", "Bearer custom"),
+                    ("api-key", "api-key"),
+                    ("x-api-key", "x-api-key"),
+                    ("x-tenant", "tenant"),
+                ] {
+                    headers.insert(name, value.parse().unwrap());
+                }
+            }
+            let client = AttestationClient::with_base_url(api_key.clone(), &base_url(&server))
+                .unwrap()
+                .with_headers(headers);
+            client
+                .fetch_gateway_attestation(GatewayAttestationFetchOptions {
+                    include_spki_fingerprint: false,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            client
+                .fetch_model_attestations("test", None, None)
+                .await
+                .unwrap();
+            client
+                .fetch_completion_signature("test", None)
+                .await
+                .unwrap();
+
+            let requests = server.received_requests().await.unwrap();
+            assert_eq!(requests.len(), 3);
+            for request in requests {
+                assert_eq!(
+                    request.headers.get("x-tenant").map(|v| v.to_str().unwrap()),
+                    custom_headers.then_some("tenant")
+                );
+                if request.url.path() == "/v1/attestation/report"
+                    && !request.url.query_pairs().any(|(name, _)| name == "model")
+                {
+                    for name in ["authorization", "api-key", "x-api-key"] {
+                        assert!(
+                            request.headers.get(name).is_none(),
+                            "attestation sent {name}"
                         );
                     }
+                } else {
+                    let expected = if api_key.is_some() {
+                        Some("Bearer test-key")
+                    } else {
+                        custom_headers.then_some("Bearer custom")
+                    };
+                    assert_eq!(
+                        request
+                            .headers
+                            .get("authorization")
+                            .map(|v| v.to_str().unwrap()),
+                        expected
+                    );
                 }
             }
         }

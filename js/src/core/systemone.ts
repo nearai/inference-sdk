@@ -4,7 +4,6 @@ import {
   CompletionResponseIdSchema,
   SystemOneResponseSchema,
 } from '../schemas';
-import type { VerifiedCompletionResult } from '../types/inference-client';
 import type {
   SystemOneQuestions,
   SystemOneRequest,
@@ -28,24 +27,16 @@ type CreateSystemOneParams<
   readonly baseUrl: string;
   readonly encryptionEnabled: boolean;
   readonly headers: Headers;
-  readonly getSession: (
-    model: string,
-  ) => Promise<InferenceSession<VerifiedCompletionResult>>;
-  readonly registerResponse: (
-    params: VerifyCapturedResponseParams<VerifiedCompletionResult>,
-  ) => void;
+  readonly getSession: (model: string) => Promise<InferenceSession>;
+  readonly registerResponse: (params: VerifyCapturedResponseParams) => void;
 };
 
 type SendSystemOneParams = {
   readonly request: Request;
   readonly encryptionEnabled: boolean;
   readonly headers: Headers;
-  readonly getSession: (
-    model: string,
-  ) => Promise<InferenceSession<VerifiedCompletionResult>>;
-  readonly registerResponse: (
-    params: VerifyCapturedResponseParams<VerifiedCompletionResult>,
-  ) => void;
+  readonly getSession: (model: string) => Promise<InferenceSession>;
+  readonly registerResponse: (params: VerifyCapturedResponseParams) => void;
 };
 
 /** Preserve the official SDK's wire format and let it parse the response. */
@@ -125,7 +116,7 @@ async function captureSystemOne({
   getSession,
 }: SendSystemOneParams): Promise<{
   response: Response;
-  record: VerifyCapturedResponseParams<VerifiedCompletionResult>;
+  record: VerifyCapturedResponseParams;
 }> {
   if (encryptionEnabled)
     throw invalidInput('System One requires e2ee: false and ohttp: false');

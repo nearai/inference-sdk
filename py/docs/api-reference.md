@@ -35,11 +35,6 @@ cleanup are synchronous.
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a response signature over retained bytes. |
 | `inference_client.clear_response_cache` | `()` | `None` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
-| `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
-| `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
-| `verify_direct_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestation` | Verifies one direct model report and its optional quote-bound fingerprint. |
-| `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding. |
-| `verify_direct_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes against a verified Direct report. |
 | `prepare_e2ee_chat_request` | `(request, model_key)` | `PreparedE2eeChatRequest` | Encrypts supported Chat fields and returns the matching response decryptor. |
 | `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Pins every HTTPS connection to a supplied SPKI before sending HTTP data; does not verify its attestation. |
 | `verify_ohttp_key_config` | `(ohttp_attestation, signer)` | `bytes` | Authenticates the advertised OHTTP key configuration against a verified Ed25519 signer. |
@@ -49,7 +44,6 @@ cleanup are synchronous.
 | `client.fetch_model_metadata` | `(model)` | `ModelMetadata` | Reads catalog capabilities, without cryptographic verification. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
-| `find_direct_model_attestations_for_signature` | `(attestations, signature)` | `tuple[VerifiedDirectModelAttestation, ...]` | Selects all verified Direct reports matching the signature signer; no match raises `VerificationError`. |
 | `find_model_attestations_for_signature` | `(attestations, signature)` | `tuple[VerifiedModelAttestation, ...]` | Selects every preverified report matching a `provider_tee` signer. |
 | `find_model_attestation_for_signature` | `(attestations, signature)` | `VerifiedModelAttestation` | Deprecated. Returns the first matching report. |
 | `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies target-model deployment evidence. |
@@ -128,8 +122,7 @@ Both adapters delegate to the same `send()` pipeline:
 
 They share authentication, preflight, TLS pinning, sessions, and receipt capture.
 HTTPX2 converts request/response types and forwards response streams on demand;
-network I/O remains with the owner's HTTPX clients. Both properties are also
-available on `DirectInferenceClient` for Chat.
+network I/O remains with the owner's HTTPX clients.
 
 Install `httpx2` to use `httpx2_client`. It is loaded only when that property is
 accessed. For OpenAI, use a version supporting HTTPX2 and install `openai[httpx2]`;
@@ -165,8 +158,7 @@ can be reused. Closing the client releases retained records.
 Call `clear_response_cache()` when discarding a conversation. Cleared IDs become
 unavailable to `verify_response`. Ongoing response captures stay discarded when
 they finish. To end active work and release its buffers,
-also cancel the requests and finish any ongoing verification. Direct clients
-support the same cleanup method.
+also cancel the requests and finish any ongoing verification.
 
 ### Errors wrapped by official SDKs
 
@@ -190,7 +182,6 @@ except Exception as error:
         print(sdk_error.failure.code)
     raise
 ```
-
 
 ## System One
 
@@ -258,59 +249,6 @@ Response records use the client's `response_cache_time_to_live_ms`.
 Inference is sent once. Retry transient receipt lookups with
 `verify_response(result.decision_id)` while the response remains cached.
 See the [guide](./verification-guide.md#system-one-decisions) for a complete call.
-
-## Direct clients and verification
-
-Both direct clients are experimental. `DirectInferenceClient` accepts the
-same common options as `InferenceClient`, with the following differences:
-
-| Parameter or member | Direct behavior |
-| --- | --- |
-| `base_url` | Required first argument: the model endpoint's API URL. |
-| `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
-| `ohttp` | Encrypt Chat requests and responses to the configured Direct endpoint using OHTTP. Requires Ed25519. |
-| `include_spki_fingerprint` | Defaults to `True`. Set `False` for an application proxy or HTTP endpoint. |
-| `model_verification` | `ModelVerificationOptions`: model `policy` and `verifiers`. `DirectModelVerificationOptions` is an alias. |
-| `deployment_policy` | Applied to every supplied direct model report. |
-| `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
-| `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
-
-E2EE defaults to `False` for both clients. Set `e2ee=True` to enable it.
-
-`DirectAttestationClient(base_url, *, api_key=None, headers=None, http_client=None)`
-exposes the following methods. Use `http_client` to supply a pinned signature transport.
-
-| Method | Parameters | Result |
-| --- | --- | --- |
-| `fetch_model_attestations` | `signing_algo=None`, `signing_address=None`, `include_spki_fingerprint=True` (keyword-only) | `FetchedDirectModelAttestations` |
-| `fetch_completion_signature` | `completion_id`, keyword-only `signing_algo=None` | `CompletionSignature` with kind `provider_tee` |
-
-Requests use the verified model TLS fingerprints by default.
-
-| Type | Field | Description |
-| --- | --- | --- |
-| `DirectModelAttestation` | Inherited `ModelAttestation` fields | Model quote, signer, nonce, deployment, GPU evidence, and optional public key. |
-| | `model_name: str`, `instance_id: str \| None` | Endpoint-reported model and instance metadata. |
-| | `spki_fingerprint: str \| None` | Reported TLS SPKI fingerprint. |
-| `DirectClientBinding` | `nonce: str`, `spki_fingerprint: str \| None` | Fresh client nonce and optional observed TLS fingerprint. |
-| `FetchedDirectModelAttestations` | `serving_attestation`, `attestations` | Top-level serving report and the full tuple of supplied direct reports. |
-| | `client_binding`, `ohttp_attestation` | Client binding and optional signed OHTTP configuration. |
-| `VerifiedDirectModelAttestation` | Inherited `VerifiedModelAttestation` fields | Independently verified deployment and signing key. |
-| | `model_name`, `instance_id`, `spki_fingerprint` | Endpoint metadata and optional quote-authenticated fingerprint. |
-| `VerifiedDirectModelAttestations` | `serving_attestation`, `attestations` | Verified serving entry and every verified supplied report. |
-| | `tls_binding: DirectTlsBinding` | `none` or `attested`; only the serving report is compared with the observed peer. |
-| | `spki_fingerprints: tuple[str, ...]` | Distinct fingerprints authenticated by the verified reports, in response order. |
-| `DirectAttestationVerificationResult` | Inherited `VerifiedDirectModelAttestations` fields | Complete verified report set, not just the signer group selected for Chat. |
-| | `verified_at: int` | Unix time in milliseconds when verification completed. |
-| `VerifiedDirectCompletionResult` | `id`, `signature_kind`, `signature` | Completion ID and verified `provider_tee` signature. |
-| | `attestations` | All verified reports sharing the request's selected model signer. |
-
-`verify_direct_model_attestation` accepts one report, a `ModelClientBinding`, and
-the same policy/verifier options as `verify_model_attestation`.
-`verify_direct_model_attestations` accepts the fetched set and those options; a
-TLS-bound serving report requires an observed peer fingerprint.
-`verify_direct_model_response` accepts exact request and response bytes, the
-signature, and one verified Direct report.
 
 ## Standalone E2EE and pinned TLS
 
@@ -385,7 +323,7 @@ The Gateway's report and signature endpoints have different defaults.
 | `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers; use `api_key` for bearer authentication. |
 | `http_client` | `httpx.AsyncClient \| None` | No | `None` | HTTP transport for model reports, metadata, and signature requests. |
 
-Gateway and Direct attestation report requests omit `Authorization`, `api-key`,
+Gateway attestation report requests omit `Authorization`, `api-key`,
 and `x-api-key`. Model reports fetched through the Gateway, model metadata,
 inference, and response signatures use the configured credentials.
 

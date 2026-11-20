@@ -144,10 +144,6 @@ for transport configuration and receipt verification.
 - **Standalone E2EE:** [`prepareE2eeChatRequest`](./docs/verification-guide.md#encrypt-a-raw-chat-request)
   encrypts a raw Chat request and supplies a JSON/SSE response decryptor.
   Your application verifies the model key and response signature separately.
-- **Direct model endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect to model endpoints without Gateway
-  verification. In Node, `DirectInferenceClient` pins verified model TLS
-  fingerprints by default. See the [Direct guide](./docs/verification-guide.md#use-a-direct-model-endpoint).
 
 ## Documentation
 
@@ -155,5 +151,5 @@ for transport configuration and receipt verification.
   proxies, deployment policies, response verification, and error handling.
 - [API reference](./docs/api-reference.md): public functions, parameters,
   defaults, and result fields.
-- [Runnable examples](../examples/README.md): Gateway and direct-model clients,
+- [Runnable examples](../examples/README.md): Gateway clients,
   standalone verification, and OpenAI SDK integration.

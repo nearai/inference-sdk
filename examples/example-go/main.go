@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	c, err := demo.Configuration(false)
+	c, err := demo.Configuration()
 	if err != nil {
 		log.Fatal(err)
 	}

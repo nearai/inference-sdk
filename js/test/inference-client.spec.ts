@@ -10,7 +10,6 @@ import nacl from 'tweetnacl';
 import {
   ApiError,
   type AttestationVerificationResult,
-  DirectInferenceClient,
   getSdkError,
   InferenceClient,
   type InferenceClientOptions,
@@ -5844,7 +5843,7 @@ describe('Responses API', () => {
     });
   });
 
-  test('rejects E2EE, Direct, history and foreign URLs before network I/O', async () => {
+  test('rejects E2EE, history and foreign URLs before network I/O', async () => {
     const fixture = responsesGateway();
     const fetch = jest
       .spyOn(globalThis, 'fetch')
@@ -5852,10 +5851,8 @@ describe('Responses API', () => {
     const options = inferenceClientOptions(fixture.gateway);
     const plain = new InferenceClient({ ...options, e2ee: false });
     const encrypted = new InferenceClient(options);
-    const direct = new DirectInferenceClient({ baseUrl, e2ee: false });
     for (const [client, url] of [
       [encrypted, `${baseUrl}responses`],
-      [direct, `${baseUrl}responses`],
       [plain, `${baseUrl}responses/resp_fixture`],
       [plain, 'https://other.test/v1/responses'],
     ] as const) {
@@ -6313,7 +6310,7 @@ describe('Messages API', () => {
     });
   });
 
-  test('rejects E2EE, Direct, history and foreign URLs before network I/O', async () => {
+  test('rejects E2EE, history and foreign URLs before network I/O', async () => {
     const fixture = messagesGateway();
     const fetch = jest
       .spyOn(globalThis, 'fetch')
@@ -6321,10 +6318,8 @@ describe('Messages API', () => {
     const options = inferenceClientOptions(fixture.gateway);
     const plain = new InferenceClient({ ...options, e2ee: false });
     const encrypted = new InferenceClient(options);
-    const direct = new DirectInferenceClient({ baseUrl, e2ee: false });
     for (const [client, url] of [
       [encrypted, `${baseUrl}messages`],
-      [direct, `${baseUrl}messages`],
       [plain, `${baseUrl}messages/msg_fixture`],
       [plain, 'https://other.test/v1/messages'],
     ] as const) {

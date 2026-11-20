@@ -15,7 +15,7 @@ import (
 )
 
 func run() error {
-	c, err := demo.ConfigurationForModel(false, "anthropic/claude-haiku-4-5")
+	c, err := demo.ConfigurationForModel("anthropic/claude-haiku-4-5")
 	if err != nil {
 		return err
 	}
