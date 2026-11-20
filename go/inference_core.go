@@ -340,7 +340,7 @@ func (c *inferenceCore) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
-	if gatewayOnly && (c.options.E2EE) {
+	if gatewayOnly && c.options.E2EE {
 		return nil, detail("api.invalid_input", "expected", "Gateway Responses or Messages with field-level E2EE disabled")
 	}
 	body, e := io.ReadAll(req.Body)

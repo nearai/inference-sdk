@@ -250,7 +250,6 @@ export abstract class InferenceClientBase {
     });
     this.chat = this.openai.chat;
 
-    this.gatewayOptions = options;
     this.anthropic = new Anthropic({
       apiKey: '@nearai/inference-sdk-internal',
       defaultHeaders: {
@@ -730,7 +729,6 @@ export abstract class InferenceClientBase {
     });
   }
 
-  private readonly gatewayOptions: NodeInferenceClientOptions;
   private readonly anthropic: Anthropic;
 
   /** Create a Response, then verify its top-level ID with verifyResponse(). */
@@ -794,8 +792,8 @@ export abstract class InferenceClientBase {
     const gatewayAttestation = await verifyGatewayAttestation({
       attestation: gateway.attestation,
       clientBinding: gateway.clientBinding,
-      policy: this.gatewayOptions.gatewayVerification?.policy,
-      verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
+      policy: this.options.gatewayVerification?.policy,
+      verifiers: this.options.gatewayVerification?.verifiers,
     });
     if (gatewayAttestation.signer.signingAlgo !== this.signingAlgo) {
       throw new VerificationError({ code: 'signature.signer_mismatch' });
@@ -816,7 +814,7 @@ export abstract class InferenceClientBase {
     const controller = new AbortController();
     const { signal } = controller;
     const client = new CloudApiClient({
-      ...this.gatewayOptions,
+      ...this.options,
       // Evidence requests share the transport and cancellation owned by preflight.
       fetch: (input, init) => {
         signal.throwIfAborted();
@@ -922,7 +920,7 @@ export abstract class InferenceClientBase {
     const metadata = await transport.fetchModelMetadata(model);
     signal.throwIfAborted();
     if (metadata.providerType !== 'vllm' || !metadata.attestationSupported) {
-      const { deploymentPolicy, modelVerification } = this.gatewayOptions;
+      const { deploymentPolicy, modelVerification } = this.options;
       if (
         this.e2eeEnabled ||
         deploymentPolicy !== undefined ||
@@ -952,7 +950,7 @@ export abstract class InferenceClientBase {
         verifyModelAttestation({
           attestation,
           clientBinding: fetchedModelAttestations.clientBinding,
-          policy: this.gatewayOptions.modelVerification?.policy,
+          policy: this.options.modelVerification?.policy,
           verifiers: modelVerifiers,
         }),
       ),
