@@ -105,8 +105,8 @@ if err != nil {
 	return err
 }
 fmt.Println("Verified at:", evidence.VerifiedAt)
-for _, modelAttestation := range evidence.Models {
-	fmt.Println(modelAttestation.ModelName, modelAttestation.TCBStatus)
+for i, modelAttestation := range evidence.Models {
+	fmt.Printf("Report %d TCB: %s\n", i+1, modelAttestation.TCBStatus)
 }
 ```
 
