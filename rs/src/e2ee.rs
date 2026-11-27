@@ -64,6 +64,13 @@ impl ResponseKey {
     fn decrypt(&self, value: &str) -> Result<String, VerificationError> {
         self.decrypt_with_aad(value, &[])
     }
+
+    /// A field the proxy serializes to JSON before encrypting.
+    fn decrypt_json(&self, value: &str) -> Result<Value, VerificationError> {
+        serde_json::from_str(&self.decrypt(value)?)
+            .map_err(|_| protocol("e2ee.decryption_failed", "invalid encrypted JSON"))
+    }
+
     fn decrypt_with_aad(&self, value: &str, aad: &[u8]) -> Result<String, VerificationError> {
         if value.is_empty() {
             return Ok(String::new());
@@ -213,15 +220,15 @@ fn encrypt_with_aad(
     data.extend(encrypted);
     Ok(hex::encode(data))
 }
-fn fields(
+fn fields<T: Into<Value>>(
     target: &mut Value,
     names: &[&str],
-    transform: &impl Fn(&str) -> Result<String, VerificationError>,
+    transform: &impl Fn(&str) -> Result<T, VerificationError>,
 ) -> Result<(), VerificationError> {
     for name in names {
         if let Some(value) = target.get_mut(*name) {
             if let Some(text) = value.as_str() {
-                *value = Value::String(transform(text)?);
+                *value = transform(text)?.into();
             } else if !value.is_null() {
                 return Err(protocol(
                     "e2ee.decryption_failed",
@@ -344,6 +351,40 @@ fn encrypt_request(
     }
     Ok(())
 }
+
+fn embeddings(request: &reqwest::Request) -> bool {
+    request
+        .url()
+        .path()
+        .trim_end_matches('/')
+        .ends_with("/embeddings")
+}
+
+// The proxy leaves token IDs and base64 vectors in clear, so they are refused.
+fn encrypt_embeddings(
+    body: &mut Value,
+    model: &E2eeModelKey,
+    aad: &[u8],
+) -> Result<(), VerificationError> {
+    let clear = || protocol("e2ee.unencrypted_field", "embeddings need text and floats");
+    if body.get("encoding_format").is_some_and(|f| f != "float") {
+        return Err(clear());
+    }
+
+    let aad = field_aad(aad, "input");
+    let texts: &mut [Value] = match body.get_mut("input") {
+        Some(Value::Array(items)) => items,
+        text => text.map_or(&mut [], std::slice::from_mut),
+    };
+
+    for text in texts {
+        let plain = text.as_str().ok_or_else(clear)?;
+        *text = encrypt_with_aad(plain, model, &aad)?.into();
+    }
+
+    Ok(())
+}
+
 pub(crate) fn decrypt_response(
     body: &mut Value,
     key: &ResponseKey,
@@ -404,17 +445,7 @@ pub(crate) fn decrypt_response(
 fn decrypt_logprobs(value: Option<&mut Value>, key: &ResponseKey) -> Result<(), VerificationError> {
     for entry in response_objects(value)? {
         fields(entry, &["token"], &|s| key.decrypt(s))?;
-        if let Some(raw) = entry.get_mut("bytes") {
-            if let Some(text) = raw.as_str() {
-                *raw = serde_json::from_str(&key.decrypt(text)?)
-                    .map_err(|_| protocol("e2ee.decryption_failed", "invalid logprob bytes"))?;
-            } else if !raw.is_null() {
-                return Err(protocol(
-                    "e2ee.decryption_failed",
-                    "expected encrypted logprob bytes",
-                ));
-            }
-        }
+        fields(entry, &["bytes"], &|s| key.decrypt_json(s))?;
         decrypt_logprobs(entry.get_mut("top_logprobs"), key)?;
     }
     Ok(())
@@ -430,7 +461,13 @@ impl PreparedE2eeChatRequest {
         if !value.is_object() {
             return Err(invalid_response().into());
         }
-        decrypt_response(&mut value, &self.key, false)?;
+        if embeddings(&self.request) {
+            for item in response_objects(value.get_mut("data"))? {
+                fields(item, &["embedding"], &|s| self.key.decrypt_json(s))?;
+            }
+        } else {
+            decrypt_response(&mut value, &self.key, false)?;
+        }
         Ok(value)
     }
 }
@@ -482,7 +519,11 @@ pub fn prepare_e2ee_chat_request(
     let mut value = decode_request(&request)?;
     let (key, public) = ResponseKey::generate(model.signing_algo);
     let aad = request_aad(model.signing_algo, &public)?;
-    encrypt_request(&mut value, model, &aad)?;
+    if embeddings(&request) {
+        encrypt_embeddings(&mut value, model, &aad)?;
+    } else {
+        encrypt_request(&mut value, model, &aad)?;
+    }
     let headers = request.headers_mut();
     for name in [
         "content-length",
@@ -840,6 +881,56 @@ mod tests {
             assert_eq!(output.next().await.unwrap().unwrap_err().code(), expected);
             assert!(output.next().await.is_none());
         }
+    }
+    #[test]
+    fn encrypts_embeddings_input_and_decrypts_vectors() {
+        let (key, model) = fixed_key(SigningAlgo::Ed25519);
+        let prepare = |input: Value, format: &str| {
+            let body = json!({
+                "model": "m",
+                "input": input,
+                "encoding_format": format,
+            });
+            let url = "https://example.com/v1/embeddings/";
+            let request = reqwest::Client::new().post(url).json(&body).build();
+
+            prepare_e2ee_chat_request(request.unwrap(), &model)
+        };
+
+        for input in [json!("private"), json!(["private", "more"])] {
+            let prepared = prepare(input.clone(), "float").unwrap();
+            let reply = prepared.request.headers()["x-client-pub-key"]
+                .to_str()
+                .unwrap();
+            let aad = field_aad(&request_aad(model.signing_algo, reply).unwrap(), "input");
+            let open = |v: &Value| json!(key.decrypt_with_aad(v.as_str().unwrap(), &aad).unwrap());
+            let opened = match &decode_request(&prepared.request).unwrap()["input"] {
+                Value::Array(items) => items.iter().map(open).collect(),
+                text => open(text),
+            };
+
+            assert_eq!(opened, input);
+
+            let client = E2eeModelKey {
+                public_key: reply.into(),
+                ..model.clone()
+            };
+            let decrypt = |embedding: Value| {
+                let body = json!({
+                    "data": [{ "embedding": embedding }],
+                })
+                .to_string();
+
+                prepared.decrypt_json(body.as_bytes())
+            };
+            let vector = decrypt(encrypt("[0.5]", &client).unwrap().into()).unwrap();
+
+            assert_eq!(vector["data"][0]["embedding"], json!([0.5]));
+            assert!(decrypt(json!([0.5])).is_err());
+        }
+
+        assert!(prepare(json!([1, 2]), "float").is_err());
+        assert!(prepare(json!("x"), "base64").is_err());
     }
     #[tokio::test]
     async fn decrypts_fragmented_sse_and_preserves_controls_and_newlines() {
